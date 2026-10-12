@@ -149,6 +149,74 @@ kill %1
 unit of the library uses. `cthreads` must be the first unit of the program:
 the server starts threads.
 
+## Running under systemd
+
+bearings talks to systemd without libsystemd (unit `bearings.rt.sd`):
+
+- **Socket activation.** With a `.socket` unit, systemd opens the listening
+  socket and starts the service with it as file descriptor 3. The service
+  calls `ApplySdListenFds(Cfg)` before `Start`: when systemd passed
+  sockets, `Cfg.Listen` (and `Cfg.AlsoListen`) use them instead of binding
+  a port. Because systemd keeps the socket open, connections that arrive
+  while the service restarts wait in the accept queue instead of being
+  refused.
+- **Readiness.** With `Type=notify`, `Start` sends `READY=1` once every
+  listener is open and the loops run, and `Stop` sends `STOPPING=1`.
+- **Watchdog.** With `WatchdogSec=`, the server (when `Cfg.Watchdog` is
+  set, as in `ProductionServerConfig`) sends `WATCHDOG=1` every half
+  interval, but only while every event loop is making progress. A loop
+  blocked in a handler stops the heartbeat and systemd restarts the
+  service.
+
+```pascal
+Cfg := ProductionServerConfig;
+Cfg.Listen.Port := 8080;            { used when systemd passed no socket }
+ApplySdListenFds(Cfg);
+Srv := TServer.CreateWithProc(Cfg, @NewService);
+Srv.RunUntilSignalProc(nil);        { SIGTERM from systemctl stop }
+```
+
+Sample units (`/etc/systemd/system/myapp.socket` and `myapp.service`):
+
+```ini
+[Unit]
+Description=myapp listening socket
+
+[Socket]
+ListenStream=8080
+# or a Unix socket for a reverse proxy on the same machine:
+# ListenStream=/run/myapp/http.sock
+# SocketMode=0660
+# SocketGroup=www-data
+Backlog=4096
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target
+```
+
+```ini
+[Unit]
+Description=myapp
+Requires=myapp.socket
+After=network.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/myapp
+Restart=on-failure
+WatchdogSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=40
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`systemctl start myapp.socket` listens; the service starts on the first
+connection. Without systemd the same program can be tried with
+`systemd-socket-activate -l 8080 ./myapp`.
+
 ## Documentation
 
 - `docs/api.md`: the API guide, organized by what a program does
@@ -172,7 +240,7 @@ them.
 
 | Directory     | Units                    | What it does |
 |---------------|--------------------------|--------------|
-| `src/rt`      | `bearings.rt.*`, `bearings.version` | Runtime: system calls, clocks, the per-thread event loop (`bearings.rt.loop`), timers, buffer pool, TCP listener and transport, worker threads. Knows nothing about HTTP. |
+| `src/rt`      | `bearings.rt.*`, `bearings.version` | Runtime: system calls, clocks, the per-thread event loop (`bearings.rt.loop`), timers, buffer pool, TCP and Unix socket listener and transport, worker threads, systemd integration (`bearings.rt.sd`). Knows nothing about HTTP. |
 | `src/http1`   | `bearings.http1.*`, `bearings.http.date`, `bearings.http.headers`, `bearings.http.uri` | HTTP/1.1: request parser, response encoder, body decoder, connection state machine, dispatcher. `bearings.http.date` keeps each loop's Date header through the loop's tick hook (`LoopTickProc`, `TLoop.Ext`). |
 | `src/http`    | `bearings.http.exchange`, `bearings.http.error` | The request/response exchange that a service (application) handles, inline on the loop or on a worker thread. |
 | `src/server`  | `bearings.server`        | `TServer`: listeners, loops, workers, signals, graceful stop. |
@@ -181,7 +249,8 @@ An application puts all four directories on its unit path (`-Fu`). The
 units a program normally uses directly are `bearings.server`,
 `bearings.http.exchange`, `bearings.rt.buf` (the body constructors),
 `bearings.http.headers`, `bearings.http1.config`, `bearings.rt.loop`,
-`bearings.rt.workers` and, for upgrades, `bearings.rt.stream`.
+`bearings.rt.workers`, for upgrades `bearings.rt.stream`, and under systemd
+`bearings.rt.sd` (through `ApplySdListenFds` in `bearings.server`).
 
 ## Building and testing
 

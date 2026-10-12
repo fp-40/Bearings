@@ -119,6 +119,10 @@ type
       it (chown), so that for example the reverse proxy's group can
       connect. The process needs to be a member of the group or root. }
     UnixGroup: RawByteString;
+    { A listening socket that is already open, for example one systemd
+      passed (bearings.rt.sd): a value > 0 makes the server use it instead
+      of creating one; Host, Port and UnixPath are then ignored. }
+    InheritedFd: cint;
   end;
 
   { Called on the loop thread for every accepted socket. Fd is non-blocking

@@ -165,6 +165,8 @@ apart in an overload, hence the separate names.
 | `WorkerHooks: TWorkerHooks` | per-worker-thread start and stop callbacks; nil = none; not owned |
 | `WorkerWaitMs: Integer` | how long `Wait` and `Destroy` wait for queued and running work items; 0 = 30 000 |
 | `GraceMs: Integer` | the grace period `RunUntilSignal` passes to `Stop` |
+| `AlsoListen: array of TListenSpec` | more places to listen on; every loop serves all of them (below) |
+| `Watchdog: Boolean` | send the systemd watchdog heartbeat while every loop makes progress (below; the production preset sets it) |
 
 `TListenSpec` (unit `bearings.rt.net`): `Host` (`'0.0.0.0'`,
 `'127.0.0.1'`, `'::'`), `Port` (0 = a free port, read it back from
@@ -194,6 +196,43 @@ connection accepted on it has a peer record with `Family = AF_UNIX` and no
 address (`SockAddrToStr` gives `''`); the client's address is then in the
 forwarding headers the proxy adds. A `unix:/path` string form is not part
 of bearings; an application that accepts one fills `UnixPath` itself.
+
+`AlsoListen: array of TListenSpec` lists more places to listen on; every
+loop serves `Listen` and each entry (for example a TCP port and a Unix
+socket). `TServer.Port` is the port of `Listen`.
+
+`InheritedFd` names a listening socket that is already open (a value
+greater than 0; `Host`, `Port` and `UnixPath` are then ignored). `Start`
+sets it non-blocking and close-on-exec, reads its address with
+`getsockname` (so `TServer.Port` is its port) and sets `TCP_NODELAY` when
+`NoDelay` is set; a descriptor that is not a listening socket fails
+`Start`. The loops share the socket (`amReusePort` is mapped to
+`amSharedExclusive`). An inherited Unix socket's file is not removed at
+stop: it belongs to whoever created it.
+
+### systemd (unit `bearings.rt.sd`)
+
+The unit talks to systemd without libsystemd; `README.md` has sample
+`.socket` and `.service` units.
+
+| Routine | Meaning |
+|---------|---------|
+| `SdListenFds(out Fds, out Names): Integer` | the sockets systemd passed (`LISTEN_FDS`, descriptors from 3 on, set close-on-exec) when `LISTEN_PID` is this process; removes the three variables from the environment; `Names` from `LISTEN_FDNAMES` |
+| `ApplySdListenFds(var Cfg: TServerConfig): Integer` (unit `bearings.server`) | `Cfg.Listen.InheritedFd` gets the first passed socket and `Cfg.AlsoListen` the others; 0 (nothing passed) leaves `Cfg` unchanged |
+| `SdNotifyEnabled: Boolean` | `NOTIFY_SOCKET` is set |
+| `SdNotify(State): Boolean` | sends one datagram (`'READY=1'`, `'STATUS=...'`, `'WATCHDOG=1'`, lines separated by LF) to `NOTIFY_SOCKET` (a path, or an abstract name starting with `@`) |
+| `SdWatchdogUsec: Int64` | the watchdog interval when `WATCHDOG_USEC` is set and `WATCHDOG_PID` (if set) is this process; else 0 |
+
+`TServer` uses them itself: `Start` sends `READY=1` (with a `STATUS=` line)
+once every listener is open and the loops run, `Stop` sends `STOPPING=1`,
+and with `TServerConfig.Watchdog` set (the production preset sets it) and
+`WATCHDOG_USEC` in the environment, a heartbeat thread sends `WATCHDOG=1`
+every half interval while every loop is making progress: each round it
+posts a message to every loop and, in the next round, sends the heartbeat
+only when every loop handled it. An idle loop is woken by the message and
+counts as alive; a loop blocked in a handler does not, the heartbeat stops
+and systemd restarts the service. `TServer.WatchdogRunning` says whether
+the thread runs; `Wait` joins it after a `Stop`.
 
 ### TH1Config (unit `bearings.http1.config`)
 

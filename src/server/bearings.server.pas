@@ -45,6 +45,11 @@
                        kernel wakes one waiting loop per new connection
                        instead of all of them. SO_REUSEPORT is not set.
 
+  Several listening sockets. Every loop listens on Listen and on each entry
+  of AlsoListen (for example a TCP port and a Unix socket, or the sockets
+  systemd passed): each entry is set up on its own, with its own accept
+  mode. Port is the port of Listen (0 when Listen is a Unix socket).
+
   Unix domain socket. With Listen.UnixPath set the server listens on a Unix
   socket at that path instead of a TCP port (a reverse proxy on the same
   machine connects to the path). amReusePort cannot apply to a Unix socket
@@ -55,6 +60,25 @@
   creating it). Connections accepted on it have a peer record with Family
   = AF_UNIX and no address (TExchange.PeerAddr; SockAddrToStr gives '');
   behind a proxy the client's address comes from forwarding headers.
+
+  systemd (bearings.rt.sd). Socket activation: a TListenSpec with
+  InheritedFd > 0 names a listening socket that is already open, such as
+  one systemd passed (LISTEN_FDS); Start uses it instead of creating a
+  socket (it sets it non-blocking and close-on-exec, reads its family and
+  address with getsockname, and sets TCP_NODELAY when the spec asks for it).
+  ApplySdListenFds fills a configuration from the sockets systemd passed:
+  Listen gets the first, AlsoListen the others. An inherited Unix socket's
+  file belongs to systemd and is not removed. Notifications: when
+  NOTIFY_SOCKET is set, Start sends READY=1 once every listener is open
+  and the loops run, and Stop sends STOPPING=1. Watchdog: when
+  Config.Watchdog is set and WATCHDOG_USEC is in the environment, Start
+  also starts a heartbeat thread that sends WATCHDOG=1 every half
+  interval, but only while every loop is making progress: each round the
+  thread posts a message to every loop and in the next round checks that
+  each loop has handled it (a loop blocked in a handler, or stuck, does
+  not, and systemd then restarts the service). An idle loop is woken by
+  the message, so it counts as alive. The thread stops with Stop and is
+  joined by Wait.
 
   Graceful shutdown. Stop(GraceMs) posts a stop message to every loop and
   returns at once. Each loop then:
@@ -118,7 +142,7 @@ interface
 
 uses
   SysUtils, ctypes, bearings.rt.sys, bearings.rt.cpu, bearings.rt.timer, bearings.rt.loop, bearings.rt.net, bearings.rt.buf,
-  bearings.rt.sync, bearings.rt.workers, bearings.http.error, bearings.http.exchange, bearings.http1.config, bearings.http1.dispatch;
+  bearings.rt.sync, bearings.rt.workers, bearings.rt.sd, bearings.http.error, bearings.http.exchange, bearings.http1.config, bearings.http1.dispatch;
 
 type
   TConnOutcome = bearings.http.error.TConnOutcome;
@@ -127,6 +151,9 @@ type
 
   TServerConfig = record
     Listen: TListenSpec;
+    { more places to listen on, besides Listen: every loop listens on all
+      of them (a TCP port and a Unix socket; the sockets systemd passed) }
+    AlsoListen: array of TListenSpec;
     Loops: Integer;                  { 0 = DefaultLoopCount }
     PinLoops: Boolean;
     H1: TH1Config;
@@ -135,6 +162,9 @@ type
     WorkerHooks: TWorkerHooks;       { nil = none; not owned }
     WorkerWaitMs: Integer;           { Wait / Destroy: wait for queued and running items (0 = 30 000) }
     GraceMs: Integer;                { the grace period RunUntilSignal passes to Stop }
+    { send the systemd watchdog heartbeat (WATCHDOG=1) while every loop
+      makes progress; only when WATCHDOG_USEC is set (bearings.rt.sd) }
+    Watchdog: Boolean;
   end;
 
   TServer = class;
@@ -149,14 +179,21 @@ type
     FStallTimer: TTimer;             { the stall detector's scan, once per second }
     {$endif}
     FGsMsg, FStopMsg: TLoopMsg;
+    FWdMsg: TLoopMsg;                { the watchdog's ping (lmCall) }
+    FWdTick: LongInt;                { the round number the ping carries (written before Post) }
+    FWdSeen: LongInt;                { the last round this loop handled (loop thread writes, watchdog thread reads) }
+    FWdPosted: LongInt;              { 1 while a ping is in the inbox }
     procedure OnAccept(ALoop: TLoop; var Fd: cint; const Peer: TSockAddrStorage);
     procedure ConnsEmpty(List: PConnList);
+    function GetListener: TListener;
   public
     Server: TServer;
     Index: Integer;
     Cpu: Integer;
     Loop: TLoop;
-    Listener: TListener;
+    { one per listen spec (Listen, then AlsoListen); nil for a spec whose
+      socket is on loop 0 only (amSingle) }
+    Listeners: array of TListener;
     Service: THttpService;
     Pool: TExchangePool;
     Conns: TConnList;
@@ -167,6 +204,7 @@ type
     { the loop thread has exited: drop the connections still open (no completion events) }
     procedure AbortConnections;
     destructor Destroy; override;
+    property Listener: TListener read GetListener;   { Listeners[0], or nil }
   end;
 
   TServer = class
@@ -184,9 +222,16 @@ type
     FGsEvent: PRTLEvent;
     FGsLock: TRTLCriticalSection;
     FWorkers: TWorkerPool;
-    FUnixPath: RawByteString;      { the socket file Start created; '' once removed }
+    FUnixPaths: array of RawByteString;   { the socket files Start created; emptied once removed }
+    FWdThread: TThreadID;
+    FWdStop: PRTLEvent;
+    FWdQuit: LongInt;              { 1: the watchdog thread must leave }
+    FWdRunning: Boolean;
     procedure DoStart(CallerRunsLoop0: Boolean);
-    procedure RemoveUnixSocket;    { deletes FUnixPath when it is still a socket; idempotent }
+    procedure RemoveUnixSocket;    { deletes the socket files Start created; idempotent }
+    procedure StartWatchdog;
+    procedure StopWatchdog;        { asks the thread to leave; JoinWatchdog waits for it }
+    procedure JoinWatchdog;
     function DoRunUntilSignal(Started: TServerEvent; StartedProc: TServerProc): cint;
     function GetLoopCount: Integer;
     function GetLoop(I: Integer): TServerLoop;
@@ -223,8 +268,11 @@ type
     function RunUntilSignal(Started: TServerEvent = nil): cint;
     { RunUntilSignal with a plain procedure (not a method) as the Started callback }
     function RunUntilSignalProc(Started: TServerProc): cint;
-    { the TCP port bound (Listen.Port, or the port the kernel chose for port 0); 0 for a Unix socket }
+    { the TCP port bound by Listen (Listen.Port, the port the kernel chose for port 0, or the
+      inherited socket's port); 0 for a Unix socket }
     property Port: Word read FPort;
+    { the watchdog heartbeat thread runs (Config.Watchdog and WATCHDOG_USEC set) }
+    property WatchdogRunning: Boolean read FWdRunning;
     { Start completed (a Start that raised leaves it False) }
     property Started: Boolean read FStarted;
     { the worker pool (Config.Workers >= 0), created by Start before the services; nil otherwise }
@@ -242,6 +290,13 @@ const
 
 function ProductionServerConfig: TServerConfig;
 function BenchmarkServerConfig: TServerConfig;   { benchmark options: no timer, PipelineFlush, amReusePort }
+
+{ systemd socket activation: when systemd passed listening sockets
+  (SdListenFds; LISTEN_FDS), Cfg.Listen gets the first (InheritedFd) and
+  Cfg.AlsoListen the others, each with the Backlog, Mode and NoDelay of
+  Cfg.Listen; what AlsoListen held is dropped. Returns how many sockets were
+  passed; 0 leaves Cfg unchanged (the program then listens as configured). }
+function ApplySdListenFds(var Cfg: TServerConfig): Integer;
 
 {$ifdef WD_STALL}
 const
@@ -263,6 +318,8 @@ uses
 
 const
   F_DUPFD_CLOEXEC = 1030;
+  SO_ACCEPTCONN = 30;
+  LF = #10;
 
 { ---- TServerLoop ---- }
 
@@ -292,6 +349,7 @@ end;
 destructor TServerLoop.Destroy;
 var
   D: TH1Dispatcher;
+  I: Integer;
 begin
   { the loop thread has exited: drop what is left (no events) }
   if Loop <> nil then
@@ -308,15 +366,16 @@ begin
       if not D.Closed then
         D.Close;
     end;
-    if Listener <> nil then
-    begin
-      Listener.Abort;                { closes the fd }
-      if not Listener.Closed then
-        Listener.Close;
-      Listener := nil;
-    end;
+    for I := 0 to High(Listeners) do
+      if Listeners[I] <> nil then
+      begin
+        Listeners[I].Abort;          { closes the fd }
+        if not Listeners[I].Closed then
+          Listeners[I].Close;
+        Listeners[I] := nil;
+      end;
   end;
-  FreeAndNil(Loop);                  { frees the deferred tasks (connections, listener) }
+  FreeAndNil(Loop);                  { frees the deferred tasks (connections, listeners) }
   FreeAndNil(Service);
   FreeAndNil(Pool);
   inherited Destroy;
@@ -392,6 +451,14 @@ begin
     Loop.StopNow;
 end;
 
+function TServerLoop.GetListener: TListener;
+begin
+  if Length(Listeners) > 0 then
+    Result := Listeners[0]
+  else
+    Result := nil;
+end;
+
 { ---- loop-thread messages ---- }
 
 procedure GsProc(Loop: TLoop; Arg: Pointer);
@@ -457,18 +524,20 @@ procedure StopProc(Loop: TLoop; Arg: Pointer);
 var
   SL: TServerLoop;
   D: TH1Dispatcher;
+  I: Integer;
 begin
   SL := TServerLoop(Arg);
   if SL.Stopping then
     Exit;
   SL.Stopping := True;
-  if SL.Listener <> nil then
-  begin
-    { accept until EAGAIN, then close; the connections accepted here get
-      GracefulShutdown in OnAccept }
-    SL.Listener.DrainAndClose;
-    SL.Listener := nil;
-  end;
+  for I := 0 to High(SL.Listeners) do
+    if SL.Listeners[I] <> nil then
+    begin
+      { accept until EAGAIN, then close; the connections accepted here get
+        GracefulShutdown in OnAccept }
+      SL.Listeners[I].DrainAndClose;
+      SL.Listeners[I] := nil;
+    end;
   if SL.Index = 0 then
     SL.Server.RemoveUnixSocket;    { a Unix socket: the other loops hold dups of a closed path }
   D := SL.Conns.Head;
@@ -484,6 +553,57 @@ begin
     TimerInit(@SL.FStopTimer, @StopTimerProc, SL);
     Loop.Timers.Arm(@SL.FStopTimer, Loop.NowMs + SL.GraceMs);
   end;
+end;
+
+{ the watchdog's ping, on the loop thread: this loop handled round FWdTick }
+procedure WdPingProc(Loop: TLoop; Arg: Pointer);
+var
+  SL: TServerLoop;
+begin
+  SL := TServerLoop(Arg);
+  AtomicStore(SL.FWdSeen, SL.FWdTick);
+  AtomicStore(SL.FWdPosted, 0);
+end;
+
+function WatchdogThreadMain(Arg: Pointer): PtrInt;
+var
+  S: TServer;
+  SL: TServerLoop;
+  HalfMs: Int64;
+  Tick: LongInt;
+  I: Integer;
+  Alive: Boolean;
+begin
+  S := TServer(Arg);
+  HalfMs := SdWatchdogUsec div 2000;
+  if HalfMs < 1 then
+    HalfMs := 1;
+  Tick := 0;
+  while AtomicLoad(S.FWdQuit) = 0 do
+  begin
+    { the heartbeat goes out only when every loop handled the last round's
+      ping (round 0 needs none: the loops have just started) }
+    Alive := True;
+    for I := 0 to High(S.FLoops) do
+      if AtomicLoad(S.FLoops[I].FWdSeen) <> Tick then
+        Alive := False;
+    if Alive then
+      SdNotify('WATCHDOG=1');
+    Inc(Tick);
+    for I := 0 to High(S.FLoops) do
+    begin
+      SL := S.FLoops[I];
+      { a ping still in the inbox (the loop has not run since) is not
+        posted again: the message record is the inbox node }
+      if InterlockedExchange(SL.FWdPosted, 1) = 0 then
+      begin
+        SL.FWdTick := Tick;
+        SL.Loop.Post(@SL.FWdMsg);
+      end;
+    end;
+    RTLEventWaitFor(S.FWdStop, HalfMs);
+  end;
+  Result := 0;
 end;
 
 function LoopThreadMain(Arg: Pointer): PtrInt;
@@ -507,6 +627,7 @@ begin
   FFactory := Factory;
   FObserver := Observer;
   FGsEvent := RTLEventCreate;
+  FWdStop := RTLEventCreate;
   InitCriticalSection(FGsLock);
 end;
 
@@ -530,6 +651,7 @@ var
     FLoops := nil;
     FWorkers := nil;
     RTLEventDestroy(FGsEvent);
+    RTLEventDestroy(FWdStop);
     DoneCriticalSection(FGsLock);
   end;
 
@@ -540,6 +662,8 @@ begin
       Stop(0);
     Wait;
   end;
+  StopWatchdog;                    { a Start that failed after starting it }
+  JoinWatchdog;
   RemoveUnixSocket;                { normally done by loop 0's stop; here after a failed Start }
   W := FCfg.WorkerWaitMs;
   if W <= 0 then
@@ -605,21 +729,78 @@ begin
     FreeAndNil(FLoops[I]);
   FLoops := nil;
   RTLEventDestroy(FGsEvent);
+  RTLEventDestroy(FWdStop);
   DoneCriticalSection(FGsLock);
   inherited Destroy;
 end;
 
 procedure TServer.RemoveUnixSocket;
 var
-  P: RawByteString;
+  Paths: array of RawByteString;
+  I: Integer;
 begin
   { loop 0's thread (StopProc) or the owner thread (Destroy, after Wait):
     never both at once }
-  P := FUnixPath;
-  if P = '' then
+  Paths := FUnixPaths;
+  FUnixPaths := nil;
+  for I := 0 to High(Paths) do
+    RemoveSocketFile(Paths[I]);
+end;
+
+procedure TServer.StartWatchdog;
+begin
+  if FWdRunning or not FCfg.Watchdog or (SdWatchdogUsec <= 0) then
     Exit;
-  FUnixPath := '';
-  RemoveSocketFile(P);
+  AtomicStore(FWdQuit, 0);
+  RTLEventResetEvent(FWdStop);
+  FWdRunning := True;
+  FWdThread := BeginThread(@WatchdogThreadMain, Pointer(Self));
+end;
+
+procedure TServer.StopWatchdog;
+begin
+  if not FWdRunning then
+    Exit;
+  AtomicStore(FWdQuit, 1);
+  RTLEventSetEvent(FWdStop);
+end;
+
+procedure TServer.JoinWatchdog;
+begin
+  if not FWdRunning then
+    Exit;
+  WaitForThreadTerminate(FWdThread, 0);
+  CloseThread(FWdThread);
+  FWdRunning := False;
+end;
+
+{ An inherited listening socket: non-blocking, close-on-exec, TCP_NODELAY
+  when asked for; Bound gets its address. Raises when Fd is not a
+  listening socket. }
+procedure SetUpInheritedListener(Fd: cint; const Spec: TListenSpec; out Bound: TSockAddrStorage);
+var
+  Flags, One, Acc: cint;
+  Len: Cardinal;
+  R: SizeInt;
+begin
+  Acc := 0;
+  Len := SizeOf(Acc);
+  R := SysGetSockOpt(Fd, SOL_SOCKET, SO_ACCEPTCONN, @Acc, @Len);
+  if (R < 0) or (Acc = 0) then
+    raise EServerError.CreateFmt('TServer.Start: inherited descriptor %d is not a listening socket', [Fd]);
+  Flags := FpFcntl(Fd, F_GETFL);
+  if (Flags < 0) or (FpFcntl(Fd, F_SETFL, Flags or O_NONBLOCK) < 0) then
+    raise EServerError.CreateFmt('TServer.Start: fcntl on inherited descriptor %d failed: errno %d',
+      [Fd, fpgeterrno]);
+  FpFcntl(Fd, F_SETFD, 1);                       { FD_CLOEXEC }
+  FillChar(Bound, SizeOf(Bound), 0);
+  Len := SizeOf(Bound);
+  SysGetSockName(Fd, @Bound, @Len);
+  if Spec.NoDelay and ((Bound.Family = AF_INET) or (Bound.Family = AF_INET6)) then
+  begin
+    One := 1;
+    SysSetSockOpt(Fd, IPPROTO_TCP, TCP_NODELAY, @One, SizeOf(One));
+  end;
 end;
 
 function TServer.GetLoopCount: Integer;
@@ -659,15 +840,17 @@ end;
 
 procedure TServer.DoStart(CallerRunsLoop0: Boolean);
 var
-  N, I: Integer;
+  N, I, K: Integer;
   Cpus: TCpuList;
+  Specs: array of TListenSpec;
+  SharedFds: array of cint;
   Spec: TListenSpec;
   Fd: cint;
   Bound: Word;
+  BoundAddr: TSockAddrStorage;
   E: cint;
   Msg: string;
   SL: TServerLoop;
-  SharedFd: cint;
   ListenEvents: Cardinal;
 begin
   if FStarted then
@@ -684,15 +867,18 @@ begin
     FWorkers := TWorkerPool.Create(FCfg.Workers, FCfg.WorkerHooks, FCfg.WorkerQueueLimit);
   Cpus := UsableCpus;
   SetLength(FLoops, N);
-  Spec := FCfg.Listen;
-  { a Unix socket has one path: the loops share one listening socket }
-  if (Spec.UnixPath <> '') and (Spec.Mode = amReusePort) then
-    Spec.Mode := amSharedExclusive;
-  SharedFd := -1;
-  if Spec.Mode = amSharedExclusive then
-    ListenEvents := EPOLLIN or EPOLLEXCLUSIVE
-  else
-    ListenEvents := EPOLLIN;
+  { the listen specs: Listen, then AlsoListen. A Unix socket has one path
+    and an inherited socket is one socket: their loops share it }
+  SetLength(Specs, 1 + Length(FCfg.AlsoListen));
+  Specs[0] := FCfg.Listen;
+  for K := 1 to High(Specs) do
+    Specs[K] := FCfg.AlsoListen[K - 1];
+  for K := 0 to High(Specs) do
+    if ((Specs[K].UnixPath <> '') or (Specs[K].InheritedFd > 0)) and (Specs[K].Mode = amReusePort) then
+      Specs[K].Mode := amSharedExclusive;
+  SetLength(SharedFds, Length(Specs));
+  for K := 0 to High(SharedFds) do
+    SharedFds[K] := -1;
   for I := 0 to N - 1 do
   begin
     SL := TServerLoop.Create;
@@ -714,6 +900,9 @@ begin
     SL.FStopMsg.Kind := lmCall;
     SL.FStopMsg.Proc := @StopProc;
     SL.FStopMsg.Arg := SL;
+    SL.FWdMsg.Kind := lmCall;
+    SL.FWdMsg.Proc := @WdPingProc;
+    SL.FWdMsg.Arg := SL;
     if Assigned(FFactory) then
       SL.Service := FFactory(SL.Loop)
     else
@@ -723,33 +912,60 @@ begin
     TimerInit(@SL.FStallTimer, @StallTimerProc, SL);
     SL.Loop.Timers.Arm(@SL.FStallTimer, MonoNowNs div 1000000 + 1000);
     {$endif}
-    if (Spec.Mode = amReusePort) or (I = 0) then
+    SetLength(SL.Listeners, Length(Specs));
+    for K := 0 to High(Specs) do
     begin
-      if not OpenListener(Spec, Spec.Mode = amReusePort, Fd, Bound, E) then
-      begin
-        if Spec.UnixPath <> '' then
-          raise EServerError.CreateFmt('TServer.Start: listen on %s failed: errno %d',
-            [Spec.UnixPath, E]);
-        raise EServerError.CreateFmt('TServer.Start: listen on %s:%d failed: errno %d',
-          [Spec.Host, Spec.Port, E]);
-      end;
-      if Spec.UnixPath <> '' then
-        FUnixPath := Spec.UnixPath   { removed when the server stops }
-      else if Spec.Port = 0 then
-        Spec.Port := Bound;          { the first loop binds port 0, the others that port }
-      FPort := Bound;
+      Spec := Specs[K];
       if Spec.Mode = amSharedExclusive then
-        SharedFd := Fd;
-      SL.Listener := TListener.Create(SL.Loop, Fd, @SL.OnAccept, ListenEvents);
-    end
-    else if Spec.Mode = amSharedExclusive then
-    begin
-      { the same socket through a dup: each loop's TListener closes its own fd }
-      Fd := FpFcntl(SharedFd, F_DUPFD_CLOEXEC, 0);
-      if Fd < 0 then
-        raise EServerError.CreateFmt('TServer.Start: dup of the listener failed: errno %d',
-          [fpgeterrno]);
-      SL.Listener := TListener.Create(SL.Loop, Fd, @SL.OnAccept, ListenEvents);
+        ListenEvents := EPOLLIN or EPOLLEXCLUSIVE
+      else
+        ListenEvents := EPOLLIN;
+      if (Spec.Mode = amReusePort) or (I = 0) then
+      begin
+        if Spec.InheritedFd > 0 then
+        begin
+          { a socket that is already open (systemd): used as it is }
+          Fd := Spec.InheritedFd;
+          SetUpInheritedListener(Fd, Spec, BoundAddr);
+          if (BoundAddr.Family = AF_INET) or (BoundAddr.Family = AF_INET6) then
+            Bound := SockAddrPort(BoundAddr)
+          else
+            Bound := 0;
+        end
+        else
+        begin
+          if not OpenListener(Spec, Spec.Mode = amReusePort, Fd, Bound, E) then
+          begin
+            if Spec.UnixPath <> '' then
+              raise EServerError.CreateFmt('TServer.Start: listen on %s failed: errno %d',
+                [Spec.UnixPath, E]);
+            raise EServerError.CreateFmt('TServer.Start: listen on %s:%d failed: errno %d',
+              [Spec.Host, Spec.Port, E]);
+          end;
+          if Spec.UnixPath <> '' then
+          begin
+            { removed when the server stops }
+            SetLength(FUnixPaths, Length(FUnixPaths) + 1);
+            FUnixPaths[High(FUnixPaths)] := Spec.UnixPath;
+          end
+          else if Spec.Port = 0 then
+            Specs[K].Port := Bound;  { the first loop binds port 0, the others that port }
+        end;
+        if K = 0 then
+          FPort := Bound;
+        if Spec.Mode = amSharedExclusive then
+          SharedFds[K] := Fd;
+        SL.Listeners[K] := TListener.Create(SL.Loop, Fd, @SL.OnAccept, ListenEvents);
+      end
+      else if Spec.Mode = amSharedExclusive then
+      begin
+        { the same socket through a dup: each loop's TListener closes its own fd }
+        Fd := FpFcntl(SharedFds[K], F_DUPFD_CLOEXEC, 0);
+        if Fd < 0 then
+          raise EServerError.CreateFmt('TServer.Start: dup of the listener failed: errno %d',
+            [fpgeterrno]);
+        SL.Listeners[K] := TListener.Create(SL.Loop, Fd, @SL.OnAccept, ListenEvents);
+      end;
     end;
   end;
   FStarted := True;
@@ -760,6 +976,10 @@ begin
     if (I > 0) or not CallerRunsLoop0 then
       FLoops[I].Thread := BeginThread(@LoopThreadMain, Pointer(FLoops[I]));
   end;
+  { systemd: the service is ready; then the heartbeat }
+  if SdNotifyEnabled then
+    SdNotify('READY=1' + LF + 'STATUS=listening, ' + IntToStr(N) + ' loop(s)');
+  StartWatchdog;
 end;
 
 procedure TServer.Wait;
@@ -778,6 +998,8 @@ begin
       CloseThread(FLoops[I].Thread);
       FLoops[I].Running := False;
     end;
+  if FStopRequested then
+    JoinWatchdog;
   { after a Stop the worker pool is shut down once every loop has left
     Run (each left with no connection, or aborted the rest at the
     deadline, so no new item can be queued); Destroy calls Shutdown again,
@@ -822,6 +1044,9 @@ begin
   if not FStarted or (InterlockedExchange(FStopClaim, 1) <> 0) then
     Exit;
   FStopRequested := True;
+  StopWatchdog;
+  if SdNotifyEnabled then
+    SdNotify('STOPPING=1');
   for I := 0 to High(FLoops) do
   begin
     FLoops[I].GraceMs := GraceMs;
@@ -891,6 +1116,25 @@ begin
   Result.Workers := 0;
   Result.WorkerQueueLimit := 0;
   Result.GraceMs := 30000;
+  Result.Watchdog := True;
+end;
+
+function ApplySdListenFds(var Cfg: TServerConfig): Integer;
+var
+  Fds: TSdFds;
+  Names: TSdNames;
+  I: Integer;
+begin
+  Result := SdListenFds(Fds, Names);
+  if Result = 0 then
+    Exit;
+  Cfg.Listen.InheritedFd := Fds[0];
+  SetLength(Cfg.AlsoListen, Result - 1);
+  for I := 1 to Result - 1 do
+  begin
+    Cfg.AlsoListen[I - 1] := Cfg.Listen;
+    Cfg.AlsoListen[I - 1].InheritedFd := Fds[I];
+  end;
 end;
 
 function BenchmarkServerConfig: TServerConfig;

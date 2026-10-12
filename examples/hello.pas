@@ -13,6 +13,8 @@
   its own, as worker.pas and stream.pas do.
 
   Usage: hello [port]        (default 8080; 0 = a free port, printed on stderr)
+         Under systemd socket activation (or systemd-socket-activate -l 8080
+         ./hello) the passed socket is used instead (ApplySdListenFds).
   Stop:  SIGTERM or SIGINT (Ctrl-C); RunUntilSignal then stops the server
          gracefully and returns.
   Build: see examples/README.md }
@@ -89,6 +91,9 @@ begin
   Cfg := ProductionServerConfig;
   Cfg.Workers := NO_WORKER_POOL;              { every request is answered inline: no worker threads }
   Cfg.Listen.Port := StrToIntDef(ParamStr(1), 8080);
+  { under systemd socket activation the passed socket replaces the port
+    (README.md, "Running under systemd"); without systemd this changes nothing }
+  ApplySdListenFds(Cfg);
   Srv := TServer.CreateWithProc(Cfg, @NewService);
   Sig := Srv.RunUntilSignalProc(@Started);
   WriteLn(StdErr, 'hello: stopped (signal ', Sig, ')');
