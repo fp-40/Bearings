@@ -168,12 +168,20 @@ noted.
     (1xx-5xx), bytes in and out, listener pauses, parse errors.
   - Latency: a histogram with fixed buckets (powers of two in
     microseconds is enough), per loop, merged when read.
-  - API: `TServer.Metrics(out Snapshot)` returning a record. An optional
-    helper may format it as the Prometheus text format; serving it over
-    HTTP is the framework's job.
+  - API: `TServer.Metrics(out Snapshot)` returning a record.
+  - Prometheus text format (decided by the user, 2026-10-11): add a pure
+    function in bearings that turns a snapshot into the Prometheus text
+    exposition format (`# HELP` / `# TYPE` lines, metric names with a
+    `bearings_` prefix, labels such as `{outcome="..."}` or
+    `{status="2xx"}`, the latency histogram as cumulative `_bucket{le="..."}`
+    lines plus `_sum` and `_count`). It does no I/O; serving it at an HTTP
+    path such as `/metrics` is the framework's job (wd-40). Keep the label
+    sets fixed and small.
 - Tests: counts after a known sequence of requests (including errors and
   client disconnects); the histogram; access-log lines for normal, error
-  and HEAD requests; the log does not block when the sink is slow.
+  and HEAD requests; the log does not block when the sink is slow; the
+  Prometheus text for a known snapshot (exact output, including the
+  cumulative histogram buckets).
 
 ## 4. Verification
 
@@ -217,5 +225,3 @@ noted.
    the per-IP limit wanted?
 4. Access log format (Common/Combined or JSON lines) and the default
    destination (stderr or a file).
-5. Metrics: is a Prometheus text formatter wanted in bearings, or only the
-   snapshot record?
