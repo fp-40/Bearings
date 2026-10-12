@@ -47,10 +47,23 @@
   always means the kernel said EAGAIN (or a short transfer) since the last
   event.
 
+  Unix domain sockets. A listener can also be a Unix domain socket (a path
+  in the file system) instead of a TCP port: TListenSpec.UnixPath selects
+  it. A reverse proxy on the same machine connects to the path; no TCP is
+  involved. OpenListener creates the socket file (removing a stale one
+  left by an earlier run, if it is a socket), sets its permission bits
+  (UnixMode) and, when UnixGroup is set, its group. SO_REUSEPORT and
+  TCP_NODELAY do not apply to Unix sockets; several loops share one
+  listening socket (amSharedExclusive in bearings.server). A connection
+  accepted on a Unix socket has no IP address: its peer record has Family
+  = AF_UNIX and nothing else, and SockAddrToStr gives ''. Reading, writing
+  and sendfile work the same as on TCP sockets, so TTcpTransport serves
+  both. RemoveSocketFile deletes the socket file when the server stops.
+
   Threading: TListener and TTcpTransport belong to one loop and are used
-  only on that loop's thread. OpenListener, MakeSockAddr, SockAddrPort,
-  SockAddrToStr and IgnoreSigPipe have no shared state and can be called
-  from any thread. }
+  only on that loop's thread. OpenListener, MakeSockAddr, MakeUnixSockAddr,
+  RemoveSocketFile, LookupGroupId, SockAddrPort, SockAddrToStr and
+  IgnoreSigPipe have no shared state and can be called from any thread. }
 unit bearings.rt.net;
 
 {$mode objfpc}{$H+}
@@ -71,6 +84,10 @@ const
   ACCEPT_PAUSE_MS = 1000;
   { Linux limit on the number of iovec entries in one writev(2) call. }
   IOV_MAX = 1024;
+  { The size of sockaddr_un.sun_path: a Unix socket path holds at most
+    UNIX_PATH_MAX - 1 bytes plus the terminating zero. }
+  UNIX_PATH_MAX = 108;
+  UNIX_MODE_DEFAULT = &660;
 
 type
   { How the loops share the listening port (bearings.server sets them up):
@@ -91,6 +108,17 @@ type
       merge them. Set on the listening socket; Linux copies it to every
       accepted socket. }
     NoDelay: Boolean;
+    { A non-empty path selects a Unix domain socket at that path; Host,
+      Port and NoDelay are then ignored. The path must be shorter than
+      UNIX_PATH_MAX bytes. }
+    UnixPath: RawByteString;
+    { The permission bits of the socket file (chmod after bind); 0 means
+      the default, &660: the owner and the group can connect. }
+    UnixMode: Cardinal;
+    { A group name; when not empty the socket file's group is changed to
+      it (chown), so that for example the reverse proxy's group can
+      connect. The process needs to be a member of the group or root. }
+    UnixGroup: RawByteString;
   end;
 
   { Called on the loop thread for every accepted socket. Fd is non-blocking
@@ -192,9 +220,27 @@ type
   (when ReusePort), SO_REUSEADDR (allows binding the port again while old
   connections are in TIME_WAIT), TCP_NODELAY (when Spec.NoDelay), bind and
   listen. BoundPort is the port actually bound (useful with Port = 0). On
-  failure returns False with Errno set and Fd = -1. }
+  failure returns False with Errno set and Fd = -1.
+  With Spec.UnixPath set: a Unix domain socket. A file already at the path
+  is removed first when it is a socket (left by an earlier run); any other
+  kind of file makes the bind fail with EADDRINUSE. After the bind the
+  file's mode is set to UnixMode (UNIX_MODE_DEFAULT when 0) and, when
+  UnixGroup is set, its group to that group (an unknown group name fails
+  with EINVAL). ReusePort is ignored and BoundPort is 0. }
 function OpenListener(const Spec: TListenSpec; ReusePort: Boolean; out Fd: cint;
   out BoundPort: Word; out Errno: cint): Boolean;
+
+{ Fills Addr with a sockaddr_un for Path; False when Path is empty or too
+  long (UNIX_PATH_MAX - 1 bytes at most). }
+function MakeUnixSockAddr(const Path: RawByteString; out Addr: TSockAddrStorage;
+  out AddrLen: Cardinal): Boolean;
+{ Deletes the file at Path when it is a Unix socket (lstat, S_IFSOCK).
+  True when it was deleted or there was no file; False when something
+  else is at the path (left alone) or the unlink failed. }
+function RemoveSocketFile(const Path: RawByteString): Boolean;
+{ The numeric id of the group called Name (getgrnam); False when there is
+  no such group. }
+function LookupGroupId(const Name: RawByteString; out Gid: Cardinal): Boolean;
 
 { TTcpTransport.Create with Src set. }
 function NewTcpTransport(Src: PIoSource): TTcpTransport;
@@ -320,6 +366,9 @@ begin
   I := 0;
   while (Max < 0) or (I < Max) do
   begin
+    { a Unix socket's accept4 fills only the family: the rest of the peer
+      record must be zero, not stack garbage }
+    FillChar(Peer, SizeOf(Peer), 0);
     AddrLen := SizeOf(Peer);
     R := SysAccept4(Src.Fd, @Peer, @AddrLen, SOCK_NONBLOCK or SOCK_CLOEXEC);
     if R >= 0 then
@@ -609,6 +658,110 @@ begin
   end;
 end;
 
+{ ---- Unix domain sockets ---- }
+
+function MakeUnixSockAddr(const Path: RawByteString; out Addr: TSockAddrStorage;
+  out AddrLen: Cardinal): Boolean;
+begin
+  FillChar(Addr, SizeOf(Addr), 0);
+  AddrLen := 0;
+  if (Path = '') or (Length(Path) >= UNIX_PATH_MAX) then
+    Exit(False);
+  Addr.Family := AF_UNIX;
+  Move(Path[1], Addr.Data[0], Length(Path));          { sun_path follows the family; zero-terminated }
+  AddrLen := SizeOf(Word) + Cardinal(Length(Path)) + 1;
+  Result := True;
+end;
+
+function RemoveSocketFile(const Path: RawByteString): Boolean;
+var
+  St: Stat;
+begin
+  if FpLStat(PAnsiChar(Path), St) <> 0 then
+    Exit(fpgeterrno = ESysENOENT);
+  if not fpS_ISSOCK(St.st_mode) then
+    Exit(False);
+  Result := FpUnlink(PAnsiChar(Path)) = 0;
+end;
+
+{ libc's getgrnam; struct group is: char *gr_name; char *gr_passwd;
+  gid_t gr_gid; char **gr_mem; so gr_gid is at byte offset 16 on x86_64 }
+function getgrnam(Name: PAnsiChar): PByte; cdecl; external 'c';
+
+function LookupGroupId(const Name: RawByteString; out Gid: Cardinal): Boolean;
+var
+  G: PByte;
+begin
+  Gid := 0;
+  if Name = '' then
+    Exit(False);
+  G := getgrnam(PAnsiChar(Name));
+  if G = nil then
+    Exit(False);
+  Gid := PCardinal(G + 16)^;
+  Result := True;
+end;
+
+function OpenUnixListener(const Spec: TListenSpec; out Fd: cint; out Errno: cint): Boolean;
+var
+  Addr: TSockAddrStorage;
+  AddrLen: Cardinal;
+  R: SizeInt;
+  Mode, Gid: Cardinal;
+
+  function Fail(E: cint): Boolean;
+  begin
+    Errno := E;
+    if Fd >= 0 then
+      SysClose(Fd);
+    Fd := -1;
+    Result := False;
+  end;
+
+begin
+  Fd := -1;
+  Errno := 0;
+  if not MakeUnixSockAddr(Spec.UnixPath, Addr, AddrLen) then
+    Exit(Fail(ESysEINVAL));
+  { the group is looked up before anything is created, so a bad name
+    leaves no socket file behind }
+  Gid := 0;
+  if (Spec.UnixGroup <> '') and not LookupGroupId(Spec.UnixGroup, Gid) then
+    Exit(Fail(ESysEINVAL));
+  R := SysSocket(AF_UNIX, SOCK_STREAM or SOCK_NONBLOCK or SOCK_CLOEXEC, 0);
+  if R < 0 then
+    Exit(Fail(cint(-R)));
+  Fd := cint(R);
+  { a socket file left by an earlier run is removed; anything else at the
+    path stays, and the bind then fails with EADDRINUSE }
+  RemoveSocketFile(Spec.UnixPath);
+  R := SysBind(Fd, @Addr, AddrLen);
+  if R < 0 then
+    Exit(Fail(cint(-R)));
+  Mode := Spec.UnixMode;
+  if Mode = 0 then
+    Mode := UNIX_MODE_DEFAULT;
+  if FpChmod(PAnsiChar(Spec.UnixPath), Mode) <> 0 then
+  begin
+    Errno := fpgeterrno;
+    FpUnlink(PAnsiChar(Spec.UnixPath));
+    Exit(Fail(Errno));
+  end;
+  if (Spec.UnixGroup <> '') and (FpChown(PAnsiChar(Spec.UnixPath), TUid(-1), Gid) <> 0) then
+  begin
+    Errno := fpgeterrno;
+    FpUnlink(PAnsiChar(Spec.UnixPath));
+    Exit(Fail(Errno));
+  end;
+  R := SysListen(Fd, Spec.Backlog);
+  if R < 0 then
+  begin
+    FpUnlink(PAnsiChar(Spec.UnixPath));
+    Exit(Fail(cint(-R)));
+  end;
+  Result := True;
+end;
+
 function OpenListener(const Spec: TListenSpec; ReusePort: Boolean; out Fd: cint;
   out BoundPort: Word; out Errno: cint): Boolean;
 var
@@ -630,6 +783,8 @@ begin
   Fd := -1;
   BoundPort := 0;
   Errno := 0;
+  if Spec.UnixPath <> '' then
+    Exit(OpenUnixListener(Spec, Fd, Errno));
   if not MakeSockAddr(Spec.Host, Spec.Port, Addr, AddrLen) then
   begin
     Errno := ESysEINVAL;

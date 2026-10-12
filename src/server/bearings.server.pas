@@ -45,6 +45,17 @@
                        kernel wakes one waiting loop per new connection
                        instead of all of them. SO_REUSEPORT is not set.
 
+  Unix domain socket. With Listen.UnixPath set the server listens on a Unix
+  socket at that path instead of a TCP port (a reverse proxy on the same
+  machine connects to the path). amReusePort cannot apply to a Unix socket
+  (there is one path), so Start uses amSharedExclusive instead; amSingle
+  works as for TCP. Port is 0. The socket file is created by Start with
+  the mode and group of the TListenSpec and removed when loop 0 closes its
+  listener during Stop (and by Destroy, should Start have failed after
+  creating it). Connections accepted on it have a peer record with Family
+  = AF_UNIX and no address (TExchange.PeerAddr; SockAddrToStr gives '');
+  behind a proxy the client's address comes from forwarding headers.
+
   Graceful shutdown. Stop(GraceMs) posts a stop message to every loop and
   returns at once. Each loop then:
     1. accepts the connections still waiting in the listening socket's
@@ -173,7 +184,9 @@ type
     FGsEvent: PRTLEvent;
     FGsLock: TRTLCriticalSection;
     FWorkers: TWorkerPool;
+    FUnixPath: RawByteString;      { the socket file Start created; '' once removed }
     procedure DoStart(CallerRunsLoop0: Boolean);
+    procedure RemoveUnixSocket;    { deletes FUnixPath when it is still a socket; idempotent }
     function DoRunUntilSignal(Started: TServerEvent; StartedProc: TServerProc): cint;
     function GetLoopCount: Integer;
     function GetLoop(I: Integer): TServerLoop;
@@ -210,6 +223,7 @@ type
     function RunUntilSignal(Started: TServerEvent = nil): cint;
     { RunUntilSignal with a plain procedure (not a method) as the Started callback }
     function RunUntilSignalProc(Started: TServerProc): cint;
+    { the TCP port bound (Listen.Port, or the port the kernel chose for port 0); 0 for a Unix socket }
     property Port: Word read FPort;
     { Start completed (a Start that raised leaves it False) }
     property Started: Boolean read FStarted;
@@ -455,6 +469,8 @@ begin
     SL.Listener.DrainAndClose;
     SL.Listener := nil;
   end;
+  if SL.Index = 0 then
+    SL.Server.RemoveUnixSocket;    { a Unix socket: the other loops hold dups of a closed path }
   D := SL.Conns.Head;
   while D <> nil do
   begin
@@ -524,6 +540,7 @@ begin
       Stop(0);
     Wait;
   end;
+  RemoveUnixSocket;                { normally done by loop 0's stop; here after a failed Start }
   W := FCfg.WorkerWaitMs;
   if W <= 0 then
     W := 30000;
@@ -592,6 +609,19 @@ begin
   inherited Destroy;
 end;
 
+procedure TServer.RemoveUnixSocket;
+var
+  P: RawByteString;
+begin
+  { loop 0's thread (StopProc) or the owner thread (Destroy, after Wait):
+    never both at once }
+  P := FUnixPath;
+  if P = '' then
+    Exit;
+  FUnixPath := '';
+  RemoveSocketFile(P);
+end;
+
 function TServer.GetLoopCount: Integer;
 begin
   Result := Length(FLoops);
@@ -655,6 +685,9 @@ begin
   Cpus := UsableCpus;
   SetLength(FLoops, N);
   Spec := FCfg.Listen;
+  { a Unix socket has one path: the loops share one listening socket }
+  if (Spec.UnixPath <> '') and (Spec.Mode = amReusePort) then
+    Spec.Mode := amSharedExclusive;
   SharedFd := -1;
   if Spec.Mode = amSharedExclusive then
     ListenEvents := EPOLLIN or EPOLLEXCLUSIVE
@@ -693,9 +726,16 @@ begin
     if (Spec.Mode = amReusePort) or (I = 0) then
     begin
       if not OpenListener(Spec, Spec.Mode = amReusePort, Fd, Bound, E) then
+      begin
+        if Spec.UnixPath <> '' then
+          raise EServerError.CreateFmt('TServer.Start: listen on %s failed: errno %d',
+            [Spec.UnixPath, E]);
         raise EServerError.CreateFmt('TServer.Start: listen on %s:%d failed: errno %d',
           [Spec.Host, Spec.Port, E]);
-      if Spec.Port = 0 then
+      end;
+      if Spec.UnixPath <> '' then
+        FUnixPath := Spec.UnixPath   { removed when the server stops }
+      else if Spec.Port = 0 then
         Spec.Port := Bound;          { the first loop binds port 0, the others that port }
       FPort := Bound;
       if Spec.Mode = amSharedExclusive then

@@ -5,11 +5,13 @@
 # S5 suite, built with -dWD_DEBUG so the wake-source check of design 2.4.5
 # runs in every test (and -dWD_STALL since step UB: TTestDispatchStall);
 # test_server is the S8 suite (sendfile, upgrade
-# detach, stop, shared listener, signals; real sockets); test_workers is the
+# detach, stop, shared listener, signals; real sockets); test_server_ops
+# covers the operations features (Unix socket listener; real sockets);
+# test_workers is the
 # S7 suite, also run under
 # valgrind --tool=drd; the S4, S5 and S7 suites also run once more
 # built with heaptrc (-gh), which must report 0 unfreed blocks; so does the
-# S8 suite), the S7
+# S8 and operations suites), the S7
 # end-to-end stress (tools/s7-stress.sh, short form), the M3 S1 echo test
 # (1 GiB with random splits, under valgrind memcheck: build/tools/bin/valgrind
 # from tools/get-tools.sh; a missing valgrind fails the run, decision 12),
@@ -38,7 +40,8 @@ FAIL=0
 TOTAL=0
 for T in test_parser test_codec test_role test_headers_validate \
     test_rt_sys test_rt_timer test_rt_loop test_rt_net test_rt_readbuf test_h1_io \
-    test_h1_conn test_body_chan test_exchange test_h1_dispatch test_workers test_server; do
+    test_h1_conn test_body_chan test_exchange test_h1_dispatch test_workers test_server \
+    test_server_ops; do
   # test_h1_dispatch: -dWD_DEBUG, in its own unit directory (the define
   # changes bearings.http1.dispatch's fields)
   D=$OUT
@@ -66,7 +69,8 @@ echo "unit tests run: $TOTAL"
 # (HEAPTRC=log=...): the console test runner leaves no stdout for it.
 HT="$OUT/heaptrc"
 mkdir -p "$HT"
-for T in test_h1_conn test_body_chan test_exchange test_h1_dispatch test_workers test_server; do
+for T in test_h1_conn test_body_chan test_exchange test_h1_dispatch test_workers test_server \
+    test_server_ops; do
   XD=
   if [ "$T" = test_h1_dispatch ]; then XD="-dWD_DEBUG -dWD_STALL"; fi
   mkdir -p "$HT/u-$T"

@@ -169,7 +169,8 @@ apart in an overload, hence the separate names.
 `TListenSpec` (unit `bearings.rt.net`): `Host` (`'0.0.0.0'`,
 `'127.0.0.1'`, `'::'`), `Port` (0 = a free port, read it back from
 `TServer.Port`), `Backlog` (the accept queue length), `NoDelay`
-(TCP_NODELAY on every accepted socket), and `Mode: TAcceptMode`:
+(TCP_NODELAY on every accepted socket), the Unix socket fields below, and
+`Mode: TAcceptMode`:
 
 - `amReusePort`: one listening socket per loop, all bound to the same port
   with SO_REUSEPORT; the kernel spreads new connections over the loops.
@@ -179,6 +180,20 @@ apart in an overload, hence the separate names.
   connection.
 - `amSharedExclusive`: one listening socket, registered by every loop with
   EPOLLEXCLUSIVE, so the kernel wakes one loop per new connection.
+
+A Unix domain socket instead of a TCP port, for a reverse proxy on the same
+machine: set `UnixPath` (the socket file; `Host`, `Port` and `NoDelay` are
+then ignored and `TServer.Port` is 0). `UnixMode` is the file's permission
+bits (0 = `&660`: the owner and the group can connect); `UnixGroup`, when
+set, is the group name the file is given (`chown`), for example the
+proxy's group. `Start` removes a stale socket file at the path (a regular
+file there makes it fail), creates the socket and applies the mode and
+group; the file is removed when the server stops. `amReusePort` is mapped
+to `amSharedExclusive` (one path, one socket shared by the loops). A
+connection accepted on it has a peer record with `Family = AF_UNIX` and no
+address (`SockAddrToStr` gives `''`); the client's address is then in the
+forwarding headers the proxy adds. A `unix:/path` string form is not part
+of bearings; an application that accepts one fills `UnixPath` itself.
 
 ### TH1Config (unit `bearings.http1.config`)
 
