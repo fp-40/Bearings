@@ -20,9 +20,11 @@
                       bearings.server for graceful shutdown and stop.
     TUpgradeDelivery  a task that hands an upgraded connection to its
                       handler after the connection-close event was reported.
-    TConnHooks        the server layer's per-connection hooks (connection
-                      limit, metrics): ConnDone when the connection has
-                      released everything; nil when none.
+    TConnHooks        the server layer's per-connection and per-request
+                      hooks (connection limit, metrics, access log):
+                      RequestStarted when a head was read, RequestDone when
+                      the response is complete, ConnDone when the connection
+                      has released everything; nil when none.
 
   One Run. Run calls PollCatch -> PollInner -> PollLoop. PollLoop repeats
   "read (PollRead), write (PollWrite), flush (PollFlush)" until neither side
@@ -112,12 +114,23 @@ type
 
   TH1Dispatcher = class;
 
-  { Hooks of the server layer, per connection: the connection limit and the
-    metrics (bearings.server). nil, the default, means none: the dispatcher
-    then tests the pointer once per event and does nothing else. Loop
-    thread of the connection. }
+  { Hooks of the server layer, per connection and per request: the
+    connection limit, the metrics and the access log (bearings.server). nil,
+    the default, means none: the dispatcher then tests the pointer once per
+    event and does nothing else. Loop thread of the connection. }
   TConnHooks = class
   public
+    { A request head was parsed into D.Ex.Head (valid during the call; the
+      head may be released before RequestDone, so what a hook needs later
+      it copies now). D.ReqStartNs is the loop clock of this moment. }
+    procedure RequestStarted(D: TH1Dispatcher); virtual; abstract;
+    { The response is complete: its last bytes are in the write buffer
+      (they may still be in flight to the socket). D.Ex.Resp.Head.Status,
+      D.ReqHeadBytes, D.ReqBodyBytes, D.RespBodyBytes and
+      D.Conn.LastHeadBytes describe the exchange; the duration is
+      D.Loop.NowNs - D.ReqStartNs. Not called for a request whose response
+      failed before it was complete (ConnDone reports the outcome). }
+    procedure RequestDone(D: TH1Dispatcher); virtual; abstract;
     { The connection task has released everything (Finish, Abort or
       Destroy). Outcome: how the connection ended (coOther for an abort).
       Upgraded: the transport went to an upgrade handler (TUpgraded), and
@@ -158,6 +171,7 @@ type
     procedure SetErrorText(const S: RawByteString);             { cold }
     procedure SetBodyError(var Err: THyperError);               { cold: the response body source failed }
     procedure AcquireExchange; inline;
+    procedure ResponseDone; inline;                              { Hooks.RequestDone, when there are hooks }
     procedure ReleaseExchange;
     procedure ReleaseIfIdle;
     procedure DropAll;                                           { releases everything the connection holds }
@@ -206,6 +220,13 @@ type
     ObsData: Pointer;                { what Observer.OnAccept returned }
     Hooks: TConnHooks;               { nil = none (the server sets it when a feature needs it) }
     Outcome: TConnOutcome;           { set by Finish before the release; coOther until then (an abort) }
+    { the current request, for the hooks: the loop clock when its head was
+      read (set only with Hooks), the head's bytes, the request body bytes
+      passed to the service, the response body bytes written }
+    ReqStartNs: Int64;
+    ReqHeadBytes: SizeInt;
+    ReqBodyBytes, RespBodyBytes: QWord;
+    HookData: Pointer;               { the hooks' per-connection state (nil until they set it) }
     ConnId: QWord;
     Peer: TSockAddrStorage;
     OwnsTransport: Boolean;          { Finish / Abort free the transport object (default True) }
@@ -378,6 +399,7 @@ begin
   Observer := AObserver;
   ObsData := AObsData;
   Outcome := coOther;              { Hooks is left as set: the server sets it before Setup }
+  HookData := nil;
   ConnId := AConnId;
   InFlight := nil;
   Ex := nil;
@@ -441,6 +463,12 @@ begin
     Ex.Head.Peer := Peer;
     Ex.Head.ConnId := ConnId;
   end;
+end;
+
+procedure TH1Dispatcher.ResponseDone;
+begin
+  if Hooks <> nil then
+    Hooks.RequestDone(Self);
 end;
 
 procedure TH1Dispatcher.ReleaseExchange;
@@ -765,6 +793,7 @@ begin
           poSome:
             if Frame.Kind = ifData then
             begin
+              Inc(ReqBodyBytes, QWord(Frame.Data.Len));
               if not Ex.Chan.TrySendData(Frame.Data) then
               begin
                 { the receiver is gone: drop the chunk and the sender }
@@ -942,6 +971,10 @@ begin
         length, chunked (HTTP/1.1) or close-delimited (HTTP/1.0) for an
         unknown one }
       Conn.WriteHead(Ex.Resp.Head, BL);
+      { no body follows (none, HEAD, 204, 304, or an encoding error): the
+        response is complete here }
+      if not Conn.CanWriteBody then
+        ResponseDone;
     end
     else if not Conn.CanBufferBody then
     begin
@@ -987,22 +1020,33 @@ begin
               ClearBodyRx;
               if not Ok then
                 Exit(prErr);
+              ResponseDone;
             end
             else
             begin
+              Inc(RespBodyBytes, QWord(Data.Len));
               Conn.WriteBodyAndEnd(Data);
               ClearBodyRx;
+              ResponseDone;
             end;
           end
           else if Data.Len = 0 then
             { discarding empty chunk }
             ReleaseBody(Data)
           else
+          begin
+            Inc(RespBodyBytes, QWord(Data.Len));
             Conn.WriteBody(Data);
+            { a Content-Length body reached its length: complete }
+            if not Conn.CanWriteBody then
+              ResponseDone;
+          end;
         fpTrailers:
           begin
             Conn.WriteTrailers(Trailers);
             ClearBodyRx;
+            if not Conn.CanWriteBody then
+              ResponseDone;
           end;
       else
         begin
@@ -1011,6 +1055,7 @@ begin
           ClearBodyRx;
           if not Ok then
             Exit(prErr);
+          ResponseDone;
         end;
       end;
     end
@@ -1022,6 +1067,7 @@ begin
       begin
         if not Conn.EndBody(Err) then
           Exit(prErr);
+        ResponseDone;
       end
       else
         Exit(prPending);
@@ -1100,6 +1146,14 @@ begin
     the service call }
   Inc(FRequestNo);
   Ex.FillHead(Msg, Head, FRequestNo);
+  ReqHeadBytes := Head.Len;
+  ReqBodyBytes := 0;
+  RespBodyBytes := 0;
+  if Hooks <> nil then
+  begin
+    ReqStartNs := Loop.NowNs;
+    Hooks.RequestStarted(Self);
+  end;
   { Call only creates the call; it must not answer or read the body.
     Builds with assertions mark the exchange during Call to check this. }
   {$ifopt C+}

@@ -314,6 +314,8 @@ type
     function TakeError(var Err: THyperError): Boolean;
     { cold helpers }
     function ErrorHeaders: THttpHeaders;
+  public
+    LastHeadBytes: SizeInt;          { the encoded size of the last response head (metrics) }
   end;
   PH1Conn = ^TH1Conn;
 
@@ -1178,13 +1180,18 @@ begin
     Ctx.Date := nil;
   Ctx.Trailers := @Scratch.TrailerNames;
   if Io.CanHeadersBuf then
-    R := ServerEncode(Head, P, Ctx, Io.HeadersBuf^, Io.Pool, Enc)
+  begin
+    LastHeadBytes := Io.HeadersBuf^.Len;
+    R := ServerEncode(Head, P, Ctx, Io.HeadersBuf^, Io.Pool, Enc);
+    LastHeadBytes := Io.HeadersBuf^.Len - LastHeadBytes;
+  end
   else
   begin
     { entries are queued: the head goes behind them (the cursor is written
       before the queue, so it would land inside the queued response) }
     V := Default(TByteVec);
     R := ServerEncode(Head, P, Ctx, V, Io.Pool, Enc);
+    LastHeadBytes := V.Len;
     if R = serOk then
       Io.BufferAfterQueue(V)
     else if V.Block <> nil then

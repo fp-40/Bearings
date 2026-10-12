@@ -20,6 +20,14 @@
   four loops at the limit resume their listeners when connections close on
   another loop; an upgraded connection holds its slot until its stream
   closes; the count is zero after Stop.
+  TTestAccessLog (TServerConfig.AccessLog): JSON lines for a normal, an
+  error, a HEAD and an HTTP/1.0 request (fields, escapes, the query); the
+  Combined format; a sink that sleeps does not slow the loop, lines are
+  dropped and counted. TTestMetrics (TServerConfig.Metrics): counts after a
+  known sequence (requests, status classes, bytes, the histogram, closed
+  connections by outcome including a parse error, in flight during a slow
+  request); the latency buckets; the Prometheus text for a known snapshot
+  (exact) and from a running server.
   Run: test_server_ops --all --format=plain }
 program test_server_ops;
 
@@ -29,7 +37,8 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   Classes, SysUtils, StrUtils, fpcunit, testregistry, consoletestrunner, Sockets, BaseUnix,
   ctypes, bearings.rt.sys, bearings.rt.buf, bearings.rt.loop, bearings.rt.net, bearings.rt.sd, bearings.rt.stream, bearings.http.headers,
-  bearings.http.exchange, bearings.http1.config, bearings.server;
+  bearings.http.exchange, bearings.http1.config, bearings.http.error, bearings.server, bearings.server.metrics,
+  bearings.server.accesslog;
 
 const
   CRLF = #13#10;
@@ -389,6 +398,21 @@ type
     procedure Four_loops_resume_their_listeners;
     procedure Upgraded_connection_counts_until_closed;
     procedure Count_is_zero_after_stop;
+  end;
+
+  TTestAccessLog = class(TServerCase)
+  published
+    procedure Json_lines_for_normal_error_and_head_requests;
+    procedure Combined_format;
+    procedure Slow_sink_does_not_block_the_loop;
+  end;
+
+  TTestMetrics = class(TServerCase)
+  published
+    procedure Counts_after_a_known_sequence;
+    procedure Latency_buckets;
+    procedure Prometheus_text_for_a_known_snapshot;
+    procedure Prometheus_text_from_a_server;
   end;
 
 procedure TServerCase.StartServer(const Cfg: TServerConfig);
@@ -1290,6 +1314,442 @@ begin
   end;
   AssertEquals('every slot went back', 0, Srv.CountedConnections);
 end;
+{ ---- access log and metrics ---- }
+
+type
+  { collects the lines; SlowMs > 0 makes every Write take that long }
+  TMemSink = class(TLogSink)
+  public
+    Lock: TRTLCriticalSection;
+    Text: RawByteString;
+    Writes: Integer;
+    SlowMs: Integer;
+    constructor Create;
+    destructor Destroy; override;
+    procedure Write(P: PByte; Len: SizeInt); override;
+    function Lines: TStringList;     { the caller frees it }
+  end;
+
+constructor TMemSink.Create;
+begin
+  inherited Create;
+  InitCriticalSection(Lock);
+end;
+
+destructor TMemSink.Destroy;
+begin
+  DoneCriticalSection(Lock);
+  inherited Destroy;
+end;
+
+procedure TMemSink.Write(P: PByte; Len: SizeInt);
+var
+  S: RawByteString;
+begin
+  if SlowMs > 0 then
+    Sleep(SlowMs);
+  SetString(S, PAnsiChar(P), Len);
+  EnterCriticalSection(Lock);
+  Text := Text + S;
+  Inc(Writes);
+  LeaveCriticalSection(Lock);
+end;
+
+function TMemSink.Lines: TStringList;
+begin
+  Result := TStringList.Create;
+  EnterCriticalSection(Lock);
+  Result.Text := Text;
+  LeaveCriticalSection(Lock);
+end;
+
+function LogConfig(Loops: Integer; Sink: TLogSink; Format: TAccessLogFormat): TServerConfig;
+begin
+  Result := TestConfig(Loops);
+  Result.AccessLog.Enabled := True;
+  Result.AccessLog.Format := Format;
+  Result.AccessLog.Sink := Sink;
+  Result.AccessLog.UserAgent := True;
+  Result.Metrics := True;
+end;
+
+{ the value of "key":value in a JSON line (a string without its quotes, or
+  a bare number); '' when absent }
+function JsonField(const Line, Key: RawByteString): RawByteString;
+var
+  I, J: Integer;
+begin
+  I := Pos('"' + Key + '":', Line);
+  if I = 0 then
+    Exit('');
+  I := I + Length(Key) + 3;
+  if Line[I] = '"' then
+  begin
+    J := I + 1;
+    while (J <= Length(Line)) and (Line[J] <> '"') do
+    begin
+      if Line[J] = '\' then
+        Inc(J);
+      Inc(J);
+    end;
+    Result := Copy(Line, I + 1, J - I - 1);
+  end
+  else
+  begin
+    J := I;
+    while (J <= Length(Line)) and (Line[J] in ['0'..'9', '.', '-']) do
+      Inc(J);
+    Result := Copy(Line, I, J - I);
+  end;
+end;
+
+procedure TTestAccessLog.Json_lines_for_normal_error_and_head_requests;
+var
+  Sink: TMemSink;
+  Fd: cint;
+  Eof: Boolean;
+  L: TStringList;
+  Got: RawByteString;
+begin
+  Sink := TMemSink.Create;
+  try
+    StartServer(LogConfig(1, Sink, alfJson));
+    Fd := Connect(Srv.Port);
+    try
+      AssertEquals(Resp('small'), GetOnce(Fd, '/small'));
+      SendAll(Fd, 'GET /nope?x=1&y=2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'User-Agent: t"e\st/1.0' + CRLF + CRLF);
+      Got := RecvUntil(Fd, CRLF + CRLF, Eof);
+      AssertTrue('404: ' + Got, AnsiStartsStr('HTTP/1.1 404', Got));
+      SendAll(Fd, 'HEAD /small HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
+      Got := RecvUntil(Fd, CRLF + CRLF, Eof);
+      AssertTrue('HEAD 200: ' + Got, AnsiStartsStr('HTTP/1.1 200', Got) and (Pos('content-length: 5', Got) > 0));
+      SendAll(Fd, 'GET /small HTTP/1.0' + CRLF + CRLF);
+      Got := RecvUntil(Fd, '', Eof);
+      AssertTrue('HTTP/1.0 closes', Eof and AnsiStartsStr('HTTP/1.0 200', Got));
+    finally
+      fpClose(Fd);
+    end;
+    StopServer;                      { Wait flushes the last lines }
+    L := Sink.Lines;
+    try
+      AssertEquals('four lines: ' + Sink.Text, 4, L.Count);
+      { 1: a normal GET }
+      AssertEquals('GET', JsonField(L[0], 'http.request.method'));
+      AssertEquals('/small', JsonField(L[0], 'url.path'));
+      AssertEquals('', JsonField(L[0], 'url.query'));
+      AssertEquals('1.1', JsonField(L[0], 'network.protocol.version'));
+      AssertEquals('200', JsonField(L[0], 'http.response.status_code'));
+      AssertEquals('5', JsonField(L[0], 'http.response.body.size'));
+      AssertEquals('127.0.0.1', JsonField(L[0], 'client.address'));
+      AssertTrue('time ' + JsonField(L[0], 'time'), (Length(JsonField(L[0], 'time')) = 24)
+        and (JsonField(L[0], 'time')[11] = 'T') and (JsonField(L[0], 'time')[24] = 'Z'));
+      AssertTrue('duration ' + JsonField(L[0], 'http.server.request.duration'),
+        Pos('.', JsonField(L[0], 'http.server.request.duration')) = 2);
+      AssertEquals('no user agent field', 0, Pos('user_agent', L[0]));
+      AssertTrue('starts and ends as an object', (L[0][1] = '{') and (L[0][Length(L[0])] = '}'));
+      { 2: an error status, a query, an escaped user agent }
+      AssertEquals('404', JsonField(L[1], 'http.response.status_code'));
+      AssertEquals('/nope', JsonField(L[1], 'url.path'));
+      AssertEquals('x=1&y=2', JsonField(L[1], 'url.query'));
+      AssertEquals('0', JsonField(L[1], 'http.response.body.size'));
+      AssertEquals('t\"e\\st/1.0', JsonField(L[1], 'user_agent.original'));
+      { 3: HEAD: status 200, no body bytes }
+      AssertEquals('HEAD', JsonField(L[2], 'http.request.method'));
+      AssertEquals('200', JsonField(L[2], 'http.response.status_code'));
+      AssertEquals('0', JsonField(L[2], 'http.response.body.size'));
+      { 4: HTTP/1.0 }
+      AssertEquals('1.0', JsonField(L[3], 'network.protocol.version'));
+    finally
+      L.Free;
+    end;
+  finally
+    Sink.Free;
+  end;
+end;
+
+procedure TTestAccessLog.Combined_format;
+var
+  Sink: TMemSink;
+  Fd: cint;
+  L: TStringList;
+  S: RawByteString;
+begin
+  Sink := TMemSink.Create;
+  try
+    StartServer(LogConfig(1, Sink, alfCombined));
+    Fd := Connect(Srv.Port);
+    try
+      SendAll(Fd, 'GET /small?q=1 HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'User-Agent: curl/8' + CRLF
+        + 'Referer: http://x/from' + CRLF + CRLF);
+      AssertEquals(Resp('small'), RecvBytes(Fd, Length(Resp('small'))));
+    finally
+      fpClose(Fd);
+    end;
+    StopServer;
+    L := Sink.Lines;
+    try
+      AssertEquals(1, L.Count);
+      S := L[0];
+      AssertTrue(S, AnsiStartsStr('127.0.0.1 - - [', S));
+      AssertTrue('date: ' + S, (S[18] = '/') and (S[22] = '/') and (S[27] = ':') and (Pos(' +0000] "GET /small?q=1 HTTP/1.1" 200 5 "http://x/from" "curl/8"', S) > 0));
+      AssertTrue('ends with the agent', AnsiEndsStr('"curl/8"', S));
+    finally
+      L.Free;
+    end;
+  finally
+    Sink.Free;
+  end;
+end;
+
+procedure TTestAccessLog.Slow_sink_does_not_block_the_loop;
+var
+  Sink: TMemSink;
+  Cfg: TServerConfig;
+  Fd: cint;
+  I: Integer;
+  T0: QWord;
+  S: TMetricsSnapshot;
+begin
+  Sink := TMemSink.Create;
+  Sink.SlowMs := 1500;
+  try
+    Cfg := LogConfig(1, Sink, alfJson);
+    Cfg.AccessLog.BufferBytes := 4096;   { about 20 lines per buffer }
+    Cfg.AccessLog.FlushMs := 20;
+    StartServer(Cfg);
+    Fd := Connect(Srv.Port);
+    try
+      T0 := GetTickCount64;
+      for I := 1 to 300 do
+        AssertEquals(Resp('small'), GetOnce(Fd, '/small'));
+      AssertTrue('300 requests answered while the sink sleeps: ' + IntToStr(GetTickCount64 - T0) + ' ms',
+        GetTickCount64 - T0 < 1000);
+    finally
+      fpClose(Fd);
+    end;
+    Srv.Metrics(S);
+    AssertTrue('lines were dropped and counted: ' + IntToStr(S.Total.AccessLogDropped),
+      S.Total.AccessLogDropped > 0);
+    AssertEquals('every request answered', 300, Int64(S.Total.Requests));
+    AssertEquals(Int64(S.Total.AccessLogDropped), Int64(Srv.AccessLog.Dropped));
+    StopServer;
+    AssertTrue('the sink got some lines', Sink.Writes >= 1);
+  finally
+    Sink.Free;
+  end;
+end;
+
+procedure TTestMetrics.Counts_after_a_known_sequence;
+var
+  Cfg: TServerConfig;
+  Fd, Fd2, Fd3: cint;
+  Got: RawByteString;
+  Eof: Boolean;
+  S: TMetricsSnapshot;
+  O: TConnOutcome;
+  Closed: QWord;
+begin
+  Cfg := TestConfig(1);
+  Cfg.Metrics := True;
+  StartServer(Cfg);
+  Srv.Metrics(S);
+  AssertEquals('nothing yet', 0, Int64(S.Total.Requests));
+  AssertEquals(1, S.Loops);
+  Fd := Connect(Srv.Port);
+  AssertEquals(Resp('small'), GetOnce(Fd, '/small'));
+  AssertEquals(Resp('small'), GetOnce(Fd, '/small'));
+  SendAll(Fd, Get('/nope'));
+  Got := RecvUntil(Fd, CRLF + CRLF, Eof);
+  AssertTrue(AnsiStartsStr('HTTP/1.1 404', Got));
+  { a client that sends garbage: a parse error, answered with 400 }
+  Fd2 := Connect(Srv.Port);
+  SendAll(Fd2, 'NOT HTTP' + CRLF + CRLF);
+  Got := RecvUntil(Fd2, '', Eof);
+  AssertTrue('400: ' + Got, AnsiStartsStr('HTTP/1.1 400', Got) and Eof);
+  fpClose(Fd2);
+  { a client that connects and leaves without a request }
+  Fd3 := Connect(Srv.Port);
+  fpClose(Fd3);
+  { in flight: a slow request }
+  SendAll(Fd, Get('/slow'));
+  Sleep(30);
+  Srv.Metrics(S);
+  AssertEquals('one in flight', 1, Int64(S.Total.RequestsInFlight));
+  AssertEquals('one open', 1, Int64(S.Total.OpenConnections));
+  AssertEquals(Resp('slow'), RecvBytes(Fd, Length(Resp('slow'))));
+  fpClose(Fd);
+  Sleep(50);
+  Srv.Metrics(S);
+  AssertEquals('requests', 4, Int64(S.Total.Requests));
+  AssertEquals('2xx', 3, Int64(S.Total.Responses[sc2xx]));
+  AssertEquals('4xx', 1, Int64(S.Total.Responses[sc4xx]));
+  AssertEquals('latency count', 4, Int64(S.Total.LatencyCount));
+  { the slow request's 100 ms timer fires on a millisecond tick: the loop
+    clock may show a little less than 100 ms }
+  AssertTrue('latency sum >= 90 ms (the slow request): ' + IntToStr(S.Total.LatencySumNs),
+    S.Total.LatencySumNs >= 90000000);
+  AssertTrue('the slow request is in a bucket of at least 65 ms',
+    S.Total.Latency[17] + S.Total.Latency[18] + S.Total.Latency[19] + S.Total.Latency[20] >= 1);
+  AssertEquals('request bytes: four heads of known size',
+    Int64(2 * Length(Get('/small')) + Length(Get('/nope')) + Length(Get('/slow'))), Int64(S.Total.RequestBytes));
+  AssertTrue('response bytes > bodies', S.Total.ResponseBytes > 14);
+  AssertEquals('accepted', 3, Int64(S.Total.ConnectionsAccepted));
+  AssertEquals('none open', 0, Int64(S.Total.OpenConnections));
+  AssertEquals('none in flight', 0, Int64(S.Total.RequestsInFlight));
+  Closed := 0;
+  for O := Low(TConnOutcome) to High(TConnOutcome) do
+    Inc(Closed, S.Total.ConnectionsClosed[O]);
+  AssertEquals('three closed', 3, Int64(Closed));
+  AssertEquals('one parse error', 1, Int64(S.Total.ConnectionsClosed[coParse]));
+  AssertTrue('the normal connections ended ok: ' + IntToStr(S.Total.ConnectionsClosed[coOk]),
+    S.Total.ConnectionsClosed[coOk] >= 1);
+  { after Stop the snapshot is taken directly }
+  StopServer;
+end;
+
+procedure TTestMetrics.Latency_buckets;
+begin
+  AssertEquals(0, LatencyBucket(0));
+  AssertEquals(0, LatencyBucket(1));
+  AssertEquals(0, LatencyBucket(1000));
+  AssertEquals(1, LatencyBucket(1001));
+  AssertEquals(1, LatencyBucket(2000));
+  AssertEquals(2, LatencyBucket(2001));
+  AssertEquals(10, LatencyBucket(1024000));
+  AssertEquals(20, LatencyBucket(Int64(1048576) * 1000));
+  AssertEquals(21, LatencyBucket(Int64(1048576) * 1000 + 1000));
+  AssertEquals(24, LatencyBucket(Int64(20) * 1000000000));   { LATENCY_BUCKETS }
+  AssertTrue(StatusClassOf(200) = sc2xx);
+  AssertTrue(StatusClassOf(101) = sc1xx);
+  AssertTrue(StatusClassOf(599) = sc5xx);
+  AssertTrue(StatusClassOf(999) = scOther);
+end;
+
+procedure TTestMetrics.Prometheus_text_for_a_known_snapshot;
+var
+  S: TMetricsSnapshot;
+  T, Expected: RawByteString;
+  I: Integer;
+const
+  LE: array[0..23] of RawByteString = ('0.000001', '0.000002', '0.000004', '0.000008', '0.000016',
+    '0.000032', '0.000064', '0.000128', '0.000256', '0.000512', '0.001024', '0.002048', '0.004096',
+    '0.008192', '0.016384', '0.032768', '0.065536', '0.131072', '0.262144', '0.524288', '1.048576',
+    '2.097152', '4.194304', '8.388608');
+  CUM: array[0..24] of Integer = (0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3);
+begin
+  S := Default(TMetricsSnapshot);
+  S.Loops := 2;
+  S.WorkerQueueLength := 4;
+  S.WorkerThreads := 8;
+  S.CountedConnections := 7;
+  MetricsResponse(S.Total, 200, 1500, 100, 300);           { 2 us: bucket 1 }
+  MetricsResponse(S.Total, 404, 3000000, 50, 60);          { 3 ms: bucket 12 }
+  MetricsResponse(S.Total, 503, 20000000000, 1, 1);        { 20 s: above the last bucket }
+  Inc(S.Total.Requests, 5);
+  Inc(S.Total.ConnectionsClosed[coOk], 3);
+  Inc(S.Total.ConnectionsClosed[coTimeout], 1);
+  S.Total.OpenConnections := 6;
+  S.Total.RequestsInFlight := 2;
+  S.Total.PooledBufferBytes := 65536;
+  S.Total.ConnectionsAccepted := 10;
+  S.Total.ListenerErrorPauses := 1;
+  S.Total.ListenerLimitPauses := 2;
+  S.Total.AccessLogDropped := 9;
+  Expected :=
+    '# HELP bearings_connections_open HTTP connections open now.'#10
+    + '# TYPE bearings_connections_open gauge'#10
+    + 'bearings_connections_open 6'#10
+    + '# HELP bearings_connections_counted Connections holding a slot of the connection limit (0 without a limit).'#10
+    + '# TYPE bearings_connections_counted gauge'#10
+    + 'bearings_connections_counted 7'#10
+    + '# HELP bearings_connections_accepted_total Connections accepted by the listeners.'#10
+    + '# TYPE bearings_connections_accepted_total counter'#10
+    + 'bearings_connections_accepted_total 10'#10
+    + '# HELP bearings_connections_closed_total Connections closed, by outcome.'#10
+    + '# TYPE bearings_connections_closed_total counter'#10
+    + 'bearings_connections_closed_total{outcome="ok"} 3'#10
+    + 'bearings_connections_closed_total{outcome="timeout"} 1'#10
+    + 'bearings_connections_closed_total{outcome="parse_too_large"} 0'#10
+    + 'bearings_connections_closed_total{outcome="parse_version_h2"} 0'#10
+    + 'bearings_connections_closed_total{outcome="parse"} 0'#10
+    + 'bearings_connections_closed_total{outcome="incomplete"} 0'#10
+    + 'bearings_connections_closed_total{outcome="user"} 0'#10
+    + 'bearings_connections_closed_total{outcome="canceled"} 0'#10
+    + 'bearings_connections_closed_total{outcome="closed"} 0'#10
+    + 'bearings_connections_closed_total{outcome="body_write_aborted"} 0'#10
+    + 'bearings_connections_closed_total{outcome="shutdown"} 0'#10
+    + 'bearings_connections_closed_total{outcome="io"} 0'#10
+    + 'bearings_connections_closed_total{outcome="other"} 0'#10
+    + '# HELP bearings_requests_total Request heads read.'#10
+    + '# TYPE bearings_requests_total counter'#10
+    + 'bearings_requests_total 5'#10
+    + '# HELP bearings_requests_in_flight Requests being handled or answered now.'#10
+    + '# TYPE bearings_requests_in_flight gauge'#10
+    + 'bearings_requests_in_flight 2'#10
+    + '# HELP bearings_responses_total Responses completed, by status class.'#10
+    + '# TYPE bearings_responses_total counter'#10
+    + 'bearings_responses_total{status="1xx"} 0'#10
+    + 'bearings_responses_total{status="2xx"} 1'#10
+    + 'bearings_responses_total{status="3xx"} 0'#10
+    + 'bearings_responses_total{status="4xx"} 1'#10
+    + 'bearings_responses_total{status="5xx"} 1'#10
+    + 'bearings_responses_total{status="other"} 0'#10
+    + '# HELP bearings_request_bytes_total HTTP bytes received: request heads and bodies.'#10
+    + '# TYPE bearings_request_bytes_total counter'#10
+    + 'bearings_request_bytes_total 151'#10
+    + '# HELP bearings_response_bytes_total HTTP bytes sent: response heads and bodies.'#10
+    + '# TYPE bearings_response_bytes_total counter'#10
+    + 'bearings_response_bytes_total 361'#10
+    + '# HELP bearings_request_duration_seconds Time from the request head to the complete response.'#10
+    + '# TYPE bearings_request_duration_seconds histogram'#10;
+  for I := 0 to 23 do
+    Expected := Expected + 'bearings_request_duration_seconds_bucket{le="' + LE[I] + '"} ' + IntToStr(CUM[I]) + #10;
+  Expected := Expected
+    + 'bearings_request_duration_seconds_bucket{le="+Inf"} 3'#10
+    + 'bearings_request_duration_seconds_sum 20.003001500'#10
+    + 'bearings_request_duration_seconds_count 3'#10
+    + '# HELP bearings_listener_pauses_total Times a listener left epoll, by reason.'#10
+    + '# TYPE bearings_listener_pauses_total counter'#10
+    + 'bearings_listener_pauses_total{reason="error"} 1'#10
+    + 'bearings_listener_pauses_total{reason="limit"} 2'#10
+    + '# HELP bearings_worker_queue_length Work items queued for the worker pool.'#10
+    + '# TYPE bearings_worker_queue_length gauge'#10
+    + 'bearings_worker_queue_length 4'#10
+    + '# HELP bearings_worker_threads Worker threads.'#10
+    + '# TYPE bearings_worker_threads gauge'#10
+    + 'bearings_worker_threads 8'#10
+    + '# HELP bearings_buffer_pool_bytes Bytes held in the loops'' buffer pools.'#10
+    + '# TYPE bearings_buffer_pool_bytes gauge'#10
+    + 'bearings_buffer_pool_bytes 65536'#10
+    + '# HELP bearings_access_log_dropped_total Access log lines dropped because a buffer was full.'#10
+    + '# TYPE bearings_access_log_dropped_total counter'#10
+    + 'bearings_access_log_dropped_total 9'#10
+    + '# HELP bearings_loops Event loops.'#10
+    + '# TYPE bearings_loops gauge'#10
+    + 'bearings_loops 2'#10;
+  T := MetricsToPrometheus(S);
+  AssertEquals(Expected, T);
+end;
+
+procedure TTestMetrics.Prometheus_text_from_a_server;
+var
+  Cfg: TServerConfig;
+  Fd: cint;
+  T: RawByteString;
+begin
+  Cfg := TestConfig(2);
+  Cfg.Metrics := True;
+  StartServer(Cfg);
+  Fd := Connect(Srv.Port);
+  AssertEquals(Resp('small'), GetOnce(Fd, '/small'));
+  fpClose(Fd);
+  Sleep(30);
+  T := Srv.PrometheusText;
+  AssertTrue(T, Pos('bearings_requests_total 1'#10, T) > 0);
+  AssertTrue(T, Pos('bearings_responses_total{status="2xx"} 1'#10, T) > 0);
+  AssertTrue(T, Pos('bearings_loops 2'#10, T) > 0);
+  AssertTrue(T, Pos('bearings_request_duration_seconds_count 1'#10, T) > 0);
+end;
 
 begin
   if ParamStr(1) = '--sd-child' then
@@ -1301,6 +1761,8 @@ begin
   RegisterTest(TTestUnixSocket);
   RegisterTest(TTestSystemd);
   RegisterTest(TTestConnLimit);
+  RegisterTest(TTestAccessLog);
+  RegisterTest(TTestMetrics);
   with TTestRunner.Create(nil) do
   try
     Initialize;

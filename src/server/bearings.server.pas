@@ -77,6 +77,24 @@
   which receives the peer address. With the limit off, the accept path
   tests one integer and the connection task one pointer.
 
+  Access log and metrics (bearings.server.accesslog, bearings.server.metrics).
+  Both are off by default and hang on the same per-connection hooks as the
+  limit (TServerHooks): a request costs one pointer test when they are off,
+  and when they are on the loop does the work itself, with no allocation
+  and no atomic operation. Config.AccessLog.Enabled writes one line per
+  completed request (JSON by default, or the Combined Log Format) into the
+  loop's buffer; a flusher thread writes the buffers to the sink (stdout
+  unless the configuration names another). What a line needs from the
+  request head (method, target, User-Agent, Referer) is copied when the
+  head is read, into a block from the loop's pool, because the head may
+  be released before the response is complete. Config.Metrics keeps per-loop
+  counters (requests, responses by status class, bytes, a latency
+  histogram, connections closed by outcome); TServer.Metrics adds the
+  loops together into a TMetricsSnapshot, asking each running loop for its
+  copy on its own thread, and PrometheusText renders it. Requests in flight
+  are counted at snapshot time: the connections with a service call in
+  progress or a response body being written.
+
   systemd (bearings.rt.sd). Socket activation: a TListenSpec with
   InheritedFd > 0 names a listening socket that is already open, such as
   one systemd passed (LISTEN_FDS); Start uses it instead of creating a
@@ -158,12 +176,23 @@ interface
 
 uses
   SysUtils, ctypes, bearings.rt.sys, bearings.rt.cpu, bearings.rt.timer, bearings.rt.loop, bearings.rt.net, bearings.rt.buf,
-  bearings.rt.sync, bearings.rt.workers, bearings.rt.sd, bearings.http.error, bearings.http.exchange, bearings.http1.config, bearings.http1.dispatch;
+  bearings.rt.sync, bearings.rt.workers, bearings.rt.sd, bearings.http.error, bearings.http.exchange, bearings.http1.config, bearings.http1.dispatch,
+  bearings.server.metrics, bearings.server.accesslog;
 
 type
   TConnOutcome = bearings.http.error.TConnOutcome;
   TConnParts = bearings.http.exchange.TConnParts;
   TConnObserver = bearings.http.exchange.TConnObserver;
+
+  { The access log (bearings.server.accesslog). }
+  TAccessLogConfig = record
+    Enabled: Boolean;
+    Format: TAccessLogFormat;        { alfJson (the default) or alfCombined }
+    Sink: TLogSink;                  { nil = stdout; not owned }
+    BufferBytes: Integer;            { per loop; 0 = 64 KiB }
+    FlushMs: Integer;                { the flusher's period; 0 = 100 }
+    UserAgent: Boolean;              { include the User-Agent header }
+  end;
 
   TServerConfig = record
     Listen: TListenSpec;
@@ -179,6 +208,8 @@ type
     WorkerWaitMs: Integer;           { Wait / Destroy: wait for queued and running items (0 = 30 000) }
     GraceMs: Integer;                { the grace period RunUntilSignal passes to Stop }
     MaxConnections: Integer;         { connections open at once, all loops; 0 = no limit }
+    AccessLog: TAccessLogConfig;
+    Metrics: Boolean;                { keep the counters of TServer.Metrics }
     { send the systemd watchdog heartbeat (WATCHDOG=1) while every loop
       makes progress; only when WATCHDOG_USEC is set (bearings.rt.sd) }
     Watchdog: Boolean;
@@ -203,6 +234,8 @@ type
     FWdPosted: LongInt;              { 1 while a ping is in the inbox }
     FLimitMsg: TLoopMsg;             { resume the listeners paused by the connection limit (lmCall) }
     FLimitPosted: LongInt;           { 1 while FLimitMsg is in the inbox }
+    FMetricsMsg: TLoopMsg;           { copy this loop's metrics for a snapshot (lmCall) }
+    procedure SnapshotMetrics(var M: TLoopMetrics);   { loop thread, or after the loop exited }
     procedure OnAccept(ALoop: TLoop; var Fd: cint; const Peer: TSockAddrStorage);
     procedure ResumeListeners;       { loop thread: ResumeFromLimit on every listener }
     procedure ConnsEmpty(List: PConnList);
@@ -250,6 +283,9 @@ type
     FWdRunning: Boolean;
     FHooks: TServerHooks;          { nil unless a feature needs the per-connection hooks }
     FConnCount: LongInt;           { the connection limit's count (open connections, upgraded ones included) }
+    FMetricsPending: LongInt;
+    FMetricsEvent: PRTLEvent;
+    FMetricsLock: TRTLCriticalSection;
     procedure DoStart(CallerRunsLoop0: Boolean);
     procedure ConnReleased;        { a slot of the connection limit went back; any loop thread }
     procedure RemoveUnixSocket;    { deletes the socket files Start created; idempotent }
@@ -303,6 +339,15 @@ type
     { The connection limit's count: connections that hold a slot (upgraded
       ones included); 0 when MaxConnections is 0. Any thread. }
     function CountedConnections: Integer;
+    { The metrics of every loop added together (Config.Metrics; zeros
+      otherwise, with the gauges still filled). A running loop copies its
+      counters on its own thread (a message and a wait); after Stop and
+      Wait the copies are taken directly. Not from a loop thread. }
+    procedure Metrics(out S: TMetricsSnapshot);
+    { Metrics as the Prometheus text exposition (bearings.server.metrics). }
+    function PrometheusText: RawByteString;
+    { the access log, when enabled; nil otherwise }
+    function AccessLog: TAccessLog;
     { Start completed (a Start that raised leaves it False) }
     property Started: Boolean read FStarted;
     { the worker pool (Config.Workers >= 0), created by Start before the services; nil otherwise }
@@ -318,6 +363,14 @@ type
   TServerHooks = class(TConnHooks)
   public
     Server: TServer;
+    MetricsOn: Boolean;
+    Metrics: array of TLoopMetrics;  { per loop; written by that loop only }
+    Snap: array of TLoopMetrics;     { the copies a snapshot collects }
+    Log: TAccessLog;                 { nil when the access log is off }
+    LogUserAgent: Boolean;
+    destructor Destroy; override;
+    procedure RequestStarted(D: TH1Dispatcher); override;
+    procedure RequestDone(D: TH1Dispatcher); override;
     procedure ConnDone(D: TH1Dispatcher; Outcome: TConnOutcome; Upgraded: Boolean); override;
     procedure UpgradedClosed; override;
   end;
@@ -505,8 +558,152 @@ end;
 
 { ---- TServerHooks ---- }
 
+type
+  { What the access log keeps from the request head until the response is
+    complete, in a block from the loop's pool: the lengths, then the bytes
+    of the method, the target, the User-Agent and the Referer, one after
+    the other (truncated to what the block holds). }
+  PLogStage = ^TLogStage;
+  TLogStage = record
+    Block: PBufBlock;
+    MethodLen, TargetLen, UALen, RefLen: SizeInt;
+    HasUA, HasRef: Boolean;
+    Bytes: array[0..0] of Byte;
+  end;
+
+const
+  LOG_STAGE_BYTES = 4096;
+
+destructor TServerHooks.Destroy;
+begin
+  Log.Free;
+  inherited Destroy;
+end;
+
+{ copies at most Room bytes of P to Dst; returns how many }
+function StageCopy(Dst: PByte; Room: SizeInt; P: PByte; Len: SizeInt): SizeInt;
+begin
+  if Len > Room then
+    Len := Room;
+  if Len > 0 then
+    Move(P^, Dst^, Len);
+  Result := Len;
+end;
+
+procedure TServerHooks.RequestStarted(D: TH1Dispatcher);
+var
+  B: PBufBlock;
+  St: PLogStage;
+  P, Dst: PByte;
+  Room, N: SizeInt;
+  M, T: TByteSlice;
+begin
+  if MetricsOn then
+    Inc(Metrics[D.Loop.Index].Requests);
+  if Log = nil then
+    Exit;
+  { the head may be gone before RequestDone: copy what the line needs }
+  B := PBufBlock(D.HookData);
+  if B = nil then
+  begin
+    B := BlockAlloc(@D.Loop.Blocks, LOG_STAGE_BYTES);
+    D.HookData := B;
+  end;
+  St := PLogStage(B^.Data);
+  St^.Block := B;
+  Dst := @St^.Bytes[0];
+  Room := B^.Size - (Dst - B^.Data);
+  M := D.Ex.MethodBytes;
+  St^.MethodLen := StageCopy(Dst, Room, M.P, M.Len);
+  Inc(Dst, St^.MethodLen);
+  Dec(Room, St^.MethodLen);
+  T := D.Ex.Target;
+  St^.TargetLen := StageCopy(Dst, Room, T.P, T.Len);
+  Inc(Dst, St^.TargetLen);
+  Dec(Room, St^.TargetLen);
+  St^.UALen := 0;
+  St^.HasUA := LogUserAgent and D.Ex.Head.Headers.Get('user-agent', P, N);
+  if St^.HasUA then
+  begin
+    St^.UALen := StageCopy(Dst, Room, P, N);
+    Inc(Dst, St^.UALen);
+    Dec(Room, St^.UALen);
+  end;
+  St^.RefLen := 0;
+  St^.HasRef := D.Ex.Head.Headers.Get('referer', P, N);
+  if St^.HasRef then
+    St^.RefLen := StageCopy(Dst, Room, P, N);
+end;
+
+procedure TServerHooks.RequestDone(D: TH1Dispatcher);
+var
+  Idx: Integer;
+  Dur: Int64;
+  St: PLogStage;
+  R: TAccessRecord;
+  P: PByte;
+begin
+  Idx := D.Loop.Index;
+  Dur := D.Loop.NowNs - D.ReqStartNs;
+  if MetricsOn then
+    MetricsResponse(Metrics[Idx], D.Ex.Resp.Head.Status, Dur,
+      QWord(D.ReqHeadBytes) + D.ReqBodyBytes, QWord(D.Conn.LastHeadBytes) + D.RespBodyBytes);
+  if (Log = nil) or (D.HookData = nil) then
+    Exit;
+  St := PLogStage(PBufBlock(D.HookData)^.Data);
+  R.TimeUs := RealNowUs;
+  R.Peer := @D.Peer;
+  P := @St^.Bytes[0];
+  R.Method := P;
+  R.MethodLen := St^.MethodLen;
+  Inc(P, St^.MethodLen);
+  R.Target := P;
+  R.TargetLen := St^.TargetLen;
+  Inc(P, St^.TargetLen);
+  if St^.HasUA then
+  begin
+    R.UserAgent := P;
+    R.UserAgentLen := St^.UALen;
+    Inc(P, St^.UALen);
+  end
+  else
+  begin
+    R.UserAgent := nil;
+    R.UserAgentLen := 0;
+  end;
+  if St^.HasRef then
+  begin
+    R.Referer := P;
+    R.RefererLen := St^.RefLen;
+  end
+  else
+  begin
+    R.Referer := nil;
+    R.RefererLen := 0;
+  end;
+  R.Version := D.Ex.Head.Version;
+  R.Status := D.Ex.Resp.Head.Status;
+  R.BodyBytes := D.RespBodyBytes;
+  R.DurationNs := Dur;
+  Log.Buffer(Idx).Append(R);
+  { the stage block goes back to the pool; the next request takes one again }
+  BlockFree(St^.Block);
+  D.HookData := nil;
+end;
+
 procedure TServerHooks.ConnDone(D: TH1Dispatcher; Outcome: TConnOutcome; Upgraded: Boolean);
 begin
+  if D <> nil then
+  begin
+    if MetricsOn then
+      Inc(Metrics[D.Loop.Index].ConnectionsClosed[Outcome]);
+    if D.HookData <> nil then
+    begin
+      { a request whose response never completed: its stage goes back }
+      BlockFree(PBufBlock(D.HookData));
+      D.HookData := nil;
+    end;
+  end;
   { an upgraded connection keeps its slot until UpgradedClosed }
   if not Upgraded then
     Server.ConnReleased;
@@ -621,6 +818,54 @@ begin
   end;
 end;
 
+{ a metrics snapshot: this loop copies its counters and gauges (lmCall) }
+procedure MetricsProc(Loop: TLoop; Arg: Pointer);
+var
+  SL: TServerLoop;
+begin
+  SL := TServerLoop(Arg);
+  SL.SnapshotMetrics(SL.Server.FHooks.Snap[SL.Index]);
+  if InterlockedDecrement(SL.Server.FMetricsPending) = 0 then
+    RTLEventSetEvent(SL.Server.FMetricsEvent);
+end;
+
+procedure TServerLoop.SnapshotMetrics(var M: TLoopMetrics);
+var
+  D: TH1Dispatcher;
+  I: Integer;
+  H: TServerHooks;
+begin
+  H := Server.FHooks;
+  if (H <> nil) and H.MetricsOn then
+    M := H.Metrics[Index]
+  else
+    M := Default(TLoopMetrics);
+  M.OpenConnections := Conns.Count;
+  M.RequestsInFlight := 0;
+  D := Conns.Head;
+  while D <> nil do
+  begin
+    if (D.InFlight <> nil) or (D.BodyRx.Kind <> obNone) then
+      Inc(M.RequestsInFlight);
+    D := D.NextConn;
+  end;
+  M.PooledBufferBytes := Loop.Blocks.PooledBytes;
+  M.ConnectionsAccepted := 0;
+  M.ListenerErrorPauses := 0;
+  M.ListenerLimitPauses := 0;
+  for I := 0 to High(Listeners) do
+    if Listeners[I] <> nil then
+    begin
+      Inc(M.ConnectionsAccepted, Listeners[I].Accepted);
+      Inc(M.ListenerErrorPauses, Listeners[I].Pauses);
+      Inc(M.ListenerLimitPauses, Listeners[I].LimitPauses);
+    end;
+  if (H <> nil) and (H.Log <> nil) then
+    M.AccessLogDropped := H.Log.Buffer(Index).Dropped
+  else
+    M.AccessLogDropped := 0;
+end;
+
 { the connection limit: a connection closed on another loop; this loop's
   listeners may accept again }
 procedure LimitResumeProc(Loop: TLoop; Arg: Pointer);
@@ -705,7 +950,9 @@ begin
   FObserver := Observer;
   FGsEvent := RTLEventCreate;
   FWdStop := RTLEventCreate;
+  FMetricsEvent := RTLEventCreate;
   InitCriticalSection(FGsLock);
+  InitCriticalSection(FMetricsLock);
 end;
 
 constructor TServer.CreateWithProc(const Cfg: TServerConfig; Factory: TServiceProc;
@@ -727,9 +974,12 @@ var
       left allocated (leaked) instead of freed under them }
     FLoops := nil;
     FWorkers := nil;
+    FHooks := nil;                 { the leaked connection tasks may still call it }
     RTLEventDestroy(FGsEvent);
     RTLEventDestroy(FWdStop);
+    RTLEventDestroy(FMetricsEvent);
     DoneCriticalSection(FGsLock);
+    DoneCriticalSection(FMetricsLock);
   end;
 
 begin
@@ -808,7 +1058,9 @@ begin
   FreeAndNil(FHooks);
   RTLEventDestroy(FGsEvent);
   RTLEventDestroy(FWdStop);
+  RTLEventDestroy(FMetricsEvent);
   DoneCriticalSection(FGsLock);
+  DoneCriticalSection(FMetricsLock);
   inherited Destroy;
 end;
 
@@ -825,6 +1077,72 @@ end;
 function TServer.CountedConnections: Integer;
 begin
   Result := AtomicLoad(FConnCount);
+end;
+
+function TServer.AccessLog: TAccessLog;
+begin
+  if FHooks <> nil then
+    Result := FHooks.Log
+  else
+    Result := nil;
+end;
+
+procedure TServer.Metrics(out S: TMetricsSnapshot);
+var
+  I, Posted: Integer;
+  Own: array of TLoopMetrics;
+begin
+  S := Default(TMetricsSnapshot);
+  S.Loops := Length(FLoops);
+  if FWorkers <> nil then
+  begin
+    S.WorkerQueueLength := FWorkers.QueueLength;
+    S.WorkerThreads := FWorkers.ThreadCount;
+  end;
+  S.CountedConnections := CountedConnections;
+  if Length(FLoops) = 0 then
+    Exit;
+  EnterCriticalSection(FMetricsLock);
+  try
+    if FHooks <> nil then
+      SetLength(FHooks.Snap, Length(FLoops))
+    else
+      SetLength(Own, Length(FLoops));
+    { a running loop copies on its own thread; a loop that exited (after
+      Stop and Wait) or never started is read here }
+    RTLEventResetEvent(FMetricsEvent);
+    Posted := 0;
+    for I := 0 to High(FLoops) do
+      if (FLoops[I] <> nil) and FLoops[I].Running and (FHooks <> nil) then
+        Inc(Posted);
+    FMetricsPending := Posted;
+    for I := 0 to High(FLoops) do
+      if FLoops[I] <> nil then
+        if FLoops[I].Running and (FHooks <> nil) then
+          FLoops[I].Loop.Post(@FLoops[I].FMetricsMsg)
+        else if FHooks <> nil then
+          FLoops[I].SnapshotMetrics(FHooks.Snap[I])
+        else
+          FLoops[I].SnapshotMetrics(Own[I]);
+    if Posted > 0 then
+      RTLEventWaitFor(FMetricsEvent);
+    for I := 0 to High(FLoops) do
+      if FLoops[I] <> nil then
+        if FHooks <> nil then
+          MetricsAdd(S.Total, FHooks.Snap[I])
+        else
+          MetricsAdd(S.Total, Own[I]);
+  finally
+    LeaveCriticalSection(FMetricsLock);
+  end;
+end;
+
+function TServer.PrometheusText: RawByteString;
+var
+  S: TMetricsSnapshot;
+begin
+  Metrics(S);
+  Result := MetricsToPrometheus(S);
 end;
 
 procedure TServer.ConnReleased;
@@ -997,10 +1315,20 @@ begin
     FWorkers := TWorkerPool.Create(FCfg.Workers, FCfg.WorkerHooks, FCfg.WorkerQueueLimit);
   Cpus := UsableCpus;
   SetLength(FLoops, N);
-  if (FCfg.MaxConnections > 0) and (FHooks = nil) then
+  if ((FCfg.MaxConnections > 0) or FCfg.Metrics or FCfg.AccessLog.Enabled) and (FHooks = nil) then
   begin
     FHooks := TServerHooks.Create;
     FHooks.Server := Self;
+    FHooks.MetricsOn := FCfg.Metrics;
+    SetLength(FHooks.Metrics, N);
+    for I := 0 to N - 1 do
+      FHooks.Metrics[I] := Default(TLoopMetrics);
+    if FCfg.AccessLog.Enabled then
+    begin
+      FHooks.Log := TAccessLog.Create(N, FCfg.AccessLog.BufferBytes, FCfg.AccessLog.Format,
+        FCfg.AccessLog.UserAgent, FCfg.AccessLog.Sink, FCfg.AccessLog.FlushMs);
+      FHooks.LogUserAgent := FCfg.AccessLog.UserAgent;
+    end;
   end;
   { the listen specs: Listen, then AlsoListen. A Unix socket has one path
     and an inherited socket is one socket: their loops share it }
@@ -1041,6 +1369,9 @@ begin
     SL.FLimitMsg.Kind := lmCall;
     SL.FLimitMsg.Proc := @LimitResumeProc;
     SL.FLimitMsg.Arg := SL;
+    SL.FMetricsMsg.Kind := lmCall;
+    SL.FMetricsMsg.Proc := @MetricsProc;
+    SL.FMetricsMsg.Arg := SL;
     if Assigned(FFactory) then
       SL.Service := FFactory(SL.Loop)
     else
@@ -1110,6 +1441,8 @@ begin
   end;
   FStarted := True;
   FCallerLoop0 := CallerRunsLoop0;
+  if (FHooks <> nil) and (FHooks.Log <> nil) then
+    FHooks.Log.Start;
   for I := 0 to N - 1 do
   begin
     FLoops[I].Running := True;
@@ -1139,7 +1472,15 @@ begin
       FLoops[I].Running := False;
     end;
   if FStopRequested then
+  begin
     JoinWatchdog;
+    { every loop has left Run: the last access log lines are flushed }
+    for I := 0 to High(FLoops) do
+      if (FLoops[I] <> nil) and FLoops[I].Running then
+        Exit;
+    if (FHooks <> nil) and (FHooks.Log <> nil) then
+      FHooks.Log.Stop;
+  end;
   { after a Stop the worker pool is shut down once every loop has left
     Run (each left with no connection, or aborted the rest at the
     deadline, so no new item can be queued); Destroy calls Shutdown again,

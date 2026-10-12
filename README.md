@@ -22,9 +22,10 @@ It has no TLS, no HTTP/2 and no WebSocket protocol code yet. For TLS, put a
 reverse proxy such as nginx in front of it. WebSocket support on top of the
 existing upgrade hand-off is planned work: `docs/handoff-websocket.md`. It
 listens on TCP or on a Unix domain socket, runs under systemd socket
-activation with readiness and watchdog notifications, and can cap the
-number of open connections; an access log and metrics are planned:
-`docs/handoff-operations.md`.
+activation with readiness and watchdog notifications, can cap the number
+of open connections, and can write an access log (JSON lines or the
+Combined Log Format) and keep metrics with a Prometheus text export
+(`docs/api.md`, section 2).
 
 ## Requirements
 
@@ -245,7 +246,7 @@ them.
 | `src/rt`      | `bearings.rt.*`, `bearings.version` | Runtime: system calls, clocks, the per-thread event loop (`bearings.rt.loop`), timers, buffer pool, TCP and Unix socket listener and transport, worker threads, systemd integration (`bearings.rt.sd`). Knows nothing about HTTP. |
 | `src/http1`   | `bearings.http1.*`, `bearings.http.date`, `bearings.http.headers`, `bearings.http.uri` | HTTP/1.1: request parser, response encoder, body decoder, connection state machine, dispatcher. `bearings.http.date` keeps each loop's Date header through the loop's tick hook (`LoopTickProc`, `TLoop.Ext`). |
 | `src/http`    | `bearings.http.exchange`, `bearings.http.error` | The request/response exchange that a service (application) handles, inline on the loop or on a worker thread. |
-| `src/server`  | `bearings.server`        | `TServer`: listeners, loops, workers, signals, graceful stop. |
+| `src/server`  | `bearings.server`, `bearings.server.accesslog`, `bearings.server.metrics` | `TServer`: listeners, loops, workers, signals, graceful stop, the connection limit; the access log and the metrics. |
 
 An application puts all four directories on its unit path (`-Fu`). The
 units a program normally uses directly are `bearings.server`,

@@ -167,6 +167,8 @@ apart in an overload, hence the separate names.
 | `GraceMs: Integer` | the grace period `RunUntilSignal` passes to `Stop` |
 | `AlsoListen: array of TListenSpec` | more places to listen on; every loop serves all of them (below) |
 | `MaxConnections: Integer` | connections open at once over all loops; 0 = no limit (below) |
+| `AccessLog: TAccessLogConfig` | one line per completed request, off by default (below) |
+| `Metrics: Boolean` | keep the counters `TServer.Metrics` reports (below) |
 | `Watchdog: Boolean` | send the systemd watchdog heartbeat while every loop makes progress (below; the production preset sets it) |
 
 `TListenSpec` (unit `bearings.rt.net`): `Host` (`'0.0.0.0'`,
@@ -230,6 +232,57 @@ application facing clients directly can close a connection in
 `TConnObserver.OnAccept`, which receives the peer address. With the limit
 off, the accept path tests one integer and the connection task one
 pointer.
+
+### Access log and metrics (units `bearings.server.accesslog`, `bearings.server.metrics`)
+
+Both are off by default. When off, a request costs one pointer test; when
+on, the loop does the work itself with no allocation and no atomic
+operation.
+
+`AccessLog: TAccessLogConfig` writes one line per completed request (the
+response's last bytes handed to the write buffer; automatic error
+responses to unparsable requests are not logged):
+
+| Field | Meaning |
+|-------|---------|
+| `Enabled` | turn the log on |
+| `Format` | `alfJson` (default): one JSON object per line with the OpenTelemetry HTTP field names `time` (RFC 3339 UTC, milliseconds), `client.address` (`"unix"` on a Unix socket), `http.request.method`, `url.path`, `url.query` (when present), `network.protocol.version`, `http.response.status_code`, `http.response.body.size`, `http.server.request.duration` (seconds, by the loop's clock, which is sampled once per iteration: a request answered in the iteration that read it shows 0), `user_agent.original` (when present and `UserAgent` is set); `alfCombined`: the Combined Log Format (`host - - [time] "request line" status bytes "referer" "agent"`) |
+| `Sink: TLogSink` | where the lines go; nil = stdout (`TFdSink`); an application's own sink overrides `Write(P, Len)`, which runs on the flusher thread and may block |
+| `BufferBytes` | per-loop buffer size (two areas of this size); 0 = 64 KiB |
+| `FlushMs` | the flusher thread's period; 0 = 100 ms; a half-full buffer wakes it early |
+| `UserAgent` | include the User-Agent header |
+
+The loop formats each line into its buffer under a spin lock; the flusher
+thread swaps the buffer's two areas and writes the full one to the sink.
+A line that does not fit is dropped and counted (`TServer.AccessLog.Dropped`,
+`bearings_access_log_dropped_total`), so a slow sink never stalls a loop.
+`Wait` flushes the last lines after the loops stopped.
+
+`Metrics: Boolean` keeps per-loop counters; `TServer.Metrics(out S:
+TMetricsSnapshot)` adds them together (each running loop copies its own on
+its thread; not from a loop thread) and `TServer.PrometheusText` renders
+the snapshot with `MetricsToPrometheus`: `# HELP` and `# TYPE` lines,
+names with the `bearings_` prefix, fixed label sets. The metrics:
+
+| Metric | Kind | Meaning |
+|--------|------|---------|
+| `bearings_connections_open` | gauge | HTTP connections in the loops' lists |
+| `bearings_connections_counted` | gauge | the connection limit's count (0 without a limit) |
+| `bearings_connections_accepted_total` | counter | accepted by the listeners |
+| `bearings_connections_closed_total{outcome=...}` | counter | by `TConnOutcome` (`ok`, `timeout`, `parse_too_large`, `parse_version_h2`, `parse`, `incomplete`, `user`, `canceled`, `closed`, `body_write_aborted`, `shutdown`, `io`, `other`) |
+| `bearings_requests_total` | counter | request heads read |
+| `bearings_requests_in_flight` | gauge | connections with a service call in progress or a response body being written (counted at snapshot time) |
+| `bearings_responses_total{status=...}` | counter | completed responses by class `1xx` .. `5xx`, `other` |
+| `bearings_request_bytes_total`, `bearings_response_bytes_total` | counter | HTTP bytes: heads and bodies |
+| `bearings_request_duration_seconds` | histogram | head read to complete response; buckets `le` = 2^K microseconds, K = 0..23, plus `+Inf`; `_sum`, `_count` |
+| `bearings_listener_pauses_total{reason="error"|"limit"}` | counter | listeners taken out of epoll |
+| `bearings_worker_queue_length`, `bearings_worker_threads` | gauge | the worker pool |
+| `bearings_buffer_pool_bytes` | gauge | bytes held in the loops' buffer pools |
+| `bearings_access_log_dropped_total` | counter | see above |
+| `bearings_loops` | gauge | event loops |
+
+Serving the text at an HTTP path such as `/metrics` is the application's
+job; `MetricsToPrometheus` does no I/O.
 
 ### systemd (unit `bearings.rt.sd`)
 

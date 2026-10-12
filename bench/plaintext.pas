@@ -27,8 +27,10 @@
                                  PIN=1 (pin loop i to the i-th usable CPU),
                                  SERVER=hyper, OFFLOAD=1, WORKERS=n,
                                  WORKER_SPIN_NS=n (TWorkerPool.SpinNs),
-                                 MAX_CONNECTIONS=n (the connection limit,
-                                 for the gate run with the feature on)
+                                 MAX_CONNECTIONS=n (the connection limit),
+                                 ACCESS_LOG=1 (JSON lines to stdout) or
+                                 ACCESS_LOG=path (appended to that file),
+                                 METRICS=1: the gate runs with a feature on
   Build: fpc -Mobjfpc -Sh -O3 -CX -XX -Xs -Fusrc/rt -Fusrc/http -Fusrc/http1
            -Fusrc/server bench/plaintext.pas }
 program plaintext;
@@ -36,8 +38,8 @@ program plaintext;
 {$mode objfpc}{$H+}
 
 uses
-  cthreads, SysUtils, bearings.rt.loop, bearings.rt.buf, bearings.rt.workers, bearings.http.headers, bearings.http.exchange,
-  bearings.server;
+  cthreads, SysUtils, BaseUnix, ctypes, bearings.rt.loop, bearings.rt.buf, bearings.rt.workers, bearings.http.headers,
+  bearings.http.exchange, bearings.server, bearings.server.accesslog;
 
 const
   HELLO: array[0..12] of AnsiChar = 'Hello, world!';
@@ -173,6 +175,8 @@ var
   Cfg: TServerConfig;
   Srv: TServer;
   App: TApp;
+  LogSink: TFdSink = nil;
+  LogFd: cint;
 begin
   if GetEnvironmentVariable('SERVER') = 'hyper' then
     Move(PAnsiChar('hyper')^, ServerName[0], 5);
@@ -181,6 +185,22 @@ begin
   Cfg.Loops := StrToIntDef(GetEnvironmentVariable('THREADS'), 0);
   Cfg.PinLoops := GetEnvironmentVariable('PIN') = '1';
   Cfg.MaxConnections := StrToIntDef(GetEnvironmentVariable('MAX_CONNECTIONS'), 0);
+  if GetEnvironmentVariable('ACCESS_LOG') <> '' then
+  begin
+    Cfg.AccessLog.Enabled := True;
+    if GetEnvironmentVariable('ACCESS_LOG') <> '1' then
+    begin
+      LogFd := FpOpen(GetEnvironmentVariable('ACCESS_LOG'), O_WRONLY or O_CREAT or O_APPEND, &644);
+      if LogFd < 0 then
+      begin
+        WriteLn(StdErr, 'plaintext: cannot open ', GetEnvironmentVariable('ACCESS_LOG'));
+        Halt(1);
+      end;
+      LogSink := TFdSink.Create(LogFd);
+      Cfg.AccessLog.Sink := LogSink;
+    end;
+  end;
+  Cfg.Metrics := GetEnvironmentVariable('METRICS') = '1';
   App := TApp.Create;
   App.Offload := GetEnvironmentVariable('OFFLOAD') = '1';
   if App.Offload then
@@ -202,4 +222,5 @@ begin
   Srv.Free;
   App.Handler.Free;
   App.Free;
+  LogSink.Free;
 end.
