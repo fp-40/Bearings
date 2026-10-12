@@ -957,12 +957,24 @@ code; 1005 when its close frame had none; 1006 when no close frame came).
 The `TWebSocket` and, by default, its handler are freed after `OnClose`.
 
 Sending on the loop thread: `SendText`, `SendBinary`, `Ping`, `CloseWith(Code,
-Reason)`. `Abort` closes the socket without the close handshake (for a
+Reason)`, and `SendFrame(F)` for a prepared frame.
+
+Broadcast. A message for many connections is encoded once:
+`F := WsTextFrame(S)` (or `WsBinaryFrame`, unit `bearings.ws.frame`) gives
+the complete frame as a `RawByteString`, and `SendFrame(F)` on each
+connection sends it without encoding or copying it again: a frame of 1 KiB
+or more that has to wait in a connection's queue is kept there by reference
+(the string's reference count), and the last reference frees it. For
+connections on several loops, post one message per loop (`TLoop.Post`)
+whose handler calls `SendFrame` for that loop's connections, rather than one
+`PostFrame` per connection; `tests/unit/test_ws_echo.pas`
+(`TRoomHandler`) does this. A prepared frame must not be changed after it
+was built. `Abort` closes the socket without the close handshake (for a
 client that does not read, whose close frame would wait behind its
 backlog); `OnClose` follows with 1006. A send returns `wsOk`, `wsFull` (the output queue holds
 `SendHighWater` bytes or more; nothing was queued) or `wsClosed`. While the
 queue is at the mark the connection also stops reading. From another
-thread: `PostText`, `PostBinary`, after taking a reference with `AddRef` on
+thread: `PostText`, `PostBinary`, `PostFrame`, after taking a reference with `AddRef` on
 the loop thread (for example in `OnOpen`); `Release` gives it back.
 
 `TWsConfig` (`DefaultWsConfig`): `MaxMessage` 16 MiB, `IdleTimeoutMs` 60000
@@ -1288,8 +1300,9 @@ methods are internal and are left out.
 | `Respond101(Ex, R, H)`, `RespondHandshakeError(Ex, R)` | the answers | loop |
 | `AcceptWebSocket(Ex, R, Handler, Cfg): Boolean` | 101 plus a `TWebSocket` for the connection | loop |
 | `TWebSocketHandler.OnOpen`, `OnText`, `OnBinary`, `OnPong`, `OnWritable`, `OnError`, `OnClose` | the application's callbacks | loop |
-| `TWebSocket.SendText`, `SendBinary`, `Ping`, `CloseWith`, `Abort`, `Queued`, `Closing`, `User` | sending and state | loop |
-| `TWebSocket.PostText`, `PostBinary`, `AddRef`, `Release` | sending from another thread | any (`AddRef`: loop, or a holder) |
+| `TWebSocket.SendText`, `SendBinary`, `SendFrame`, `Ping`, `CloseWith`, `Abort`, `Queued`, `Closing`, `User` | sending and state | loop |
+| `TWebSocket.PostText`, `PostBinary`, `PostFrame`, `AddRef`, `Release` | sending from another thread | any (`AddRef`: loop, or a holder) |
+| `TWsFrame`, `WsTextFrame`, `WsBinaryFrame`, `WsMakeFrame`, `WsFrameValid` | prepared frames for broadcast | any |
 | `TWebSocket.Create(Handler, Cfg, OwnsHandler)`, `Start(U)`, `TWsUpgradeHandler` | for an application with its own `TUpgradeHandler` | loop |
 | `TWsConfig`, `DefaultWsConfig` | limits and timeouts | any |
 | `TWsReader`, `WsEncodeHeader`, `TUtf8Check`, `WS_OP_*`, `WS_CLOSE_*` | the frame layer | any (one reader per connection) |

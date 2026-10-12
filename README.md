@@ -210,7 +210,10 @@ timeout, and a 1 MiB send queue limit. A server that authenticates with
 cookies passes the allowed origins too (`CheckRequest(Ex, Protocols,
 ['https://example.com'])`): a handshake from another site's page is
 refused with 403. At a graceful stop the server sends each WebSocket a
-close frame with code 1001 and waits for it to end. The unit
+close frame with code 1001 and waits for it to end. To send one message
+to many connections, encode it once with `WsTextFrame` and call
+`SendFrame` on each: the connections share the frame's bytes instead of
+copying them. The unit
 headers of `bearings.ws.conn`, `bearings.ws.frame` and
 `bearings.ws.handshake` describe the behaviour in full.
 

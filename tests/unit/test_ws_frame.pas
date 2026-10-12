@@ -24,6 +24,7 @@ type
   TTestEncoder = class(TTestCase)
   published
     procedure Length_forms;
+    procedure Prepared_frames;
   end;
 
   TTestReader = class(TTestCase)
@@ -142,6 +143,37 @@ begin
   AssertEquals(10, WsHeaderSize(QWord(1) shl 40));
   AssertEquals(4, WsHeaderSize(200));
   AssertEquals(2, WsHeaderSize(5));
+end;
+
+procedure TTestEncoder.Prepared_frames;
+var
+  F: TWsFrame;
+  Op: Byte;
+  S: RawByteString;
+begin
+  F := WsTextFrame('hello');
+  AssertEquals(#$81#5'hello', F);
+  AssertTrue(WsFrameValid(F, Op));
+  AssertEquals(WS_OP_TEXT, Op);
+  F := WsBinaryFrame(Pattern(70000));
+  AssertEquals(10 + 70000, Length(F));
+  AssertTrue(WsFrameValid(F, Op));
+  AssertEquals(WS_OP_BINARY, Op);
+  S := F;
+  AssertEquals('the payload follows the header', Pattern(70000), Copy(S, 11, MaxInt));
+  F := WsMakeFrame(WS_OP_PING, nil, 0);
+  AssertTrue(WsFrameValid(F, Op));
+  AssertEquals(WS_OP_PING, Op);
+  AssertEquals(WS_OP_BINARY, Byte(WsBinaryFrame(StringOfChar('x', 300))[1]) and $0F);
+  AssertFalse('empty', WsFrameValid('', Op));
+  AssertFalse('not final', WsFrameValid(#$01#0, Op));
+  AssertFalse('RSV1', WsFrameValid(#$C1#0, Op));
+  AssertFalse('continuation', WsFrameValid(#$80#0, Op));
+  AssertFalse('reserved opcode', WsFrameValid(#$83#0, Op));
+  AssertFalse('masked', WsFrameValid(#$81#$81'abcdx', Op));
+  AssertFalse('too short', WsFrameValid(#$81#5'hell', Op));
+  AssertFalse('too long', WsFrameValid(#$81#5'hello!', Op));
+  AssertFalse('long ping', WsFrameValid(WsMakeFrame(WS_OP_PING, PByte(StringOfChar('p', 126)), 126), Op));
 end;
 
 { ---- reader ---- }

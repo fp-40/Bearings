@@ -107,6 +107,21 @@ type
     procedure Server_shutdown_closes_with_1001;
     procedure Forced_abort_releases_everything;
     procedure Default_config_pings;
+    procedure Prepared_frame_written_at_once;
+    procedure Prepared_frames_queued_by_reference;
+    procedure Mixed_queue_keeps_order_through_partial_writes;
+    procedure Queued_frames_released_at_abort;
+    procedure Prepared_frame_backpressure;
+    procedure Invalid_prepared_frames_are_refused;
+    procedure Prepared_frames_posted_from_another_thread;
+  end;
+
+  TFramePostThread = class(TThread)
+  public
+    WS: TWebSocket;
+    F: TWsFrame;
+    Count: Integer;
+    procedure Execute; override;
   end;
 
 { ---- TMemTransport ---- }
@@ -266,6 +281,20 @@ begin
   I := 0;
   while I < Count do
     case WS.PostText('m' + IntToStr(I)) of
+      wsOk: Inc(I);
+      wsFull: Sleep(1);
+      wsClosed: Break;
+    end;
+  WS.Release;
+end;
+
+procedure TFramePostThread.Execute;
+var
+  I: Integer;
+begin
+  I := 0;
+  while I < Count do
+    case WS.PostFrame(F) of
       wsOk: Inc(I);
       wsFull: Sleep(1);
       wsClosed: Break;
@@ -787,6 +816,194 @@ begin
   AssertEquals(25000, C.PingIntervalMs);
   AssertEquals(60000, C.IdleTimeoutMs);
   AssertTrue('a ping comes well before the idle timeout', 2 * C.PingIntervalMs <= C.IdleTimeoutMs);
+end;
+
+procedure TTestWsConn.Prepared_frame_written_at_once;
+var
+  F: TWsFrame;
+begin
+  Open(Cfg0);
+  F := WsTextFrame('to everyone');
+  AssertTrue(WS.SendFrame(F) = wsOk);
+  AssertTrue(WS.SendFrame(F) = wsOk);
+  AssertEquals(0, WS.Queued);
+  AssertEquals('nothing kept', 1, StringRefCount(F));
+  AssertEquals('1:to everyone|1:to everyone|', Frames);
+  T.Eof := True;
+  Send('');
+  AssertFreed;
+end;
+
+procedure TTestWsConn.Prepared_frames_queued_by_reference;
+var
+  Big, Small: TWsFrame;
+begin
+  Open(Cfg0);
+  Big := WsBinaryFrame(Pattern(5000));
+  Small := WsTextFrame('tiny');
+  T.Budget := 0;
+  AssertTrue(WS.SendFrame(Big) = wsOk);
+  AssertEquals('the queue holds a reference', 2, StringRefCount(Big));
+  AssertTrue(WS.SendFrame(Big) = wsOk);
+  AssertEquals('two queued sends, two references', 3, StringRefCount(Big));
+  AssertTrue(WS.SendFrame(Small) = wsOk);
+  AssertEquals('a small frame is copied', 1, StringRefCount(Small));
+  AssertEquals(2 * Length(Big) + Length(Small), WS.Queued);
+  T.Budget := -1;
+  U.Wake;
+  Spin;
+  AssertEquals(0, WS.Queued);
+  AssertEquals('released once written', 1, StringRefCount(Big));
+  AssertEquals('2:5000#' + Digest(Pattern(5000)) + '|2:5000#' + Digest(Pattern(5000)) + '|1:tiny|', Frames);
+  T.Eof := True;
+  Send('');
+  AssertFreed;
+end;
+
+procedure TTestWsConn.Mixed_queue_keeps_order_through_partial_writes;
+var
+  A, B: TWsFrame;
+  Want: RawByteString;
+  I: Integer;
+begin
+  Open(Cfg0);
+  A := WsBinaryFrame(Pattern(3000));
+  B := WsBinaryFrame(Pattern(200));
+  { a partial direct write: the rest of A is queued by reference, from the middle }
+  T.Budget := 100;
+  AssertTrue(WS.SendFrame(A) = wsOk);
+  AssertEquals(Length(A) - 100, WS.Queued);
+  AssertTrue(WS.SendText('one') = wsOk);
+  AssertTrue(WS.SendFrame(B) = wsOk);
+  AssertTrue(WS.SendText('two') = wsOk);
+  AssertTrue(WS.SendFrame(A) = wsOk);
+  AssertTrue(WS.SendBinary(Pattern(2000)) = wsOk);
+  for I := 1 to 100 do
+    WS.SendText('m' + IntToStr(I));  { many segments: more than one writev }
+  { the socket takes 777 bytes per run }
+  for I := 1 to 400 do
+  begin
+    if WS.Queued = 0 then
+      Break;
+    T.Budget := 777;
+    U.Wake;
+    Spin(1);
+  end;
+  AssertEquals(0, WS.Queued);
+  Want := '2:3000#' + Digest(Pattern(3000)) + '|1:one|2:200#' + Digest(Pattern(200)) + '|1:two|2:3000#'
+    + Digest(Pattern(3000)) + '|2:2000#' + Digest(Pattern(2000)) + '|';
+  for I := 1 to 100 do
+    Want := Want + '1:m' + IntToStr(I) + '|';
+  AssertEquals(Want, Frames);
+  AssertEquals(1, StringRefCount(A));
+  T.Budget := -1;
+  T.Eof := True;
+  Send('');
+  AssertFreed;
+end;
+
+procedure TTestWsConn.Queued_frames_released_at_abort;
+var
+  F: TWsFrame;
+begin
+  Open(Cfg0);
+  F := WsBinaryFrame(Pattern(4000));
+  T.Budget := 0;
+  WS.SendFrame(F);
+  WS.SendFrame(F);
+  AssertEquals(3, StringRefCount(F));
+  WS.Abort;
+  Spin;
+  AssertEquals('the queue let go', 1, StringRefCount(F));
+  AssertEquals('', T.Outp);
+  AssertFreed;
+end;
+
+procedure TTestWsConn.Prepared_frame_backpressure;
+var
+  C: TWsConfig;
+  F: TWsFrame;
+begin
+  C := Cfg0;
+  C.SendHighWater := 5000;
+  Open(C);
+  F := WsBinaryFrame(Pattern(3000));
+  T.Budget := 0;
+  AssertTrue(WS.SendFrame(F) = wsOk);
+  AssertTrue(WS.SendFrame(F) = wsOk);
+  AssertTrue('at the mark', WS.SendFrame(F) = wsFull);
+  AssertTrue('a ping still goes', WS.SendFrame(WsMakeFrame(WS_OP_PING, nil, 0)) = wsOk);
+  T.Budget := -1;
+  U.Wake;
+  Spin;
+  AssertEquals('open|writable|', H.Log);
+  AssertEquals('2:3000#' + Digest(Pattern(3000)) + '|2:3000#' + Digest(Pattern(3000)) + '|9:|', Frames);
+  T.Eof := True;
+  Send('');
+  AssertFreed;
+end;
+
+procedure TTestWsConn.Invalid_prepared_frames_are_refused;
+var
+  Raised: Boolean;
+
+  procedure Try1(const F: RawByteString);
+  begin
+    Raised := False;
+    try
+      WS.SendFrame(F);
+    except
+      on EArgumentException do
+        Raised := True;
+    end;
+  end;
+
+begin
+  Open(Cfg0);
+  Try1('not a frame');
+  AssertTrue('garbage', Raised);
+  Try1(WsMakeFrame(WS_OP_CLOSE, nil, 0));
+  AssertTrue('close frames go through CloseWith', Raised);
+  Try1(CFrame(WS_OP_TEXT, 'masked'));
+  AssertTrue('a masked (client) frame', Raised);
+  AssertEquals('', Frames);
+  T.Eof := True;
+  Send('');
+  AssertFreed;
+end;
+
+procedure TTestWsConn.Prepared_frames_posted_from_another_thread;
+var
+  Th: TFramePostThread;
+  F, Want: RawByteString;
+  I: Integer;
+begin
+  Open(Cfg0);
+  Th := TFramePostThread.Create(True);
+  Th.WS := WS;
+  Th.F := WsBinaryFrame(Pattern(2000));
+  Th.Count := 300;
+  WS.AddRef;
+  Th.Start;
+  F := '';
+  for I := 1 to 3000 do
+  begin
+    Spin(1);
+    F := F + Frames;
+    if Th.Finished and (WS.Queued = 0) and (Length(F) >= 300 * Length('2:2000#' + Digest(Pattern(2000)) + '|')) then
+      Break;
+    Sleep(1);
+  end;
+  Th.WaitFor;
+  Want := '';
+  for I := 1 to 300 do
+    Want := Want + '2:2000#' + Digest(Pattern(2000)) + '|';
+  AssertEquals(Want, F);
+  AssertEquals('only the thread''s own reference is left', 1, StringRefCount(Th.F));
+  Th.Free;
+  T.Eof := True;
+  Send('');
+  AssertFreed;
 end;
 
 begin

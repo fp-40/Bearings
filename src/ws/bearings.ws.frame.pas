@@ -50,6 +50,16 @@
   The encoder writes a server frame header (never masked) with the shortest
   length form. The payload follows the header unchanged.
 
+  Prepared frames. Because server frames are not masked, a message sent
+  to many connections is the same bytes for all of them. WsTextFrame and
+  WsBinaryFrame build such a frame once, header and payload in one
+  RawByteString (TWsFrame); TWebSocket.SendFrame and PostFrame
+  (bearings.ws.conn) send it without encoding or copying it again. The
+  string's reference count (atomic in a program with threads) keeps the
+  bytes alive while any connection still has them queued; the last
+  reference frees them, on whatever thread drops it. A prepared frame
+  must not be changed after it was built.
+
   TUtf8Check is the incremental UTF-8 validator (RFC 3629: no overlong
   forms, no surrogates, nothing above U+10FFFF). It keeps, between pieces,
   how many continuation bytes the current character still needs and the
@@ -139,6 +149,18 @@ type
     function Next(var P: PByte; var Len: SizeInt): TWsReadEvent;
     property Failed: Boolean read FFailed;
   end;
+
+type
+  { a complete server frame (header and payload); see the unit header }
+  TWsFrame = RawByteString;
+
+{ A final, unmasked frame with Opcode and the payload [P, P + Len). }
+function WsMakeFrame(Opcode: Byte; P: PByte; Len: SizeInt): TWsFrame;
+function WsTextFrame(const S: RawByteString): TWsFrame;      { S must be UTF-8 }
+function WsBinaryFrame(const S: RawByteString): TWsFrame;
+{ True when F is exactly one final, unmasked server frame with RSV bits 0
+  and a known opcode; Opcode is its opcode. }
+function WsFrameValid(const F: RawByteString; out Opcode: Byte): Boolean;
 
 { The bytes a server frame header takes for a payload of Len bytes: 2, 4 or 10. }
 function WsHeaderSize(Len: QWord): Integer; inline;
@@ -272,6 +294,69 @@ begin
       Dst[2 + I] := (Len shr (8 * (7 - I))) and $FF;
     Result := 10;
   end;
+end;
+
+{ ---- prepared frames ---- }
+
+function WsMakeFrame(Opcode: Byte; P: PByte; Len: SizeInt): TWsFrame;
+var
+  H: Integer;
+begin
+  SetLength(Result, WsHeaderSize(Len) + Len);
+  H := WsEncodeHeader(PByte(Result), True, Opcode, Len);
+  if Len > 0 then
+    Move(P^, PByte(Result)[H], Len);
+end;
+
+function WsTextFrame(const S: RawByteString): TWsFrame;
+begin
+  Result := WsMakeFrame(WS_OP_TEXT, PByte(S), Length(S));
+end;
+
+function WsBinaryFrame(const S: RawByteString): TWsFrame;
+begin
+  Result := WsMakeFrame(WS_OP_BINARY, PByte(S), Length(S));
+end;
+
+function WsFrameValid(const F: RawByteString; out Opcode: Byte): Boolean;
+var
+  P: PByte;
+  N, H: SizeInt;
+  L: QWord;
+  I: Integer;
+begin
+  Result := False;
+  Opcode := 0;
+  N := Length(F);
+  if N < 2 then
+    Exit;
+  P := PByte(F);
+  if (P[0] and $F0) <> $80 then      { FIN set, RSV clear }
+    Exit;
+  Opcode := P[0] and $0F;
+  if not (Opcode in [WS_OP_TEXT, WS_OP_BINARY, WS_OP_CLOSE, WS_OP_PING, WS_OP_PONG]) then
+    Exit;
+  if (P[1] and $80) <> 0 then        { masked }
+    Exit;
+  L := P[1] and $7F;
+  H := 2;
+  if L = 126 then
+  begin
+    if N < 4 then Exit;
+    L := (QWord(P[2]) shl 8) or P[3];
+    H := 4;
+  end
+  else if L = 127 then
+  begin
+    if N < 10 then Exit;
+    L := 0;
+    for I := 2 to 9 do
+      L := (L shl 8) or P[I];
+    H := 10;
+  end;
+  if (Opcode >= 8) and (L > WS_MAX_CONTROL) then
+    Exit;
+  Result := QWord(N - H) = L;
 end;
 
 { ---- TWsReader ---- }

@@ -33,6 +33,22 @@ type
     procedure OnWritable(WS: TWebSocket); override;
   end;
 
+  { a room: every text message a member sends goes to every member, on
+    every loop (one prepared frame, one TLoop.Post per loop) }
+  TRoomHandler = class(TWebSocketHandler)
+  public
+    procedure OnOpen(WS: TWebSocket); override;
+    procedure OnText(WS: TWebSocket; P: PByte; Len: SizeInt); override;
+    procedure OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString); override;
+  end;
+
+  TBroadcast = class
+  public
+    Msg: TLoopMsg;
+    Frame: TWsFrame;
+    Index: Integer;
+  end;
+
   TEchoCall = class(TServiceCall)
   public
     function Poll(Ex: TExchange): TCallPoll; override;
@@ -57,7 +73,8 @@ type
     function Recv(Wait: Boolean = True): Boolean;     { False: EOF, error or timeout }
     function Head: RawByteString;                      { the HTTP head, removed from Buf }
     function Frame(out F: TServerFrame): Boolean;
-    function Handshake(const Extra: RawByteString = ''; const First: RawByteString = ''): RawByteString;
+    function Handshake(const Extra: RawByteString = ''; const First: RawByteString = '';
+      const Path: RawByteString = '/echo'): RawByteString;
     function AtEof: Boolean;
   end;
 
@@ -97,6 +114,7 @@ type
     procedure Server_stop_closes_websockets;
     procedure Server_stop_aborts_at_the_deadline;
     procedure Origin_refused_with_403;
+    procedure Broadcast_to_a_room_on_two_loops;
   end;
 
 const
@@ -105,6 +123,52 @@ const
 
 var
   WsCfg: TWsConfig;
+  RoomLoops: array[0..7] of TLoop;   { set by NewService, one per loop }
+  Rooms: array[0..7] of TList;       { the members on each loop; that loop's thread only }
+  RoomMembers: LongInt;
+
+procedure TRoomHandler.OnOpen(WS: TWebSocket);
+begin
+  Rooms[WS.Loop.Index].Add(WS);
+  InterLockedIncrement(RoomMembers);
+end;
+
+procedure TRoomHandler.OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString);
+begin
+  Rooms[WS.Loop.Index].Remove(WS);
+  InterLockedDecrement(RoomMembers);
+end;
+
+procedure BroadcastProc(Loop: TLoop; Arg: Pointer);
+var
+  B: TBroadcast;
+  I: Integer;
+begin
+  B := TBroadcast(Arg);
+  for I := 0 to Rooms[B.Index].Count - 1 do
+    TWebSocket(Rooms[B.Index][I]).SendFrame(B.Frame);
+  B.Free;
+end;
+
+procedure TRoomHandler.OnText(WS: TWebSocket; P: PByte; Len: SizeInt);
+var
+  F: TWsFrame;
+  B: TBroadcast;
+  I: Integer;
+begin
+  F := WsMakeFrame(WS_OP_TEXT, P, Len);   { encoded once for everyone }
+  for I := 0 to High(RoomLoops) do
+    if RoomLoops[I] <> nil then
+    begin
+      B := TBroadcast.Create;
+      B.Frame := F;
+      B.Index := I;
+      B.Msg.Kind := lmCall;
+      B.Msg.Proc := @BroadcastProc;
+      B.Msg.Arg := B;
+      RoomLoops[I].Post(@B.Msg);
+    end;
+end;
 
 { ---- the echo service (as in examples/ws_echo.pas) ---- }
 
@@ -167,7 +231,9 @@ begin
   if Ex.WantsUpgrade then
   begin
     R := CheckRequest(Ex, ['chat'], ['http://localhost']);
-    if R.Ok then
+    if R.Ok and PathIs(Ex, '/room') then
+      AcceptWebSocket(Ex, R, TRoomHandler.Create, WsCfg)
+    else if R.Ok then
       AcceptWebSocket(Ex, R, TEchoHandler.Create, WsCfg)
     else
       RespondHandshakeError(Ex, R);
@@ -196,6 +262,7 @@ end;
 
 function NewService(Loop: TLoop): THttpService;
 begin
+  RoomLoops[Loop.Index] := Loop;
   Result := TEchoService.Create;
 end;
 
@@ -277,9 +344,9 @@ begin
   Result := True;
 end;
 
-function TClient.Handshake(const Extra, First: RawByteString): RawByteString;
+function TClient.Handshake(const Extra, First, Path: RawByteString): RawByteString;
 begin
-  SendAll('GET /echo HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Upgrade: websocket' + CRLF
+  SendAll('GET ' + Path + ' HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Upgrade: websocket' + CRLF
     + 'Connection: Upgrade' + CRLF + 'Sec-WebSocket-Key: ' + KEY + CRLF
     + 'Sec-WebSocket-Version: 13' + CRLF + Extra + CRLF + First);
   Result := Head;
@@ -339,6 +406,8 @@ begin
 end;
 
 procedure TTestWsEcho.TearDown;
+var
+  I: Integer;
 begin
   if Srv <> nil then
   begin
@@ -346,6 +415,8 @@ begin
     Srv.Wait;
     FreeAndNil(Srv);
   end;
+  for I := 0 to High(RoomLoops) do
+    RoomLoops[I] := nil;
 end;
 
 procedure TTestWsEcho.StartServer(Loops: Integer);
@@ -661,7 +732,57 @@ begin
   WaitFreed;
 end;
 
+procedure TTestWsEcho.Broadcast_to_a_room_on_two_loops;
+const
+  NC = 20;
+  NM = 50;
+var
+  C: array[0..NC - 1] of TClient;
+  F: TServerFrame;
+  I, K: Integer;
+  Body: RawByteString;
 begin
+  StartServer(2);
+  for I := 0 to NC - 1 do
+    C[I] := nil;
+  try
+    for I := 0 to NC - 1 do
+    begin
+      C[I] := TClient.Connect(Srv.Port);
+      AssertTrue(AnsiStartsStr('HTTP/1.1 101', C[I].Handshake('', '', '/room')));
+    end;
+    for K := 1 to 400 do
+      if RoomMembers = NC then Break else Sleep(5);
+    AssertEquals('every member joined', NC, RoomMembers);
+    Body := StringOfChar('r', 2000);   { over WS_SHARE_MIN: queued by reference when it has to wait }
+    for K := 1 to NM do
+      C[K mod NC].SendAll(CFrame(WS_OP_TEXT, 'b' + IntToStr(K) + ' ' + Body));
+    for I := 0 to NC - 1 do
+      for K := 1 to NM do
+      begin
+        AssertTrue('client ' + IntToStr(I) + ' message ' + IntToStr(K), C[I].Frame(F));
+        AssertEquals(WS_OP_TEXT, F.Opcode);
+        AssertTrue('content', AnsiEndsStr(Body, F.Payload));
+      end;
+    for I := 0 to NC - 1 do
+    begin
+      C[I].SendAll(CFrame(WS_OP_CLOSE, ''));
+      AssertTrue(C[I].Frame(F));
+      AssertEquals(WS_OP_CLOSE, F.Opcode);
+    end;
+  finally
+    for I := 0 to NC - 1 do
+      C[I].Free;
+  end;
+  WaitFreed;
+  AssertEquals(0, RoomMembers);
+end;
+
+var
+  RI: Integer;
+begin
+  for RI := 0 to High(Rooms) do
+    Rooms[RI] := TList.Create;
   RegisterTest(TTestWsEcho);
   with TTestRunner.Create(nil) do
   try
@@ -670,4 +791,6 @@ begin
   finally
     Free;
   end;
+  for RI := 0 to High(Rooms) do
+    Rooms[RI].Free;
 end.

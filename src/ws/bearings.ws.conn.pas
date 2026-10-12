@@ -43,13 +43,27 @@
   would be accepted again (fewer than SendHighWater bytes queued).
 
   Sending. A frame is written to the socket at once when nothing is queued
-  (header and payload in one writev); what the socket does not take is
-  copied to the output queue, which is written when the socket becomes
-  writable. A data send is refused with wsFull when SendHighWater or more
+  (header and payload in one writev); what the socket does not take goes
+  to the output queue, which is written when the socket becomes writable.
+  The queue is a list of segments: copied bytes (kept together in one
+  buffer; consecutive copied frames form one segment) and prepared frames
+  (TWsFrame, bearings.ws.frame) held by reference. A flush writes up to
+  WS_MAX_IOV segments with one writev. A data send is refused with wsFull when SendHighWater or more
   bytes are queued (the message is not queued; the application waits for
   OnWritable). A single message larger than SendHighWater is accepted when
   the queue is below the mark. Control frames (pong, close) are always
   queued. After the close frame was sent, every send returns wsClosed.
+
+  Prepared frames (broadcast). SendFrame(F) sends a frame built once with
+  WsTextFrame or WsBinaryFrame, for example one message for every member
+  of a room: no header is encoded and, for frames of WS_SHARE_MIN bytes or
+  more, nothing is copied; the queue keeps a reference to the string (an
+  atomic reference count) until the bytes are written. Smaller frames are
+  copied, which costs less than a segment of their own. The same rules as
+  SendText apply (wsFull, wsClosed). PostFrame is the same from another
+  thread. A broadcast from another thread is best done with one message per
+  loop (TLoop.Post) whose handler calls SendFrame for that loop's
+  connections, rather than one PostFrame per connection.
 
   Sending from another thread. SendText and friends run on the loop thread
   only. Another thread uses PostText / PostBinary: the message is copied
@@ -116,6 +130,8 @@ uses
 const
   WS_READ_BLOCK = 65536;
   WS_READS_PER_RUN = 8;
+  WS_SHARE_MIN = 1024;               { a prepared frame this large is queued by reference }
+  WS_MAX_IOV = 64;                   { segments per writev }
 
 type
   TWebSocket = class;
@@ -142,8 +158,19 @@ type
   end;
 
   TWsPosted = record
-    Opcode: Byte;
+    Opcode: Byte;                    { 0: Data is a prepared frame }
     Data: RawByteString;
+  end;
+
+  { One piece of the output queue. Ref = nil: Len bytes of the copied-bytes
+    buffer (they follow the bytes of the copied segments before it).
+    Ref <> nil: a prepared frame, one string reference held in Ref
+    (assigned through a typecast, as BodyString does: no managed field);
+    P is its next unsent byte. }
+  TWsSeg = record
+    Len: SizeInt;
+    P: PByte;
+    Ref: Pointer;
   end;
 
   TWebSocket = class(TRawListener)
@@ -156,8 +183,11 @@ type
     FReader: TWsReader;
     FReadBlk: PBufBlock;             { the read block of the current run }
     FMsg: TByteVec;                  { reassembly buffer }
-    FOut: TByteVec;                  { output queue: bytes FOutPos..Len-1 are unsent }
+    FOut: TByteVec;                  { the copied bytes of the queue: FOutPos..Len-1 are unsent }
     FOutPos: SizeInt;
+    FSegs: array of TWsSeg;          { the output queue, a ring }
+    FSegHead, FSegCount: Integer;
+    FQueued: SizeInt;                { unsent bytes in all segments }
     FIdleTimer, FPingTimer, FCloseTimer: TTimer;
     FIdleFired, FPingFired, FCloseFired: Boolean;
     FOpened: Boolean;                { OnOpen ran }
@@ -192,7 +222,14 @@ type
     procedure Fail(Code: Word; const Msg: string);
     procedure IoFailed(const What: string; Errno: cint);
     procedure QueueClose(Code: Word; const Reason: RawByteString);
-    function SendFrame(Opcode: Byte; P: PByte; Len: SizeInt; Control: Boolean): TWsSendResult;
+    function QueueFrame(Opcode: Byte; P: PByte; Len: SizeInt; Control: Boolean): TWsSendResult;
+    function QueuePrepared(const F: TWsFrame; Control: Boolean): TWsSendResult;
+    function Refused(Opcode: Byte; Control: Boolean): Boolean; inline;
+    procedure PushSeg(Len: SizeInt; P: PByte; Ref: Pointer);
+    procedure PushCopy(P: PByte; N: SizeInt);
+    procedure PushShared(const F: TWsFrame; Off: SizeInt);
+    procedure Consume(W: SizeInt);
+    procedure ClearQueue;
     function Post(Opcode: Byte; const Data: RawByteString): TWsSendResult;
     procedure ArmClose;
     function Ending: Boolean; inline;
@@ -216,6 +253,9 @@ type
     function SendText(const S: RawByteString): TWsSendResult;
     function SendBinary(P: PByte; Len: SizeInt): TWsSendResult;
     function SendBinary(const S: RawByteString): TWsSendResult;
+    { a prepared frame (WsTextFrame, WsBinaryFrame, or a ping or pong from
+      WsMakeFrame; not a close frame: use CloseWith) }
+    function SendFrame(const F: TWsFrame): TWsSendResult;
     { a ping with at most 125 payload bytes; wsClosed also for a longer payload }
     function Ping(const Payload: RawByteString = ''): TWsSendResult;
     { Starts the close handshake. Code: a code WsCloseCodeValid accepts, or
@@ -239,6 +279,7 @@ type
     { ---- any thread ---- }
     function PostText(const S: RawByteString): TWsSendResult;
     function PostBinary(const S: RawByteString): TWsSendResult;
+    function PostFrame(const F: TWsFrame): TWsSendResult;
     procedure AddRef;                { loop thread, or a thread that already holds a reference }
     procedure Release;               { the last reference frees the object }
   end;
@@ -420,7 +461,7 @@ end;
 
 function TWebSocket.Queued: SizeInt;
 begin
-  Result := FOut.Len - FOutPos;
+  Result := FQueued;
 end;
 
 function TWebSocket.Closing: Boolean;
@@ -512,7 +553,7 @@ begin
     FPingFired := False;
     if not Closing then
     begin
-      SendFrame(WS_OP_PING, nil, 0, True);
+      QueueFrame(WS_OP_PING, nil, 0, True);
       FLoop.Timers.Arm(@FPingTimer, FLoop.NowMs + FCfg.PingIntervalMs);
     end;
   end;
@@ -612,7 +653,7 @@ begin
   case FReader.CtlOpcode of
     WS_OP_PING:
       if not FCloseSent then
-        SendFrame(WS_OP_PONG, @FReader.Ctl[0], FReader.CtlLen, True);
+        QueueFrame(WS_OP_PONG, @FReader.Ctl[0], FReader.CtlLen, True);
     WS_OP_PONG:
       FHandler.OnPong(Self, @FReader.Ctl[0], FReader.CtlLen);
     WS_OP_CLOSE:
@@ -660,7 +701,7 @@ begin
       Move(Reason[1], Buf[2], N);
     Inc(N, 2);
   end;
-  SendFrame(WS_OP_CLOSE, @Buf[0], N, True);
+  QueueFrame(WS_OP_CLOSE, @Buf[0], N, True);
   FCloseSent := True;
 end;
 
@@ -690,17 +731,121 @@ begin
     Fail(WS_CLOSE_ABNORMAL, What + ': ' + SysErrorMessage(Errno));
 end;
 
-function TWebSocket.SendFrame(Opcode: Byte; P: PByte; Len: SizeInt; Control: Boolean): TWsSendResult;
+{ ---- the output queue ---- }
+
+procedure TWebSocket.PushSeg(Len: SizeInt; P: PByte; Ref: Pointer);
+var
+  N: array of TWsSeg;
+  I: Integer;
+begin
+  if FSegCount = Length(FSegs) then
+  begin
+    { a ring twice as large, in queue order }
+    SetLength(N, 8 + 2 * Length(FSegs));
+    for I := 0 to FSegCount - 1 do
+      N[I] := FSegs[(FSegHead + I) mod Length(FSegs)];
+    FSegs := N;
+    FSegHead := 0;
+  end;
+  I := (FSegHead + FSegCount) mod Length(FSegs);
+  FSegs[I].Len := Len;
+  FSegs[I].P := P;
+  FSegs[I].Ref := Ref;
+  Inc(FSegCount);
+  Inc(FQueued, Len);
+end;
+
+procedure TWebSocket.PushCopy(P: PByte; N: SizeInt);
+var
+  T: Integer;
+begin
+  if N <= 0 then
+    Exit;
+  FOut.Append(P, N, @FLoop.Blocks);
+  if FSegCount > 0 then
+  begin
+    T := (FSegHead + FSegCount - 1) mod Length(FSegs);
+    if FSegs[T].Ref = nil then
+    begin
+      { the last segment holds copied bytes too: it grows }
+      Inc(FSegs[T].Len, N);
+      Inc(FQueued, N);
+      Exit;
+    end;
+  end;
+  PushSeg(N, nil, nil);
+end;
+
+procedure TWebSocket.PushShared(const F: TWsFrame; Off: SizeInt);
+var
+  Ref: Pointer;
+begin
+  Ref := nil;
+  RawByteString(Ref) := F;           { one reference, held by the segment }
+  PushSeg(Length(F) - Off, PByte(F) + Off, Ref);
+end;
+
+{ W bytes of the queue were written: they leave it from the front }
+procedure TWebSocket.Consume(W: SizeInt);
+var
+  N: SizeInt;
+begin
+  while W > 0 do
+  begin
+    N := FSegs[FSegHead].Len;
+    if N > W then
+      N := W;
+    if FSegs[FSegHead].Ref = nil then
+      Inc(FOutPos, N)
+    else
+      Inc(FSegs[FSegHead].P, N);
+    Dec(FSegs[FSegHead].Len, N);
+    Dec(FQueued, N);
+    Dec(W, N);
+    if FSegs[FSegHead].Len = 0 then
+    begin
+      if FSegs[FSegHead].Ref <> nil then
+        RawByteString(FSegs[FSegHead].Ref) := '';   { drops the reference }
+      FSegHead := (FSegHead + 1) mod Length(FSegs);
+      Dec(FSegCount);
+    end;
+  end;
+end;
+
+procedure TWebSocket.ClearQueue;
+var
+  I: Integer;
+begin
+  for I := 0 to FSegCount - 1 do
+    with FSegs[(FSegHead + I) mod Length(FSegs)] do
+      if Ref <> nil then
+        RawByteString(Ref) := '';
+  FSegs := nil;
+  FSegHead := 0;
+  FSegCount := 0;
+  FQueued := 0;
+  FOut.Clear;
+  FOutPos := 0;
+  FOut.ReleaseIdle(@FLoop.Blocks);
+end;
+
+{ after a failure only the close frame (Fail's) may go out; a data send
+  is refused while the queue is at the mark }
+function TWebSocket.Refused(Opcode: Byte; Control: Boolean): Boolean;
+begin
+  Result := FCloseSent or FEnded or FFinished or (FFailed and (Opcode <> WS_OP_CLOSE));
+end;
+
+function TWebSocket.QueueFrame(Opcode: Byte; P: PByte; Len: SizeInt; Control: Boolean): TWsSendResult;
 var
   Hdr: array[0..WS_MAX_HEADER - 1] of Byte;
   H: Integer;
   Iov: array[0..1] of TSysIoVec;
   W, Total, Skip: SizeInt;
 begin
-  { after a failure only the close frame (Fail's) may go out }
-  if FCloseSent or FEnded or FFinished or (FFailed and (Opcode <> WS_OP_CLOSE)) then
+  if Refused(Opcode, Control) then
     Exit(wsClosed);
-  if (not Control) and (Queued >= FCfg.SendHighWater) then
+  if (not Control) and (FQueued >= FCfg.SendHighWater) then
   begin
     FWantWritable := True;
     Exit(wsFull);
@@ -708,7 +853,7 @@ begin
   H := WsEncodeHeader(@Hdr[0], True, Opcode, Len);
   Total := H + Len;
   W := 0;
-  if (Queued = 0) and (FU.Transport <> nil) then
+  if (FQueued = 0) and (FU.Transport <> nil) then
   begin
     { nothing queued: straight to the socket }
     Iov[0].Base := @Hdr[0];
@@ -731,50 +876,123 @@ begin
   end;
   if W < Total then
   begin
-    { the rest goes to the queue }
+    { the rest is copied to the queue }
     if W < H then
     begin
-      FOut.Append(@Hdr[W], H - W, @FLoop.Blocks);
+      PushCopy(@Hdr[W], H - W);
       Skip := 0;
     end
     else
       Skip := W - H;
-    if Len - Skip > 0 then
-      FOut.Append(P + Skip, Len - Skip, @FLoop.Blocks);
+    PushCopy(P + Skip, Len - Skip);
     if not FInStep then
       FU.Wake;                       { flushed by Step when the socket is writable }
   end;
   Result := wsOk;
 end;
 
+function TWebSocket.QueuePrepared(const F: TWsFrame; Control: Boolean): TWsSendResult;
+var
+  W, N: SizeInt;
+begin
+  if Refused(0, Control) then
+    Exit(wsClosed);
+  if (not Control) and (FQueued >= FCfg.SendHighWater) then
+  begin
+    FWantWritable := True;
+    Exit(wsFull);
+  end;
+  N := Length(F);
+  W := 0;
+  if (FQueued = 0) and (FU.Transport <> nil) then
+  begin
+    W := FU.Transport.Write(PByte(F), N);
+    if W = -ESysEAGAIN then
+      W := 0
+    else if W < 0 then
+    begin
+      if not FInStep then
+        FU.Wake;
+      IoFailed('write', -W);
+      Exit(wsClosed);
+    end;
+  end;
+  if W < N then
+  begin
+    if N - W < WS_SHARE_MIN then
+      PushCopy(PByte(F) + W, N - W)
+    else
+      PushShared(F, W);
+    if not FInStep then
+      FU.Wake;
+  end;
+  Result := wsOk;
+end;
+
+function TWebSocket.SendFrame(const F: TWsFrame): TWsSendResult;
+var
+  Op: Byte;
+begin
+  Assert(GetCurrentThreadId = FLoop.ThreadId, 'TWebSocket.SendFrame: not on the loop thread');
+  if not WsFrameValid(F, Op) or (Op = WS_OP_CLOSE) then
+    raise EArgumentException.Create('TWebSocket.SendFrame: not a prepared data, ping or pong frame');
+  Result := QueuePrepared(F, Op >= 8);
+end;
+
 procedure TWebSocket.Flush;
 var
-  R: SizeInt;
+  Iov: array[0..WS_MAX_IOV - 1] of TSysIoVec;
+  N, I, K: Integer;
+  C: SizeInt;
+  W: SizeInt;
 begin
-  while (Queued > 0) and not FEnded do
+  while (FQueued > 0) and not FEnded and (FU.Transport <> nil) do
   begin
-    R := FU.TryWrite(FOut.Data + FOutPos, Queued);
-    if R = -ESysEAGAIN then
-      Break;
-    if R < 0 then
+    { the first segments, as one writev; copied bytes follow each other in FOut }
+    N := FSegCount;
+    if N > WS_MAX_IOV then
+      N := WS_MAX_IOV;
+    C := FOutPos;
+    for I := 0 to N - 1 do
     begin
-      IoFailed('write', -R);
+      K := (FSegHead + I) mod Length(FSegs);
+      if FSegs[K].Ref = nil then
+      begin
+        Iov[I].Base := FOut.Data + C;
+        Inc(C, FSegs[K].Len);
+      end
+      else
+        Iov[I].Base := FSegs[K].P;
+      Iov[I].Len := FSegs[K].Len;
+    end;
+    if N = 1 then
+      W := FU.Transport.Write(Iov[0].Base, Iov[0].Len)
+    else
+      W := FU.Transport.WriteV(@Iov[0], N);
+    if W = -ESysEAGAIN then
+      Break;
+    if W < 0 then
+    begin
+      IoFailed('write', -W);
       Break;
     end;
-    Inc(FOutPos, R);
+    Consume(W);
   end;
-  if (Queued = 0) and (FOut.Len > 0) then
+  if FQueued = 0 then
   begin
-    FOut.Clear;
-    FOutPos := 0;
-    FOut.ReleaseIdle(@FLoop.Blocks);
+    if FOut.Len > 0 then
+    begin
+      FOut.Clear;
+      FOutPos := 0;
+      FOut.ReleaseIdle(@FLoop.Blocks);
+    end;
   end
   else if (FOutPos > 0) and (FOutPos >= FOut.Len div 2) then
   begin
-    FOut.DrainFront(FOutPos);        { keep the queue from growing at the front }
+    FOut.DrainFront(FOutPos);        { keep the copied bytes from growing at the front }
     FOutPos := 0;
   end;
-  if FWantWritable and not Closing and (Queued <= FCfg.SendHighWater div 2) then
+  if FWantWritable and not Closing and (FQueued <= FCfg.SendHighWater div 2) then
   begin
     FWantWritable := False;
     FHandler.OnWritable(Self);
@@ -794,7 +1012,10 @@ begin
   FPostedBytes := 0;
   FPostLock.Release;
   for I := 0 to N - 1 do
-    SendFrame(Items[I].Opcode, PByte(Items[I].Data), Length(Items[I].Data), True);
+    if Items[I].Opcode = 0 then
+      QueuePrepared(Items[I].Data, True)
+    else
+      QueueFrame(Items[I].Opcode, PByte(Items[I].Data), Length(Items[I].Data), True);
 end;
 
 function TWebSocket.Post(Opcode: Byte; const Data: RawByteString): TWsSendResult;
@@ -838,10 +1059,19 @@ begin
   Result := Post(WS_OP_BINARY, S);
 end;
 
+function TWebSocket.PostFrame(const F: TWsFrame): TWsSendResult;
+var
+  Op: Byte;
+begin
+  if not WsFrameValid(F, Op) or (Op = WS_OP_CLOSE) then
+    raise EArgumentException.Create('TWebSocket.PostFrame: not a prepared data, ping or pong frame');
+  Result := Post(0, F);
+end;
+
 function TWebSocket.SendText(P: PByte; Len: SizeInt): TWsSendResult;
 begin
   Assert(GetCurrentThreadId = FLoop.ThreadId, 'TWebSocket.SendText: not on the loop thread');
-  Result := SendFrame(WS_OP_TEXT, P, Len, False);
+  Result := QueueFrame(WS_OP_TEXT, P, Len, False);
 end;
 
 function TWebSocket.SendText(const S: RawByteString): TWsSendResult;
@@ -852,7 +1082,7 @@ end;
 function TWebSocket.SendBinary(P: PByte; Len: SizeInt): TWsSendResult;
 begin
   Assert(GetCurrentThreadId = FLoop.ThreadId, 'TWebSocket.SendBinary: not on the loop thread');
-  Result := SendFrame(WS_OP_BINARY, P, Len, False);
+  Result := QueueFrame(WS_OP_BINARY, P, Len, False);
 end;
 
 function TWebSocket.SendBinary(const S: RawByteString): TWsSendResult;
@@ -864,7 +1094,7 @@ function TWebSocket.Ping(const Payload: RawByteString): TWsSendResult;
 begin
   if Length(Payload) > WS_MAX_CONTROL then
     Exit(wsClosed);
-  Result := SendFrame(WS_OP_PING, PByte(Payload), Length(Payload), True);
+  Result := QueueFrame(WS_OP_PING, PByte(Payload), Length(Payload), True);
 end;
 
 function TWebSocket.CloseWith(Code: Word; const Reason: RawByteString): Boolean;
@@ -888,9 +1118,7 @@ begin
   FLoop.Timers.Remove(@FCloseTimer);
   FMsg.Clear;
   FMsg.ReleaseIdle(@FLoop.Blocks);
-  FOut.Clear;
-  FOutPos := 0;
-  FOut.ReleaseIdle(@FLoop.Blocks);
+  ClearQueue;
   FPostLock.Acquire;
   FPostClosed := True;
   FPosted := nil;
