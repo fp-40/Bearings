@@ -106,30 +106,45 @@ begin
   Result := THelloService.Create;
 end;
 
+procedure Started(Server: TServer);
+begin
+  WriteLn(StdErr, 'hello: listening on port ', Server.Port, ' with ', Server.LoopCount, ' loops');
+end;
+
 var
   Cfg: TServerConfig;
   Srv: TServer;
+  Sig: Integer;
 begin
   Cfg := ProductionServerConfig;
   Cfg.Workers := NO_WORKER_POOL;     { answers inline: no worker threads }
   Cfg.Listen.Port := StrToIntDef(ParamStr(1), 8080);
+  ApplySdListenFds(Cfg);             { under systemd: the passed socket }
   Srv := TServer.CreateWithProc(Cfg, @NewService);
-  Srv.RunUntilSignal;                { until SIGTERM or SIGINT }
+  Sig := Srv.RunUntilSignalProc(@Started);   { until SIGTERM or SIGINT }
+  WriteLn(StdErr, 'hello: stopped (signal ', Sig, ')');
   Srv.Free;
 end.
 ```
 
 What happens: `TServer.CreateWithProc` stores the configuration and the
 factory (a plain function; `TServer.Create` takes a method instead, for a
-program that keeps state in an object). `RunUntilSignal` binds the port,
-starts one event loop thread per CPU (`DefaultLoopCount`), calls
-`NewService` once per loop, then waits for SIGTERM or SIGINT; on the
-signal it stops the server gracefully (open connections finish their
-current response, with a 30 s deadline) and returns. For every request a
-loop parses, it calls `THelloService.Call`, which returns the call object,
-and then polls `THelloCall.Poll`, which answers. `Respond` with a body of
-known length makes the encoder write a `Content-Length` header; a `Date`
-header is added too.
+program that keeps state in an object). `RunUntilSignalProc` binds the
+port, starts one event loop thread per CPU (`DefaultLoopCount`), calls
+`NewService` once per loop, calls `Started`, then waits for SIGTERM or
+SIGINT; on the signal it stops the server gracefully (open connections
+finish their current response, with a 30 s deadline, `GraceMs`) and
+returns the signal number. For every request a loop parses, it calls
+`THelloService.Call`, which returns the call object, and then polls
+`THelloCall.Poll`, which answers. `Respond` with a body of known length
+makes the encoder write a `Content-Length` header; a `Date` header is
+added too.
+
+The program prints nothing per request: its only output is the two
+stderr lines above. Requests are logged only when the access log is on
+(`Cfg.AccessLog.Enabled := True`: one JSON line per request to stdout,
+or the Combined Log Format with `Format := alfCombined`; `docs/api.md`,
+section 2, "Access log and metrics").
 
 `ProductionServerConfig` starts a pool of worker threads for handlers
 that block (`Workers = 0`: `Min(32, cpus + 4)` threads). This service
@@ -148,7 +163,7 @@ Compile and run, from the repository root:
 
 ```sh
 mkdir -p build/examples/units
-fpc -Mobjfpc -Sh -O2 -Fusrc/rt -Fusrc/http -Fusrc/http1 -Fusrc/server \
+fpc -Mobjfpc -Sh -O2 -Fusrc/rt -Fusrc/http -Fusrc/http1 -Fusrc/server -Fusrc/ws \
     -FUbuild/examples/units -FEbuild/examples examples/hello.pas
 build/examples/hello 8080 &
 curl -i http://127.0.0.1:8080/
@@ -157,7 +172,8 @@ kill %1
 
 `-Mobjfpc -Sh` select the object Pascal mode with long strings, which every
 unit of the library uses. `cthreads` must be the first unit of the program:
-the server starts threads.
+the server starts threads. With the units installed as a package (section
+"Installing as a package") the `-Fu` options go away.
 
 ## WebSocket
 
@@ -302,6 +318,7 @@ connection. Without systemd the same program can be tried with
   HTTP library usually does.
 - `docs/perf-report.md`: the performance measurements and how they were
   made.
+- `docs/ideas.md`: notes on features under consideration.
 
 ## Layers
 
@@ -347,11 +364,15 @@ Build output goes under `build/` (ignored by git).
 - `tools/install-package.sh`: installs the units as an FPC package, so that
   programs compile without `-Fu` (section "Installing as a package").
 - `conformance/pascal-server/gate.sh`: the wire conformance cases
-  (`conformance/cases`) against the Pascal conformance server; the runner
-  and the hyper reference server are in the Cargo workspace `conformance/`.
+  (`conformance/cases`) against the Pascal conformance server; the runner,
+  the hyper reference server and the differential fuzzer (`fuzz-diff`)
+  are in the Cargo workspace `conformance/`.
+- `conformance/autobahn/run.sh`: the Autobahn WebSocket test suite
+  (Docker) against `examples/ws_echo.pas`; run by hand.
 - `bench/`: the throughput benchmarks against hyper (`bench/run_gate.sh`,
-  `bench/plaintext.pas`), the offload cost (`bench/run_offload.sh`) and
-  micro-benchmarks (`bench/bench_dispatch.pas`).
+  `bench/plaintext.pas`), the offload cost (`bench/run_offload.sh`),
+  micro-benchmarks (`bench/bench_dispatch.pas`) and the WebSocket echo
+  benchmark client (`bench/ws_bench.pas`).
 
 ## Installing as a package
 
