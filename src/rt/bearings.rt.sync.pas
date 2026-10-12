@@ -22,11 +22,32 @@
   case in user space: they make the system call only when a thread is, or
   is about to be, asleep.
 
-  Memory ordering: the code targets x86-64. There, the locked instructions
-  behind InterlockedExchange / InterlockedCompareExchange / Interlocked-
-  Increment are full barriers, and plain aligned loads and stores of a word
-  are atomic; a store is not reordered with earlier stores, and a load is
-  not reordered with earlier loads. The routines rely on this.
+  Memory ordering: the code was written for x86-64. There, the locked
+  instructions behind InterlockedExchange / InterlockedCompareExchange /
+  InterlockedIncrement are full barriers, and plain aligned loads and
+  stores of a word are atomic; a store is not reordered with earlier stores,
+  and a load is not reordered with earlier loads. The routines rely on
+  this, and so does every other unit that shares a word between threads.
+  Therefore every such access, in this unit and elsewhere, goes through the
+  Atomic* wrappers below (never through Interlocked* directly), and the
+  wrappers give the x86-64 guarantees on every architecture:
+  - AtomicLoad*: an atomic load that is not reordered with later loads or
+    stores (acquire); AtomicStore*: an atomic store that is not reordered
+    with earlier loads or stores (release). On x86-64 a plain aligned load
+    or store already is that. On ARM64 (aarch64) the load is followed by a
+    load barrier (dmb ishld) and the store preceded by a full barrier (dmb
+    ish).
+  - AtomicXchg, AtomicCas, AtomicInc, AtomicDec, ... (read-modify-write):
+    a full barrier on both sides. On x86-64 that is the locked instruction
+    itself. On ARM64, FPC 3.2.2's Interlocked* routines are ldxr/stxr loops
+    with no barrier at all (rtl/aarch64/aarch64.inc), not even acquire or
+    release, so the wrappers put a full barrier (dmb ish) before and after.
+  This is the conservative choice: it is correct by construction (each
+  wrapper is at least as strong as the x86-64 instruction the code was
+  reasoned about) and costs nothing on x86-64. A cheaper ARM64 mapping
+  (acquire/release per site) needs the reasoning redone per site and a
+  machine to test it on; docs/design.md section 11. The ARM64 build has
+  not run on hardware yet (README.md, "ARM64").
 
   TMpscStack (multi-producer, single-consumer): producers push with a
   compare-and-swap (CAS) on Head (a Treiber stack). Because there is only
@@ -119,11 +140,12 @@ type
     procedure Release; {$ifndef WD_DRD}inline;{$endif}
   end;
 
-procedure CpuRelax; inline;        { x86 pause: tells the CPU this is a spin-wait loop }
+procedure CpuRelax; inline;        { x86 pause / ARM64 yield: tells the CPU this is a spin-wait loop }
 
 { A read / write of a synchronization word that races on purpose (x86: a
-  plain aligned load / store, which is atomic). Not inlined in -dWD_DRD
-  builds (see "Race detection" above). }
+  plain aligned load / store, which is atomic; ARM64: with the barrier that
+  gives it the same ordering, see "Memory ordering" above). Not inlined in
+  -dWD_DRD builds (see "Race detection" above). }
 {$ifdef WD_DRD}
 function AtomicLoad(var X: LongInt): LongInt;
 procedure AtomicStore(var X: LongInt; V: LongInt);
@@ -132,6 +154,9 @@ procedure AtomicStoreThreadId(var X: TThreadID; V: TThreadID);
 function AtomicLoadPtr(var X: Pointer): Pointer;
 procedure AtomicStorePtr(var X: Pointer; V: Pointer);
 function AtomicXchg(var X: LongInt; V: LongInt): LongInt;
+function AtomicXchgPtr(var X: Pointer; V: Pointer): Pointer;
+function AtomicCas(var X: LongInt; NewValue, Comparand: LongInt): LongInt;
+function AtomicCasPtr(var X: Pointer; NewValue, Comparand: Pointer): Pointer;
 function AtomicInc(var X: LongInt): LongInt;
 function AtomicDec(var X: LongInt): LongInt;
 function AtomicInc64(var X: Int64): Int64;
@@ -147,14 +172,19 @@ procedure AtomicStoreThreadId(var X: TThreadID; V: TThreadID); inline;
   (TExchange.FChannel, created by whichever thread begins the first stream) }
 function AtomicLoadPtr(var X: Pointer): Pointer; inline;
 procedure AtomicStorePtr(var X: Pointer; V: Pointer); inline;
-{ InterlockedExchange / Increment / Decrement / Increment64, for the words
-  that TLoop.Post (bearings.rt.loop) updates. FPC inlines the Interlocked* calls
-  into the caller, so drd would attribute their accesses to TLoop.Post, and
-  suppressing them would hide every report in Post. Through these routines
-  (not inlined in -dWD_DRD builds) the accesses have their own frame, which
-  tools/drd.supp suppresses. Release builds compile them to the same locked
-  instructions. }
+{ InterlockedExchange / CompareExchange / Increment / Decrement /
+  Increment64 (the read-modify-write operations), for example for the words
+  that TLoop.Post (bearings.rt.loop) updates. FPC inlines the Interlocked*
+  calls into the caller, so drd would attribute their accesses to
+  TLoop.Post, and suppressing them would hide every report in Post. Through
+  these routines (not inlined in -dWD_DRD builds) the accesses have their
+  own frame, which tools/drd.supp suppresses. Release builds on x86-64
+  compile them to the same locked instructions. AtomicCas returns the value
+  found: the exchange happened when it equals Comparand. }
 function AtomicXchg(var X: LongInt; V: LongInt): LongInt; inline;
+function AtomicXchgPtr(var X: Pointer; V: Pointer): Pointer; inline;
+function AtomicCas(var X: LongInt; NewValue, Comparand: LongInt): LongInt; inline;
+function AtomicCasPtr(var X: Pointer; NewValue, Comparand: Pointer): Pointer; inline;
 function AtomicInc(var X: LongInt): LongInt; inline;
 function AtomicDec(var X: LongInt): LongInt; inline;
 function AtomicInc64(var X: Int64): Int64; inline;
@@ -177,63 +207,126 @@ implementation
 uses
   bearings.rt.clock;
 
-{$asmmode att}
+{$if not defined(cpux86_64) and not defined(cpuaarch64)}
+{$error bearings.rt.sync: no memory-ordering rules for this CPU (x86_64 and aarch64 only)}
+{$endif}
 
+{$ifdef cpux86_64}
+{$asmmode att}
 procedure CpuRelax;
 begin
   asm
     pause
   end;
 end;
+{$endif}
+{$ifdef cpuaarch64}
+procedure CpuRelax;
+begin
+  asm
+    yield
+  end;
+end;
+{$endif}
+
+{ The wrappers ("Memory ordering" in the unit header). x86-64: plain loads
+  and stores, and the Interlocked* locked instructions, as they are. ARM64:
+  the plain load is followed by a load barrier (ReadBarrier = dmb ishld:
+  later loads and stores stay after it), the plain store is preceded by a
+  full barrier (ReadWriteBarrier = dmb ish: earlier loads and stores stay
+  before it), and each Interlocked* call (an ldxr/stxr loop without
+  barriers in FPC 3.2.2) sits between two full barriers. }
+
+{$ifdef cpuaarch64}
+procedure Fence; inline;
+begin
+  ReadWriteBarrier;
+end;
+{$endif}
 
 function AtomicLoad(var X: LongInt): LongInt;
 begin
   Result := X;
+  {$ifdef cpuaarch64}ReadBarrier;{$endif}
 end;
 
 procedure AtomicStore(var X: LongInt; V: LongInt);
 begin
+  {$ifdef cpuaarch64}Fence;{$endif}
   X := V;
 end;
 
 function AtomicLoadThreadId(var X: TThreadID): TThreadID;
 begin
   Result := X;
+  {$ifdef cpuaarch64}ReadBarrier;{$endif}
 end;
 
 procedure AtomicStoreThreadId(var X: TThreadID; V: TThreadID);
 begin
+  {$ifdef cpuaarch64}Fence;{$endif}
   X := V;
 end;
 
 function AtomicLoadPtr(var X: Pointer): Pointer;
 begin
   Result := X;
+  {$ifdef cpuaarch64}ReadBarrier;{$endif}
 end;
 
 procedure AtomicStorePtr(var X: Pointer; V: Pointer);
 begin
+  {$ifdef cpuaarch64}Fence;{$endif}
   X := V;
 end;
 
 function AtomicXchg(var X: LongInt; V: LongInt): LongInt;
 begin
+  {$ifdef cpuaarch64}Fence;{$endif}
   Result := InterlockedExchange(X, V);
+  {$ifdef cpuaarch64}Fence;{$endif}
+end;
+
+function AtomicXchgPtr(var X: Pointer; V: Pointer): Pointer;
+begin
+  {$ifdef cpuaarch64}Fence;{$endif}
+  Result := InterlockedExchange(X, V);
+  {$ifdef cpuaarch64}Fence;{$endif}
+end;
+
+function AtomicCas(var X: LongInt; NewValue, Comparand: LongInt): LongInt;
+begin
+  {$ifdef cpuaarch64}Fence;{$endif}
+  Result := InterlockedCompareExchange(X, NewValue, Comparand);
+  {$ifdef cpuaarch64}Fence;{$endif}
+end;
+
+function AtomicCasPtr(var X: Pointer; NewValue, Comparand: Pointer): Pointer;
+begin
+  {$ifdef cpuaarch64}Fence;{$endif}
+  Result := InterlockedCompareExchange(X, NewValue, Comparand);
+  {$ifdef cpuaarch64}Fence;{$endif}
 end;
 
 function AtomicInc(var X: LongInt): LongInt;
 begin
+  {$ifdef cpuaarch64}Fence;{$endif}
   Result := InterLockedIncrement(X);
+  {$ifdef cpuaarch64}Fence;{$endif}
 end;
 
 function AtomicDec(var X: LongInt): LongInt;
 begin
+  {$ifdef cpuaarch64}Fence;{$endif}
   Result := InterLockedDecrement(X);
+  {$ifdef cpuaarch64}Fence;{$endif}
 end;
 
 function AtomicInc64(var X: Int64): Int64;
 begin
+  {$ifdef cpuaarch64}Fence;{$endif}
   Result := InterLockedIncrement64(X);
+  {$ifdef cpuaarch64}Fence;{$endif}
 end;
 
 {$ifdef WD_DRD}
@@ -242,11 +335,16 @@ const
   VG_DRD_HAPPENS_BEFORE = $48470000 + 256 + 33;
   VG_DRD_HAPPENS_AFTER = $48470000 + 256 + 34;
 
-{ valgrind.h VALGRIND_DO_CLIENT_REQUEST_EXPR for amd64: the special
-  instruction preamble (rotations of %rdi by 3, 13, 61, 51 = 128 bits, so
-  %rdi is unchanged) followed by xchgq %rbx,%rbx; %rax = the argument block,
-  %rdx = the default result. valgrind recognizes the sequence and handles
-  the request; on a real CPU it does nothing and returns Default. }
+{ valgrind.h VALGRIND_DO_CLIENT_REQUEST_EXPR: the special instruction
+  preamble (rotations of a register by 3, 13, 61, 51 = 128 bits, so the
+  register is unchanged) followed by a no-op the CPU executes as such.
+  valgrind recognizes the sequence and handles the request; on a real CPU
+  it does nothing and returns Default.
+  amd64: %rdi rotated, then xchgq %rbx,%rbx; %rax = the argument block,
+  %rdx = the default result.
+  arm64: x12 rotated, then orr x10,x10,x10; x4 = the argument block, x3 =
+  the default result and the result. }
+{$ifdef cpux86_64}
 function VgClientRequest(Default: PtrUInt; Args: Pointer): PtrUInt; assembler; nostackframe;
 asm
   movq %rsi, %rax
@@ -258,6 +356,20 @@ asm
   xchgq %rbx, %rbx
   movq %rdx, %rax
 end;
+{$endif}
+{$ifdef cpuaarch64}
+function VgClientRequest(Default: PtrUInt; Args: Pointer): PtrUInt; assembler; nostackframe;
+asm
+  mov x3, x0
+  mov x4, x1
+  ror x12, x12, #3
+  ror x12, x12, #13
+  ror x12, x12, #51
+  ror x12, x12, #61
+  orr x10, x10, x10
+  mov x0, x3
+end;
+{$endif}
 
 procedure VgRequest1(Req: PtrUInt; A1: Pointer);
 var
@@ -296,12 +408,12 @@ var
   Old: PMpscNode;
 begin
   repeat
-    Old := Head;
+    Old := PMpscNode(AtomicLoadPtr(Pointer(Head)));
     N^.Next := Old;
     { the node's link is written before the CAS publishes the node; the
       consumer reads it after TakeAll }
     HappensBefore(@Head);
-  until InterlockedCompareExchange(Pointer(Head), Pointer(N), Pointer(Old)) = Pointer(Old);
+  until AtomicCasPtr(Pointer(Head), Pointer(N), Pointer(Old)) = Pointer(Old);
   Result := Old = nil;
 end;
 
@@ -309,9 +421,9 @@ function TMpscStack.TakeAll: PMpscNode;
 var
   L, Next, Rev: PMpscNode;
 begin
-  if Head = nil then
+  if AtomicLoadPtr(Pointer(Head)) = nil then
     Exit(nil);
-  L := PMpscNode(InterlockedExchange(Pointer(Head), nil));
+  L := PMpscNode(AtomicXchgPtr(Pointer(Head), nil));
   HappensAfter(@Head);
   { the stack is in LIFO order; reverse it to push order }
   Rev := nil;
@@ -327,7 +439,7 @@ end;
 
 function TMpscStack.IsEmpty: Boolean;
 begin
-  Result := Head = nil;
+  Result := AtomicLoadPtr(Pointer(Head)) = nil;
 end;
 
 procedure TParker.Park(TimeoutMs: Integer);
@@ -337,16 +449,16 @@ var
   R: SizeInt;
 begin
   { fast path: a notification is there; consume it (1 -> 0) }
-  if InterlockedCompareExchange(State, 0, 1) = 1 then
+  if AtomicCas(State, 0, 1) = 1 then
   begin
     HappensAfter(@State);
     Exit;
   end;
   { announce the wait (0 -> 2); this fails only when an Unpark came in
     between (State is 1): consume it and return }
-  if InterlockedCompareExchange(State, 2, 0) <> 0 then
+  if AtomicCas(State, 2, 0) <> 0 then
   begin
-    InterlockedExchange(State, 0);
+    AtomicXchg(State, 0);
     HappensAfter(@State);
     Exit;
   end;
@@ -373,7 +485,7 @@ begin
     { R = 0: woken; -EAGAIN: State was no longer 2 when the kernel checked;
       -EINTR: interrupted by a signal. In every case check for a
       notification; without one, sleep again (a spurious wake) }
-    if InterlockedCompareExchange(State, 0, 1) = 1 then
+    if AtomicCas(State, 0, 1) = 1 then
     begin
       HappensAfter(@State);
       Exit;
@@ -381,9 +493,9 @@ begin
     if R = -ESysETIMEDOUT then
     begin
       { give up the wait (2 -> 0), unless an Unpark won the race (then 1 -> 0) }
-      if InterlockedCompareExchange(State, 0, 2) <> 2 then
+      if AtomicCas(State, 0, 2) <> 2 then
       begin
-        InterlockedExchange(State, 0);
+        AtomicXchg(State, 0);
         HappensAfter(@State);
       end;
       Exit;
@@ -397,13 +509,13 @@ end;
 procedure TParker.Unpark;
 begin
   HappensBefore(@State);
-  if InterlockedExchange(State, 1) = 2 then
+  if AtomicXchg(State, 1) = 2 then
     SysFutex(@State, FUTEX_WAKE_PRIVATE, 1, nil);
 end;
 
 function TEventCount.Key: LongInt;
 begin
-  Result := Seq;
+  Result := AtomicLoad(Seq);
 end;
 
 procedure TEventCount.Wait(K: LongInt);
@@ -412,18 +524,18 @@ begin
     Seq. A NotifyAll that read Waiters = 0 therefore incremented Seq before
     that read, so the futex wait returns at once (EAGAIN) instead of
     sleeping without a waker }
-  InterlockedIncrement(Waiters);
-  if Seq = K then
+  AtomicInc(Waiters);
+  if AtomicLoad(Seq) = K then
     SysFutex(@Seq, FUTEX_WAIT_PRIVATE, K, nil);
-  InterlockedDecrement(Waiters);
+  AtomicDec(Waiters);
   HappensAfter(@Seq);
 end;
 
 procedure TEventCount.NotifyAll;
 begin
   HappensBefore(@Seq);
-  InterlockedIncrement(Seq);
-  if Waiters > 0 then
+  AtomicInc(Seq);
+  if AtomicLoad(Waiters) > 0 then
     SysFutex(@Seq, FUTEX_WAKE_PRIVATE, High(LongInt), nil);
 end;
 
@@ -436,7 +548,7 @@ var
   Spins: Integer;
 begin
   Spins := 0;
-  while InterlockedExchange(State, 1) <> 0 do
+  while AtomicXchg(State, 1) <> 0 do
   begin
     repeat
       Inc(Spins);
@@ -447,7 +559,7 @@ begin
       end
       else
         CpuRelax;
-    until State = 0;
+    until AtomicLoad(State) = 0;
   end;
   HappensAfter(@State);
 end;
@@ -455,10 +567,14 @@ end;
 procedure TSpinLock.Release;
 begin
   HappensBefore(@State);
-  { the stores of the critical section become visible before the store
-    that frees the lock (on x86 a plain store already has this order) }
-  WriteBarrier;
+  { the loads and stores of the critical section complete before the store
+    that frees the lock: a release store (AtomicStore) }
+  {$ifdef cpux86_64}
+  WriteBarrier;                 { on x86 a plain store already has this order }
   State := 0;
+  {$else}
+  AtomicStore(State, 0);
+  {$endif}
 end;
 
 end.

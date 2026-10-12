@@ -386,7 +386,7 @@ begin
   FPostMsg.Kind := lmCall;
   FPostMsg.Proc := @WsPostProc;
   FPostMsg.Arg := Self;
-  InterLockedIncrement(WebSocketsLive);
+  AtomicInc(WebSocketsLive);
 end;
 
 destructor TWebSocket.Destroy;
@@ -395,7 +395,7 @@ begin
     has none }
   if (not FFinished) and FOwnsHandler then
     FreeAndNil(FHandler);
-  InterLockedDecrement(WebSocketsLive);
+  AtomicDec(WebSocketsLive);
   inherited Destroy;
 end;
 
@@ -450,12 +450,12 @@ end;
 
 procedure TWebSocket.AddRef;
 begin
-  InterLockedIncrement(FRefs);
+  AtomicInc(FRefs);
 end;
 
 procedure TWebSocket.Release;
 begin
-  if InterLockedDecrement(FRefs) = 0 then
+  if AtomicDec(FRefs) = 0 then
     Free;
 end;
 
@@ -1042,7 +1042,7 @@ begin
   NeedPost := not FPostQueued;
   FPostQueued := True;
   if NeedPost then
-    InterLockedIncrement(FRefs);     { the inbox message holds a reference }
+    AtomicInc(FRefs);     { the inbox message holds a reference }
   FPostLock.Release;
   if NeedPost then
     FLoop.Post(@FPostMsg);

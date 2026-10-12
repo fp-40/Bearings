@@ -1,5 +1,9 @@
 # build output (compiles, benchmarks, test runs, fetched tools)
 /build/
+# fpmake output (tools/install-package.sh)
+/units/
+/fpmake
+/*.fpm
 /conformance/target/
 target/
 __pycache__/

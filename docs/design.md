@@ -39,33 +39,41 @@ connection upgrades (the socket is handed over after a `101 Switching
 Protocols` response), request body backpressure, streamed responses with
 backpressure, file bodies with `sendfile(2)`, graceful shutdown, a connection
 limit, systemd socket activation and notifications, an access log and
-metrics.
+metrics. WebSocket (RFC 6455) runs on top of the upgrade hand-off
+(`bearings.ws.*`, section 6.10).
 
-It has no TLS, no HTTP/2 and no WebSocket protocol code. TLS belongs to a
-reverse proxy such as nginx in front of the server. WebSocket support on top
-of the upgrade hand-off is planned in `docs/handoff-websocket.md`. The types
-of the service API are protocol-neutral so that an HTTP/2 session can use
-them later (section 6).
+It has no TLS and no HTTP/2. TLS belongs to a reverse proxy such as nginx in
+front of the server. The WebSocket layer negotiates no extension (no
+permessage-deflate). The types of the service API are protocol-neutral in
+content so that an HTTP/2 session can use them later (section 6.9).
 
-Platform: Linux x86_64 only. The runtime calls the kernel through its own
-system call stubs (`bearings.rt.sys`: `epoll_wait`, `epoll_ctl`, `eventfd2`,
+Platform: Linux, x86_64 and ARM64 (aarch64; ARM64 not yet run on hardware,
+README.md section "ARM64"). The runtime calls the kernel through its own
+system call stubs (`bearings.rt.sys`, one include file of assembler routines
+per architecture: `epoll_wait`, `epoll_ctl`, `eventfd2`,
 `accept4`, `read`, `write`, `writev`, `sendfile`, `futex`,
-`sched_getaffinity`, and the socket calls), not through the FPC RTL units.
-The stubs return the raw kernel result, `-errno` on failure, and never write
-FPC's errno threadvar. The lock-free code assumes the x86-64 memory model
-(section 11). Programs are compiled with `{$mode objfpc}{$H+}` and must list
-`cthreads` first.
+`sched_getaffinity`, and the socket calls), not through the FPC RTL units; a
+few cold setup calls use the RTL's `BaseUnix` (`fcntl` when an upgraded socket
+is detached and for systemd's descriptors, `unlink`, `chmod`, `chown` and
+`lstat` of a Unix socket file). The stubs return the raw kernel result,
+`-errno` on failure, and never write FPC's errno threadvar. The lock-free code
+was reasoned about in the x86-64 memory model; on ARM64 the `Atomic*` wrappers
+of `bearings.rt.sync` add the barriers that give each access the same
+guarantee (section 11). Programs are compiled with
+`{$mode objfpc}{$H+}` and must list `cthreads` first.
 
 Layers: `src/rt` (runtime, knows nothing about HTTP), `src/http1` (the
 HTTP/1.1 engine), `src/http` (the exchange and the error type), `src/server`
-(`TServer`, the access log, the metrics). `src/rt` uses nothing from the
-other directories. The README has the table of units.
+(`TServer`, the access log, the metrics), `src/ws` (WebSocket: the frame
+codec, the opening handshake and the connection; it uses `src/rt`, the
+exchange and the header list, and nothing else uses it). `src/rt` uses nothing from the other directories. The README has
+the table of units.
 
 Two goals shape most decisions below. The first is throughput: the request
 path of a service that answers on the loop thread allocates nothing, takes
 no lock, executes no atomic instruction and enters no implicit exception
 frame (section 7); the measured result is 0.85 to 0.98 of hyper's throughput
-on the plaintext benchmark (`docs/design/m3-perf-report.md`). The second is
+on the plaintext benchmark (`docs/perf-report.md`). The second is
 strictness on the wire: the parser and the body decoder reject what the
 RFC 9110 and RFC 9112 grammars reject, because a server and a proxy in front
 of it must agree on where each request ends (request smuggling). The
@@ -81,7 +89,8 @@ affinity mask, capped by the cgroup CPU quota, at least 1) when that is 0.
 Each `TServerLoop` runs one `TLoop` on its own thread and owns its listening
 socket or its share of one (section 3), its own instance of the service
 (`TServiceFactory` is called once per loop), its exchange pool, its block
-pool, its timer wheel and the list of its open connections. `PinLoops` binds
+pool, its timer wheel, the list of its open connections and the list of
+its upgraded connections (`Upgraded`). `PinLoops` binds
 loop i to the i-th usable CPU; it is off by default (it measured within 1 %).
 
 **A connection lives on the loop that accepted it.** `TServerLoop.OnAccept`
@@ -92,7 +101,8 @@ touches another loop's data, so there is no lock and no atomic instruction
 on it. Cross-thread traffic exists only for exchanges handed to workers or
 other threads, and for server-wide commands (stop, graceful shutdown, the
 metrics snapshot, the watchdog ping, resuming listeners paused by the
-connection limit).
+connection limit), and for messages posted to a WebSocket from another
+thread (`TWebSocket.PostText`, `PostBinary`, `PostFrame`).
 
 **Loops never block.** Every socket is non-blocking. `TLoopTask.Run` does as
 much work as it can without blocking and returns; the HTTP/1 task runs its
@@ -152,7 +162,9 @@ frees the task after the batch, and the loop resumes the interrupted event
 batch at `FEventPos` without another `epoll_wait`. Inbox messages already
 taken are kept in `FMsgHead`. Worker threads catch exceptions per job
 (below), and the listener catches an exception from per-connection setup for
-that connection only.
+that connection only. A `TWebSocket` catches an exception from a
+method of its handler, reports it to `LoopErrorProc` and fails that
+connection with close code 1011.
 
 **The worker pool** (`TWorkerPool`): a fixed set of threads with a FIFO
 queue under a pthread mutex. `TExchange.Offload` (loop thread) calls `Share`
@@ -172,8 +184,11 @@ is `Min(32, DefaultLoopCount + 4)`; `NO_WORKER_POOL` (-1) starts none.
 
 **Which thread may call what.** `THttpService.Call`, `TServiceCall.Poll` and
 `Drop`, `TBodySource.PollFrame`, the upgrade callbacks and the observer
-hooks run on the loop thread and must not block. `TBlockingHandler.Run`
-runs on a worker and may block. An unshared exchange may be used only on
+hooks, and the methods of `TWebSocketHandler` run on the loop thread and
+must not block. `TBlockingHandler.Run` runs on a worker and may block.
+`TWebSocket.PostText`, `PostBinary`, `PostFrame` and `Release` may be called
+from any thread, `AddRef` from the loop thread or from a thread that already
+holds a reference. An unshared exchange may be used only on
 its loop thread; after `Share` any holder may use it (section 6). `TServer`
 is created, started, waited for and freed by one owning thread; `Stop` may
 be called from any thread. `docs/api.md` section 1 and 14 have the full
@@ -182,11 +197,14 @@ tables.
 **Synchronization primitives** (`bearings.rt.sync`): `TMpscStack` (the
 inbox), `TParker` (one waiter: idle workers, a worker waiting for body
 bytes), `TEventCount` (any number of waiters: producers of a stream waiting
-for room), `TSpinLock` (a shared exchange's body channel and stream queue,
-held for a few instructions and never across a system call). The futex
+for room), `TSpinLock` (a shared exchange's body channel and stream queue, a
+WebSocket's list of messages posted from other threads, the access log's
+buffers; held for a few instructions and never across a system call). The futex
 primitives make the system call only when a thread is, or is about to be,
 asleep. The code relies on x86-64 ordering: locked instructions are full
-barriers and aligned word loads and stores are atomic. Builds with
+barriers and aligned word loads and stores are atomic; every such access goes
+through the `Atomic*` wrappers of `bearings.rt.sync`, which on ARM64 add the
+barriers that reproduce that ordering (section 11). Builds with
 `-dWD_DRD` give valgrind's drd race detector the happens-before edges of
 these primitives through client requests (section 9).
 
@@ -198,31 +216,38 @@ areas and writes outside the lock, so a slow sink costs dropped lines, never
 a stalled loop. The metrics are per-loop records written only by their loop;
 a snapshot asks each running loop for a copy on its own thread.
 
-**Server-wide shutdown.** `TServer.Stop(GraceMs)` posts a stop message to
-every loop and returns. Each loop accepts what is still in its accept queue
-(`TListener.DrainAndClose`, until `EAGAIN`), closes the listener, calls
-`GracefulShutdown` on every connection, and leaves its `Run` when its last
-connection closed or when the grace period passed, aborting what is left.
-`Wait` joins the loop threads, shuts the worker pool down (queued items still
-run, up to `WorkerWaitMs`) and flushes the access log. `Destroy` then aborts
-any connection still open, processes every loop's inbox until every exchange
-is back in its pool and no thread is inside `Post`, and only then frees the
-loops and pools; if a worker or an outside holder is still alive after
+**Server-wide shutdown.** `TServer.Stop(GraceMs)` stops the watchdog
+heartbeat, tells systemd `STOPPING=1`, posts a stop message to every loop and
+returns. Each loop accepts what is still in its accept queue
+(`TListener.DrainAndClose`, until `EAGAIN`), closes the listener (loop 0 also
+removes a Unix socket file), calls `GracefulShutdown` on every connection and
+`TUpgraded.Shutdown` on every upgraded connection (a WebSocket sends close
+1001), and leaves its `Run` when its last connection and its last upgraded
+connection closed, or when the grace period passed, aborting what is left
+(`TH1Dispatcher.Abort`, `TUpgraded.Abort`; a WebSocket's `OnClose` then gets
+1006). `Wait` joins the loop threads and, after a `Stop`, the watchdog
+thread, stops the access log (its last lines are flushed), and then shuts the
+worker pool down (queued items still run, up to `WorkerWaitMs`). `Destroy`
+aborts any connection still open (upgraded ones included), shuts the worker
+pool down, processes every loop's inbox until every exchange is back in its
+pool and no thread is inside `Post`, and only then frees the loops and
+pools; if a worker or an outside holder is still alive after
 `WorkerWaitMs`, the loops and pools are leaked on purpose, because another
 thread may still post to them.
 
 ## 3. Readiness and I/O
 
 **Registration.** A connection socket is added to the loop's epoll set once,
-with `EPOLLIN or EPOLLOUT or EPOLLRDHUP or EPOLLET` and `data.ptr` pointing
-at the task's `TIoSource` (`TLoop.Register`), and the registration is never
-modified; backpressure is simply not calling `read` or `write`. Removal is
-implicit at `close`, except for a detached upgraded connection
-(`TLoop.Unregister`). Level-triggered epoll was rejected: it reports a
-socket on every `epoll_wait` while its connection waits for the application,
-and toggling `EPOLLOUT` costs an `epoll_ctl` per blocked write. Listening
-sockets and the eventfd are level-triggered (`data.ptr = nil` for the
-eventfd).
+with `EPOLLIN or EPOLLOUT or EPOLLRDHUP or EPOLLET` and `data.ptr` pointing at
+the task's `TIoSource` (`TLoop.Register`), and the HTTP/1 task never modifies
+the registration; backpressure is simply not calling `read` or `write`. The
+upgrade hand-off points it at the `TUpgraded`'s source with one
+`EPOLL_CTL_MOD` (same event bits). Removal is implicit at `close`, except for
+a detached upgraded connection (`TLoop.Unregister`). Level-triggered epoll was
+rejected: it reports a socket on every `epoll_wait` while its connection waits
+for the application, and toggling `EPOLLOUT` costs an `epoll_ctl` per blocked
+write. Listening sockets and the eventfd are level-triggered (`data.ptr = nil`
+for the eventfd).
 
 **Readiness bits** (`TReadyBit`, `ReadyFromEpoll` in `bearings.rt.loop`):
 `EPOLLIN` or `EPOLLPRI` sets `rdRead`; `EPOLLOUT` sets `rdWrite`;
@@ -301,7 +326,9 @@ and, at the limit, leaves epoll (`PauseForLimit`) instead of refusing: new
 clients wait in the accept queue. The closing connection gives the slot back
 (`TConnHooks.ConnDone`), resumes its own loop's listeners and posts a
 message to the other loops to resume theirs; a 1 s timer is the fallback.
-With the limit off the accept path tests one integer.
+An upgraded connection keeps its slot until the upgraded stream is closed or
+detached (`TConnHooks.UpgradedClosed`). With the limit off the accept path
+tests one integer.
 
 `SIGPIPE` is ignored process-wide at `Start` (`IgnoreSigPipe`): a write to a
 reset socket then returns `-EPIPE`, which ends that connection only.
@@ -311,12 +338,14 @@ reset socket then returns `-EPIPE`, which ends that connection only.
 **The clock** (`bearings.rt.clock`) is libc's `clock_gettime`, which runs in
 the vDSO (about 11 ns; FPC's own wrapper makes a system call, about 89 ns).
 The loop samples `CLOCK_MONOTONIC` once per iteration, right after
-`epoll_wait` returns (`TLoop.NowNs`, `NowMs`), and every timeout, deadline
+`epoll_wait` returns (`TLoop.NowNs`, `NowMs`; a wait with a timer armed also
+reads it once before, to compute its timeout), and every timeout, deadline
 and duration in the library is measured with that value: no connection
 reads the clock itself. A consequence: a request answered in the iteration
 that read it has a measured duration of 0 (access log, metrics), and a timer
 armed late in a long iteration is measured from the iteration's start.
-`CLOCK_REALTIME` is read only to build the Date header.
+`CLOCK_REALTIME` is read only for the Date header and for the access log's
+timestamp of each logged request.
 
 **The timer wheel** (`TTimerWheel`, `bearings.rt.timer`): 6 levels of 64
 slots at 1 ms resolution (level L covers 64^L ms per slot), one per loop,
@@ -327,13 +356,19 @@ bit operations over the occupancy masks. Lazy arm: moving a deadline later
 only stores the new deadline (the entry is filed again when its slot
 expires); lazy cancel sets the deadline to 0 and the entry is dropped when
 its slot expires. So the header-read timer of a keep-alive connection costs
-two stores per request. A deadline is rounded up to the next tick and the
-current time rounded down, so a timer never fires before its deadline.
-Timers are `TTimer` records embedded in their owners (no allocation);
-`Remove` unlinks one before its owner is freed. Users: the header read timer
-and the body timer of a connection, the listener's resume timer, the stop
-deadline of a loop, the application's `TWakeTimer`, and the stall detector's
-scan.
+two stores per request. Every timer of the library is armed at
+`NowMs + DelayMs`, with `NowMs` rounded down to the millisecond, and fires
+once `NowMs` reaches that deadline: never early in loop time, but up to 1 ms
+short of `DelayMs` measured from the true instant of arming.
+(`DeadlineToTick` and `InstantToTick` round a nanosecond deadline up and an
+instant down; only the tests use them.) Timers are `TTimer` records embedded
+in their owners (no allocation); `Remove` unlinks one before its owner is
+freed. Users: the header read timer and the body timer of a connection, the
+listener's resume timer (also the 1 s fallback of the connection-limit
+pause), the stop deadline of a loop, the idle, ping and close timers of a
+WebSocket, the application's `TWakeTimer`, and, in `-dWD_STALL` builds, the
+stall detector's scan. Pings are on by default, so a loop with an open
+WebSocket always has a timer armed.
 
 **The Date header** (`bearings.http.date`) is formatted once per second per
 loop. `src/rt` does not depend on the HTTP units, so the loop offers one
@@ -388,8 +423,10 @@ in an HTTP/1.0 request, an invalid `Content-Length`, or several
 `Content-Length` values that differ are rejected with 400. The lenient
 options of `TParserConfig` are all off by default. The body decoder
 (`TDecoder`, `bearings.http1.decode`) is a resumable state machine that
-returns slices of the read buffer and ends the connection on any malformed
-chunk-size line, missing CRLF, overflowing size or oversized extension;
+returns slices of the read buffer and closes reading on any malformed
+chunk-size line, missing CRLF, overflowing size or oversized extension (the
+handler sees a body error and may still answer; the connection is not
+reused and ends with outcome `io`, 5.7);
 trailers are copied into a per-connection scratch buffer and parsed into the
 exchange's `ReqTrailers` list under the same header limits.
 
@@ -426,23 +463,24 @@ requests of its own connection, not those of other connections.
 
 ### 5.3 The service call
 
-`RecvMsg` fills the exchange's head and opens the body channel, then calls
-`THttpService.Call(Ex)`, which returns a `TServiceCall` and must not answer
-or read the body (builds with assertions check it). The handler's code runs
-only in `TServiceCall.Poll`, which `PollMsg` calls from `PollWrite` every
+`PollReadHead` opens the exchange's body channel and prepares an upgrade slot
+when the request asks for one (5.8); `RecvMsg` fills the exchange's head, then
+calls `THttpService.Call(Ex)`, which returns a `TServiceCall` and must not
+answer or read the body (builds with assertions check it). The handler's code
+runs only in `TServiceCall.Poll`, which `PollMsg` calls from `PollWrite` every
 time the connection runs while the call is in flight, until it returns
 `cpReady` after exactly one terminal call. Two steps instead of one because
 the same `PollLoop` iteration runs the rest of `PollRead` between them: it
-fetches the first body chunk into the channel before the handler's first
-poll (so a handler that reads finds data), and it may detect the client's
-EOF, in which case the call is dropped (`Drop(Ex, False)`) without ever
-being polled. A stateless call object returned for every request costs one
-virtual call and no allocation.
+fetches the first body chunk into the channel before the handler's first poll
+(so a handler that reads finds data), and it may detect the client's EOF, in
+which case the call is dropped (`Drop(Ex, False)`) without ever being polled.
+A stateless call object returned for every request costs one virtual call and
+no allocation.
 
 ### 5.4 Writing
 
 A response head is encoded by `ServerEncode` straight into the write cursor
-(`TWriteBuf.Headers`, a `TByteVec` over a pooled block) when nothing is
+(`TWriteBuf.Headers`, a `TCursor` over a pooled `TByteVec`) when nothing is
 queued. The encoder chooses the framing and returns a `TEncoder`
 (`bearings.http1.encode`): `Content-Length` when the length is known,
 `Transfer-Encoding: chunked` when it is not (HTTP/1.1), close-delimited for a
@@ -477,7 +515,9 @@ frame in a chunked body gets the chunk framing around the file range
 (`BufferFileFrame`). A write that returns 0 with bytes left is reported as
 `IO_ERRNO_WRITE_ZERO`. `CanBuffer` bounds the memory one response can hold:
 the dispatcher polls the body source only while the write buffer holds less
-than `max_buf_size` and fewer than 16 entries are queued.
+than `max_buf_size` and fewer than 16 entries are queued. With
+`PipelineFlush` on only the 16-entry bound applies: the cursor is not
+bounded, because the responses of a pipelined batch collect there.
 
 **Pipeline flush** (`TH1Config.PipelineFlush`, on in the production preset):
 while the read buffer still holds bytes of further requests and nothing is
@@ -508,7 +548,9 @@ request): EOF there closes the read side and ends the connection with
 
 **Draining.** When the application finished without reading the whole body,
 `PollDrainOrCloseRead` reads once and discards what arrives; if the body has
-not ended by then, reading is closed and the connection is not reused.
+not ended by then, reading is closed and the connection is not reused. A
+framing or socket error found while draining ends the connection with
+outcome `io` (5.7).
 
 ### 5.6 Errors and automatic responses
 
@@ -547,7 +589,11 @@ waits since the first byte add up to T >= `BodyReadTimeoutMs` and fewer than
 `BodyMinRate` x T / 1000 bytes came (the wait before the first byte counts
 only for the first rule). Reading closes, the handler sees a body error
 (`BodyErrorIsTimeout`) and answers, and the connection closes after that
-response. The outcome is `io`. Both timeouts need `TH1Config.Timer`;
+response. Every request body error (this rule, malformed framing, a socket
+error, whether the handler reads the body or the server drains it) is kept
+by the connection too and reported after the response and the shutdown
+(`TakeError`), so the outcome is `io` (hyper ends such a connection `ok`;
+section 10). Both timeouts need `TH1Config.Timer`;
 `ValidateH1Config` refuses a timeout without one.
 
 ### 5.8 Upgrades and CONNECT
@@ -562,13 +608,16 @@ read side, and `PollInner` sees the pending slot and ends with `dsUpgrade`
 without a shutdown. `Finish` then acts by `TH1ConnMode`: `cmWithUpgrades`
 takes the transport and the unread bytes out of `TH1Io` (`IntoInner`: the
 bytes stay in their pinned block, no copy), builds a `TUpgraded`
-(`bearings.rt.stream`) that takes over the socket's readiness source, and
-fulfils the slot; a `TUpgradeDelivery` task queued after the observer's
-`OnConnClose` calls the handler, so the close is reported before the upgraded
-connection starts. `cmPlain` tells the handler `upgrade expected but low
-level API in use` and closes the socket. `cmWithoutShutdown` hands the
-transport and the unread bytes to the observer as `TConnParts` whenever the
-connection ends without error. A slot whose response was not an upgrade
+(`bearings.rt.stream`) that takes over the socket's readiness source, tracks
+it in the loop's `Upgraded` list (`U.Track`, so that a stop reaches it, 5.9),
+gives it a `CloseProc` that calls `TConnHooks.UpgradedClosed` when the server
+has hooks, and fulfils the slot; a `TUpgradeDelivery` task queued after the
+observer's `OnConnClose` calls the handler, so the close is reported before
+the upgraded connection starts. `cmPlain` and `cmWithoutShutdown` do not hand
+upgrades over: the handler gets `upgrade expected but low level API in use`;
+`cmPlain` then closes the socket, and `cmWithoutShutdown` hands the transport
+and the unread bytes to the observer as `TConnParts` whenever the connection
+ends without error. A slot whose response was not an upgrade
 stays with the connection: a later upgrade request replaces it (the older
 handler gets `upgrade expected but not completed`), and a connection that
 finishes while it is set ends through the upgrade path.
@@ -599,7 +648,11 @@ so that an idle connection notices now. What a client sees during
 stop reached its loop (idle keep-alive, just accepted, a request still in the
 socket buffer) is closed without a response; a connection that enters the
 accept queue between the last `accept4` and the close is reset by the
-kernel.
+kernel. An upgraded connection no longer belongs to a dispatcher: the stop
+calls `TUpgraded.Shutdown`, which asks its listener to end its protocol (the
+default closes the socket; a WebSocket sends close 1001 `server shutdown`
+and runs the close handshake), and the deadline aborts it (the listener's
+`Aborted`, then close).
 
 ### 5.10 Wake sources
 
@@ -610,7 +663,8 @@ call `Ex.Wake`), a body channel waiting for its receiver (the receiver's next
 read wakes the sender), or the task's own wake (yield, the channel's wake).
 Builds with `-dWD_DEBUG` check this at the end of every run that returns
 pending (`AssertWakeArmed`, counted in `WakeAssertFailures`). Builds with
-`-dWD_STALL` add the stall detector: each loop scans its connections once per
+`-dWD_DEBUG -dWD_STALL` add the stall detector (`WD_STALL` alone does not
+compile): each loop scans its connections once per
 second and reports, once, a connection that is mid-message, has not run for
 `STALL_MS` (60 s) and waits on the server rather than on the client
 (`TH1Dispatcher.StallCandidate`); a connection whose last run waited on a
@@ -639,8 +693,9 @@ they are shaped this way.
 A call answers with exactly one of `Respond` (a body of known length),
 `RespondStream` (a `TBodySource`), `BeginStream` (`RespondStream` with the
 exchange's own `TChannelBody`) or `Fail` (no response; the connection closes
-with a user error). The state (`TExchangeState`: `xsIdle`, `xsCalled`,
-`xsAnswered`, `xsDone`, `xsCanceled`) moves with plain stores on an unshared
+with a user error); `RespondText` is a shorthand for `Respond`. The state
+(`TExchangeState`: `xsIdle`, `xsCalled`, `xsAnswered`, `xsCanceled`,
+`xsDone`) moves with plain stores on an unshared
 exchange. On a shared exchange the first terminal call claims the response
 slot (`ClaimAnswer`: a compare-and-swap on `FAnswerClaim` while the state is
 still `xsCalled`), writes the slot, and then does the state
@@ -689,8 +744,9 @@ release rule, a plain record without managed fields: `BodyEmpty`,
 `BodyStatic` (memory that outlives the write), `BodyString` (one reference
 to the string held until the bytes were written, taken with a typecast
 assignment so the caller needs no managed local), `BodyHeap` (`FreeMem`
-after the write), `BodyFile` (a file range for `sendfile`, the descriptor
-closed after the last byte or when the connection drops its queue), and
+after the write), `BodyFile` (a file range for `sendfile`; with `CloseAfter` the
+descriptor is closed after the last byte or when the connection drops its
+queue), and
 `BodyCopy` (`bearings.http.exchange`: a copy in a pooled block owned by the
 record, not in an exchange buffer, because a queued body can outlive its
 request when the exchange is reused). `ReleaseBody` runs on the loop thread
@@ -718,7 +774,8 @@ so the client sees a truncated body and the connection closes.
 
 An exchange starts unshared: it belongs to its loop thread and every method
 runs there without locks (builds with assertions check it). `Share` (loop
-thread only, from `Poll` or from a holder) switches it to shared mode and
+thread only: from `Poll`, or from a holder running on the loop thread;
+`EExchangeState` when no call is in flight) switches it to shared mode and
 hands out one reference; it is the only way to obtain a reference that may
 leave the loop thread or outlive the call. From then on the body channel and
 the stream queue work under their locks and the state changes by
@@ -783,21 +840,30 @@ down takes the reference back and raises `EWorkerPoolStopped`, which aborts
 the connection task. `SaturatedStatus` answers at once on the loop (for
 example 503 with `Retry-After: 1`) when the pool's queue limit is reached,
 without sharing. The worker's job (`TExchange.Execute`) runs the handler
-inside `try/finally` so that its reference always goes back.
+inside `try/finally` so that its reference always goes back; an exception
+from the handler becomes `Fail('handler raised <class>: <message>')`, or
+`AbortStream` when the answer was a stream (section 2).
 
 ### 6.7 Upgrades from the application's side
 
 `OnUpgrade(H)` registers a `TUpgradeHandler` on the loop thread before the
 101 answer. After the HTTP part ended and the close was reported,
-`H.Upgraded(U)` runs on the loop thread with a `TUpgraded`: `Attach` keeps it
-on the loop with `Readable`/`Writable` callbacks that follow the readiness
-rules (a callback with nothing to do costs no system call; `TryRead` returns
-the leftover bytes first), or `Detach` leaves the loop (the socket is
-unregistered and made blocking, the leftover bytes are copied, and the caller
-owns the descriptor). The handler owns `U` from `Upgraded` on; if `Upgraded`
-raises before taking it, the exchange closes `U` and the exception goes on to
-the loop. An upgraded connection keeps its connection-limit slot until the
-stream is closed or detached (`CloseProc`).
+`H.Upgraded(U)` runs on the loop thread with a `TUpgraded`: `Attach(L)` keeps
+it on the loop with a `TRawListener` whose `Readable`/`Writable` callbacks
+follow the readiness rules (a callback with nothing to do costs no system
+call; `TryRead` returns the leftover bytes first), or `Detach` leaves the
+loop (the socket is unregistered and made blocking, the leftover bytes are
+copied, and the caller owns the descriptor). The handler owns `U` from
+`Upgraded` on; if `Upgraded` raises before taking it, the exchange closes `U`
+and the exception goes on to the loop. When no upgrade happens,
+`H.UpgradeFailed(Msg)` runs on the loop thread instead: `no upgrade
+available` at once when the request has no upgrade slot, `upgrade expected
+but low level API in use` in a mode that does not hand upgrades over (5.8),
+`upgrade expected but not completed` when the connection ended first. The
+listener's `Shutdown(U)` is called by a graceful stop (default: `U.Close`)
+and `Aborted(U)` by `U.Abort` at the stop deadline, before the socket is
+closed (5.9). An upgraded connection keeps its connection-limit slot until
+the stream is closed or detached (`CloseProc`).
 
 ### 6.8 Observer and parts
 
@@ -811,12 +877,87 @@ them in `bearings.server` would make the unit references circular.
 
 ### 6.9 HTTP/2 fit
 
-The service, call, exchange, body and worker types do not mention HTTP/1. An
-HTTP/2 session would take one exchange per stream from the loop pool
+The service, call, exchange, body and worker types are protocol-neutral in
+content, but some are declared in an HTTP/1 unit: `THttpMethod`,
+`THttpVersion` (which has `hv2`) and `TResponseHead` live in
+`bearings.http1.role`, and `FillHead` takes the parser's `TParsedRequestHead`.
+An HTTP/2 session would move them to a neutral unit or fill the same records.
+It would take one exchange per stream from the loop pool
 (per-connection reuse is an HTTP/1 optimization only), fill the head from
 decoded header frames, feed the single-slot channel from data frames and
 return flow-control credit when the handler takes a chunk, and poll a
 `TBodySource` for data frames. Nothing of that exists yet.
+
+### 6.10 WebSocket
+
+Three units in `src/ws`, on top of the upgrade hand-off (6.7); nothing in
+`src/rt`, `src/http1` or `src/server` refers to them.
+
+**The handshake** (`bearings.ws.handshake`). `CheckRequest(Ex, Protocols)`
+runs in the service call on the loop thread and checks RFC 6455 section 4.2:
+GET, HTTP/1.1, an upgrade slot, `websocket` among the `Upgrade` tokens,
+`upgrade` among the `Connection` tokens, one `Sec-WebSocket-Key` that is the
+base64 form of 16 bytes, and `Sec-WebSocket-Version: 13`; it picks the first
+client subprotocol that is in the application's list. The overload with an
+`Origins` list also refuses a browser request from another site (an `Origin`
+not in the list, or more than one), because the browser sends the site's
+cookies with any handshake (cross-site WebSocket hijacking); a request
+without `Origin` passes. `RespondHandshakeError` answers 426 with
+`Sec-WebSocket-Version: 13` for a wrong version, 403 for a refused origin and
+400 otherwise. `Sec-WebSocket-Extensions` is ignored. SHA-1 comes from FPC's
+`sha1` unit; base64 is local, because the key check must refuse any other
+alphabet.
+
+**Accepting.** `bearings.ws.conn.AcceptWebSocket(Ex, R, Handler, Cfg)`
+answers 101 (`Respond101`) and registers a `TWsUpgradeHandler`, whose
+`Upgraded` creates a `TWebSocket` and attaches it as the `TUpgraded`'s
+listener; it owns `Handler` in every case and frees it, without calling it,
+when the upgrade fails. An application with its own `TUpgradeHandler` does
+the same with `Respond101` and `TWebSocket`.
+
+**Frames** (`bearings.ws.frame`). `TWsReader` takes the bytes in pieces of
+any size and reports one event at a time: a piece of a data message
+(unmasked in place in the caller's buffer, text checked as UTF-8 across
+frame boundaries by `TUtf8Check`), a complete control frame, or an error
+with the close code to send (1002 protocol error, 1007 invalid UTF-8, 1009
+too large). The encoder writes server frame headers (never masked).
+`WsTextFrame` and `WsBinaryFrame` build a prepared frame (`TWsFrame`, header
+and payload in one string) that can be sent to many connections.
+
+**The connection** (`TWebSocket`, a `TRawListener`). It reads into a pooled
+64 KiB block, at most 8 blocks per run before it yields. A message that
+arrives whole in one read goes to `OnText`/`OnBinary` straight from the read
+block; a fragmented message, or one split across reads, is joined in a
+reassembly buffer, bounded by `MaxMessage` (1009 above it). A send is
+written at once when nothing is queued (header and payload in one `writev`),
+else queued; the queue holds copied bytes and prepared frames by reference
+(frames of `WS_SHARE_MIN`, 1 KiB, or more; smaller ones are copied), at most
+`WS_MAX_IOV` segments per `writev`. Backpressure: a data send is refused with
+`wsFull` while `SendHighWater` or more bytes are queued (`OnWritable` follows
+when the queue went down to half), and the connection stops reading while
+the queue is over the mark, so a client that sends faster than it reads is
+slowed down by TCP. Control frames are always queued. Pings go out every
+`PingIntervalMs` and any received byte resets the idle timer, so with the
+defaults (ping 25 s, idle 60 s) only a client that is gone hits the idle
+timeout (`CloseWith(1001)`). The close handshake: a client's close is echoed;
+`CloseWith` sends the close frame and reads, dropping data messages, until
+the client's close or `CloseTimeoutMs`; a protocol error sends its close
+code and ends without waiting. Ending the connection shuts the write side
+down and reads until the client closes or `CloseTimeoutMs` passes, because
+closing a socket with unread bytes makes the kernel send a reset that can
+lose the close frame. `Abort` closes without the handshake; `OnClose` gets
+1006.
+
+**Threads.** Everything runs on the loop thread of the `TUpgraded` except
+`PostText`, `PostBinary`, `PostFrame`, `AddRef` and `Release`. A post copies
+the message (or takes a reference on a prepared frame) into a list under a
+spin lock, bounded by `SendHighWater` too, and posts an `lmCall` message
+that moves it into the output queue. A thread that uses a `TWebSocket` holds
+a reference (`AddRef` on the loop thread, for example in `OnOpen`); the loop
+holds one until the connection ends, and the last `Release` frees the
+object. A broadcast from another thread is cheaper as one `TLoop.Post` per
+loop whose procedure calls `SendFrame` for that loop's connections than as
+one `PostFrame` per connection. There is no blocking API for worker threads.
 
 ## 7. Memory
 
@@ -832,6 +973,9 @@ return flow-control credit when the handler takes a chunk, and poll a
 | call objects | the service (singletons or its own pools) | `TServiceCall.Drop` returns them |
 | `TUpgradeSlot` | reference-counted: the connection side and the exchange | the last `Release` frees it |
 | `TUpgraded` | its loop, then the upgrade handler | until closed or detached |
+| `TWebSocket` | reference-counted: the loop holds one reference until the connection ends, plus one per `AddRef` | the last `Release` (any thread) frees it |
+| `TWebSocketHandler` | its `TWebSocket`, unless created with `AOwnsHandler = False` | freed after `OnClose` |
+| `TWsFrame` (prepared frame) | the AnsiString reference count | the last reference: the caller's and one per queue entry until written |
 
 ### 7.2 Zero-copy slices and their lifetimes
 
@@ -845,6 +989,7 @@ return flow-control credit when the handler takes a chunk, and poll a
 | `BodyString`, `WriteString` | the string's heap block | the frame is written | one reference in `TBodyData.Ctx` |
 | `BodyCopy`, `Write` | a pool or heap block owned by the body data or the stream ring | the frame is written | the `TBodyData` |
 | leftover bytes of a `TUpgraded` | the read buffer | consumed, closed, or copied by `Detach` | the pin |
+| WebSocket message bytes (`OnText`, `OnBinary`) | the connection's read block or reassembly buffer | the end of the call | the `TWebSocket` |
 
 `TReadBuf.Reserve` never moves or compacts a block with pins: when the
 buffer needs room it takes a new block, copies the unread bytes, and marks
@@ -889,21 +1034,22 @@ enough.
   are reached through the loop object.
 - `TTcpTransport` has no constructor of its own (`NewTcpTransport`): an FPC
   constructor always gets a frame.
-- The transport touches an AnsiString reference count only for `BodyString`
-  and `WriteString` (one increment, one decrement; `lock`-prefixed because
-  the program is multi-threaded).
-- The check: `tools/check-hot-asm.sh` compiles every unit with assembler
-  listings in the production (`-O3`) and the test (`-O2 -Sa`) configuration
-  and fails when any listed routine contains a frame call (`tools/hot-asm.py`
-  parses the listings). The list covers the dispatcher's per-request
-  routines, every method of `TH1Conn`, `TConnState`, `TH1Io`, `TReadBuf`,
-  `TByteVec`, `TBytesView`, `TTcpTransport`, `TTimerWheel`, `TBodyChan`, the
-  per-frame `TChannelBody` methods, the shared-exchange routines
-  (`Release`, `Share`, `Offload`, `Wake`, the stream writer), the parse and
-  encode entry points, `TLoop.RunIteration` and the `bearings.rt.sync`
-  primitives. With `--s7` it also checks that the production listing of
-  `bearings.http.exchange` holds no `Dbg*` routine and no assertion call, and
-  that the test listing does.
+- The HTTP transport touches an AnsiString reference count only for
+  `BodyString` and `WriteString` (one increment, one decrement;
+  `lock`-prefixed because the program is multi-threaded). A WebSocket's
+  `SendFrame` and `PostFrame` hold a prepared frame the same way.
+- The check: `tools/check-hot-asm.sh` compiles `bearings.server` and every
+  unit it uses (all of `src/` except `src/ws`) with assembler listings in the
+  production (`-O3`) and the test (`-O2 -Sa`) configuration and fails when any
+  listed routine contains a frame call (`tools/hot-asm.py` parses the
+  listings). The list covers the dispatcher's per-request routines, every
+  method of `TH1Conn`, `TConnState`, `TH1Io`, `TReadBuf`, `TByteVec`,
+  `TBytesView`, `TTcpTransport`, `TTimerWheel`, `TBodyChan`, the per-frame
+  `TChannelBody` methods, the shared-exchange routines (`Release`, `Share`,
+  `Offload`, `Wake`, the stream writer), the parse and encode entry points,
+  `TLoop.RunIteration` and the `bearings.rt.sync` primitives. With `--s7` it
+  also checks that the production listing of `bearings.http.exchange` holds no
+  `Dbg*` routine and no assertion call, and that the test listing does.
 
 ### 7.5 Per-request allocations
 
@@ -953,19 +1099,23 @@ instead.
 `test_rt_sys`, `test_rt_timer`, `test_rt_loop`, `test_rt_net`,
 `test_rt_readbuf`, `test_h1_io`, `test_h1_conn`, `test_body_chan`,
 `test_exchange`, `test_h1_dispatch` (built with `-dWD_DEBUG -dWD_STALL`, so
-the wake-source check runs in every test), `test_workers`, `test_server` and
-`test_server_ops` (real sockets through `TServer`). The script prints the
-total (`unit tests run: N`; 975 at the time of writing). The suites that
-own memory across threads (`test_h1_conn`, `test_body_chan`,
-`test_exchange`, `test_h1_dispatch`, `test_workers`, `test_server`,
-`test_server_ops`) run once more under heaptrc (`-gh`) and must report 0
+the wake-source check runs in every test), `test_workers`, `test_server`,
+`test_server_ops` (real sockets through `TServer`), `test_ws_frame`,
+`test_ws_handshake`, `test_ws_conn` and `test_ws_echo` (a WebSocket echo
+server on real sockets). The script prints the total (`unit tests run: N`;
+1056 at the time of writing). The suites that own memory across threads
+(`test_h1_conn`, `test_body_chan`, `test_exchange`, `test_h1_dispatch`,
+`test_workers`, `test_server`, `test_server_ops`, `test_ws_conn`,
+`test_ws_echo`) run once more under heaptrc (`-gh`) and must report 0
 unfreed blocks. `test_workers` also runs three times under
 `valgrind --tool=drd` (built with `-dWD_DRD` and the C heap, with
 `tools/drd.supp` and `--fair-sched=yes`) and must report 0 errors; what the
 suppressions hide and what "drd clean" does not cover is stated in that
 file. The test doubles are `tests/support/bearings.test.mocktransport`
-(scripted reads and exact expected writes) and `bearings.test.scriptio`
-(scripted answers, recorded writes, for the dispatcher and the fuzz).
+(scripted reads and exact expected writes), `bearings.test.scriptio`
+(scripted answers, recorded writes, for the dispatcher and the fuzz) and
+`bearings.test.ws` (masked client frames, a log of `TWsReader` events, a
+reader of server frames).
 
 **The worker stress** (`tests/unit/stress_workers.pas`, `tools/s7-stress.sh`):
 a server with 16 workers, 24 client threads, 13 handler modes (answer before
@@ -981,12 +1131,14 @@ sizes, the server under valgrind memcheck with the C heap (valgrind sees
 nothing inside FPC's own heap) and 0 errors required.
 
 **The split fuzz** (`tests/unit/test_split_fuzz.pas`, in process): every
-conformance case input and 20 000 generated request heads (plus httparse's
-own test inputs when its source is present) are served by the real
-dispatcher and the conformance server's handlers over a scripted transport,
-once in a single read and then, for each of 2 000 seeds, in random pieces
-with random `EAGAIN` and partial writes, in the case's profile and in
-`ProductionH1Config`; the bytes written, the events and the outcome must be
+conformance case input without an upgrade reply and 20 000 generated request
+heads (plus httparse's own test inputs when its source is present) are
+served by the real dispatcher and the conformance server's handlers over a
+scripted transport, once in a single read and then in random pieces with
+random `EAGAIN` and partial writes: each of 2 000 seeds runs every case
+input, in the case's profile and in `ProductionH1Config`, and 20 corpus
+entries drawn by the seed, and every corpus entry also runs once with its
+index as the seed; the bytes written, the events and the outcome must be
 equal, no task may abort, every block must be back in the pool, and heaptrc
 must report no leak. Two shapes are accepted as equivalent because they
 depend only on segmentation (section 10): an invalid head without an end of
@@ -998,9 +1150,11 @@ last.
 **Differential tests** against the Rust originals, run from their own
 scripts: `tests/unit/test_parser_diff.sh` (the parser against httparse
 1.10.1), `test_role_diff.sh` (request-head parsing and URIs against hyper's
-own `Server::parse` and `http::Uri`, also against a guard page),
-`test_codec_diff.sh` (the body decoder and the header helpers against hyper's
-`decode.rs` and `headers.rs`). They cover request acceptance and framing,
+own `Server::parse` and `http::Uri`), `test_codec_diff.sh` (the body decoder
+and the header helpers against hyper's `decode.rs` and `headers.rs`). All
+three run once more with the input against a `PROT_NONE` guard page, so a
+read past the input faults: the parser and codec diffs at its end and at its
+start, the role diff at its end. They cover request acceptance and framing,
 which is what request smuggling depends on; response encoding is checked by
 fixed expectations.
 
@@ -1047,9 +1201,15 @@ second. `bench/run_offload.sh` measures the offload cost (limit 5.4 us per
 request); `bench/bench_role.pas`, `bench_conn.pas` and `bench_dispatch.pas`
 are the micro-benchmarks; `bench/p99.sh`, `idle_rss.sh` and `syscalls.sh`
 measure latency, idle memory and system calls per request. The numbers and
-the method are in `docs/design/m3-perf-report.md`. The soak and slow-client
-tools that produced the stall detector's evidence are not in this
-repository; the report records their last results.
+the method are in `docs/perf-report.md`. The soak and slow-client tools that
+produced the stall detector's evidence are not in this repository, and their
+results are not recorded in it.
+
+**WebSocket.** Besides the four unit suites, `conformance/autobahn/run.sh`
+runs the Autobahn TestSuite (fuzzingclient mode, in Docker) against
+`examples/ws_echo.pas` and exits non-zero when a case has the result
+`FAILED`; it is run by hand and is not a gate. `bench/ws_bench.pas` is the
+WebSocket echo benchmark client.
 
 **Debug build flags** (`docs/api.md` section 12): `-Sa` (the threading and
 no-response checks, poisoned head views, the encoder assertions),
@@ -1086,6 +1246,7 @@ observable.
 | **Response head** | header names lowercase (or title case by option); lines of one name grouped at the first position; `Connection`, `Transfer-Encoding` and `Trailer` joined into one line each; `PreserveHeaderCase` accepted and ignored | one encoder path; field order within a name is kept, which is what RFC 9110 5.3 requires | yes, cosmetic |
 | **Clock** | every duration and deadline is measured with the loop's clock, sampled once per iteration | one vDSO call per iteration | a timer armed during an iteration is measured from the iteration's start, so it can fire up to one iteration's length early; a request answered in its own iteration has duration 0 |
 | **Body timeouts** | the body rate rule (30 s per wait, 1 KiB/s after that much waiting; production preset) fails the body with an I/O error (outcome `io`); the handler answers (a framework sends 408) and the connection closes after that response | a slow upload must not hold a worker or a connection forever; the model is nginx's `client_body_timeout`, with a rate part so that a byte just before each limit does not pass | yes |
+| Body errors | every request body error (malformed framing, a socket error, the body rate rule), read by the handler or found while draining, ends the connection with outcome `io` after the response | a client that broke the body is an error in the metrics and the access log; hyper gives the error to the body receiver only and ends the connection `ok`, and the stream fuzz recognises the difference as `BODY-ERR` | yes, in logs and metrics |
 | **Accepting** | `EMFILE`, `ENFILE`, `ENOBUFS`, `ENOMEM` and every other non-connection accept error pause the listener for 1 s; connection errors skip that connection | a level-triggered listener would spin; hyper 0.14 and axum sleep the same way | connections wait, none refused |
 | Accepting | at the connection limit new clients wait in the accept queue, bounded by the backlog | refusing would make the client retry at once | yes |
 | Accepting | no per-IP limit | the policy belongs to the proxy or the firewall; behind a proxy every connection has one address | - |
@@ -1101,16 +1262,28 @@ observable.
 | **Memory** | an idle connection holds no buffers (blocks go back to the pool), so its memory is about 1.3 KB | ten thousand idle keep-alive connections at 8 KiB of buffer each would be 80 MiB | no |
 | **Unix sockets** | a connection accepted on a Unix socket has a peer record with `AF_UNIX` and no address; `SockAddrToStr` gives `''`; the access log writes `unix` | a Unix socket has no peer address; the client address comes from the proxy's forwarding headers | yes, in logs |
 | **Access log** | automatic error responses to unparsable requests are not logged | the log line needs a parsed head | yes |
+| **WebSocket** | no extension is negotiated (`Sec-WebSocket-Extensions` is ignored, no permessage-deflate); RSV bits must be 0 | one frame path; compression costs CPU and memory per connection | yes |
+| WebSocket | a handshake with a wrong version is answered 426 with `Sec-WebSocket-Version: 13`, an origin outside the application's list 403, anything else 400; a request without `Origin` passes the origin check | RFC 6455 4.2.2; cross-site WebSocket hijacking; a non-browser client sends no `Origin` | yes |
+| WebSocket | a message above `MaxMessage` (16 MiB by default) fails the connection with 1009 | bounded memory per connection | yes |
+| WebSocket | a data send is refused with `wsFull` while `SendHighWater` (1 MiB) or more is queued, and the connection stops reading while the queue is over the mark; control frames are always queued | a client that does not read must not grow the server's memory | yes, as TCP backpressure |
+| WebSocket | a protocol error, invalid UTF-8 or a handler exception sends close 1002, 1007 or 1011 and ends the connection without waiting for the client's close frame; after `CloseWith` data messages from the client are dropped | RFC 6455 7.1.7 (fail the connection) | yes |
+| WebSocket | a ping every 25 s and an idle timeout of 60 s by default; the idle timeout sends close 1001 | finds clients that are gone and keeps proxies from closing a quiet connection | yes |
+| WebSocket | a graceful server stop sends close 1001 `server shutdown`; at the stop deadline the connection is closed without a close frame and `OnClose` gets 1006 | the stop must end within its grace period | yes, at stop |
 
 ## 11. Risks and known limits
 
 | risk or limit | effect | mitigation or status |
 |---|---|---|
-| The lock-free code (`bearings.rt.sync`, `TLoop.Post`, the exchange's counters and claim) assumes x86-64 ordering: locked instructions are full barriers, aligned word loads and stores are atomic and keep program order among themselves | wrong on ARM64 (weaker ordering) | an ARM64 port must review every plain load and store of a synchronization word and add the needed barriers; the drd annotations mark the places |
+| The lock-free code (`bearings.rt.sync`, `TLoop.Post`, the exchange's counters and claim) was reasoned about in the x86-64 model: locked instructions are full barriers, aligned word loads and stores are atomic and keep program order among themselves | wrong on ARM64 (weaker ordering) unless every access carries the barriers that reproduce that model | every shared-word access goes through the `Atomic*` wrappers of `bearings.rt.sync`; on ARM64 each wrapper adds a load barrier (loads), a full barrier (stores) or full barriers on both sides (read-modify-writes). Conservative and not verified on hardware: the ARM64 build has run under qemu on x86_64 only, which cannot show a missing barrier (README.md "ARM64"). A per-site acquire/release mapping would be cheaper; it needs the per-site reasoning redone and an ARM64 machine |
+| The test programs call `Interlocked*` directly (109 sites in `test_workers`, `stress_workers` and others) | relaxed atomics on ARM64; a test could pass or fail for the wrong reason there | they are counters checked after a join or a wait; not reviewed for ARM64; part of the first hardware run |
 | Linux only: raw system calls, epoll, eventfd, `accept4`, `sendfile`, futex, `sched_getaffinity` | no other platform | by design; `bearings.rt.sys` is the one place that knows the call numbers |
 | No TLS | plain TCP only | a reverse proxy in front; a transport without `writev` and `sendfile` already has a defined behaviour (`IsWriteVectored = False`, `SendFile = -ENOSYS`) |
-| No HTTP/2, no WebSocket protocol code | HTTP/1.1 only; upgrades are handed over raw | the service types are protocol-neutral (6.9); the WebSocket plan is `docs/handoff-websocket.md` |
-| Throughput at pipeline depth 16 is 0.85 to 0.88 of hyper (depth 1: 0.96 to 0.98) | the gate (0.80) is met, parity is not | the instruction count per request equals hyper's within 3 %; the difference is CPU time per instruction (`docs/design/m3-perf-report.md` section 8) |
+| No HTTP/2 | HTTP/1.1 only | the service types are protocol-neutral in content (6.9) |
+| No WebSocket extensions | no permessage-deflate | none planned |
+| No blocking WebSocket API for worker threads | a worker must use `PostText`, `PostBinary` or `PostFrame` with `AddRef`/`Release` | the post path is bounded by `SendHighWater` like the loop's sends |
+| `src/ws` is not covered by `tools/check-hot-asm.sh` | a managed local or `try` in a per-frame routine would go unnoticed | none yet; the check would need `src/ws` in its unit path and the per-frame routines (`TWsReader`, `TUtf8Check`) on its list |
+| The Autobahn run is not automated | a WebSocket conformance regression shows up only when someone runs it | `conformance/autobahn/run.sh` by hand; the unit suites cover the frame reader, the handshake and the connection |
+| Throughput at pipeline depth 16 is 0.85 to 0.88 of hyper (depth 1: 0.96 to 0.98) | the gate (0.80) is met, parity is not | the instruction count per request equals hyper's within 3 %; the difference is CPU time per instruction (`docs/perf-report.md` section 8) |
 | Edge-triggered sockets can lose a wakeup when a readiness bit is cleared without the kernel having said `EAGAIN` | a stuck connection | the transport rules of section 3 with sticky closed bits; the wake-source check in debug builds; the split fuzz with random `EAGAIN`; the data-plus-FIN test |
 | A short `read(2)` is taken to mean an empty receive buffer | a lost edge if a kernel ever returned fewer bytes than available with more pending | Linux TCP returns everything available up to the buffer size; new data raises a new event anyway |
 | Use after free between loops, workers and deferred frees | memory corruption | tasks are freed after the event batch; exchanges are recycled only on their loop after queued wakes; `Posting` and `Outstanding` gate `TServer.Destroy`; heaptrc, memcheck and drd runs; the stress test |
@@ -1118,4 +1291,4 @@ observable.
 | Worker pool saturation (a slow database) | queued requests, latency | HTTP/1 bounds the queue by open connections; `TOffloadCall.SaturatedStatus` answers 503 inline above `WorkerQueueLimit` |
 | The access log drops lines when a loop fills its buffer faster than the flusher writes | lost lines, counted in `Dropped` | the loop never blocks on the sink; the buffer size and the flush period are configurable |
 | `SO_REUSEPORT` spreads connections by hash, not by load | uneven loops under few long-lived connections | `amSharedExclusive` as the alternative (measured equal throughput) |
-| The soak and slow-client tools are not in this tree | the stall detector and the long-run memory behaviour are not re-checked by the repository's own scripts | the perf report records the last results; the unit, stress and fuzz suites are in the tree |
+| The soak and slow-client tools are not in this tree | the stall detector and the long-run memory behaviour are not re-checked by the repository's own scripts | no results are recorded in the repository; the unit, stress and fuzz suites are in the tree |

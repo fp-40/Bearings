@@ -1199,7 +1199,15 @@ var
 begin
   P := TProcess.Create(nil);
   try
-    P.Executable := ParamStr(0);
+    { under an emulator (TARGET=aarch64 in tests/unit/run_all.sh) the child
+      is started through the runner named by BEARINGS_RUNNER }
+    if GetEnvironmentVariable('BEARINGS_RUNNER') <> '' then
+    begin
+      P.Executable := GetEnvironmentVariable('BEARINGS_RUNNER');
+      P.Parameters.Add(ParamStr(0));
+    end
+    else
+      P.Executable := ParamStr(0);
     P.Parameters.Add('--sig-child');
     P.Options := [poUsePipes, poStderrToOutPut];
     { the child must not write the parent's heaptrc log }

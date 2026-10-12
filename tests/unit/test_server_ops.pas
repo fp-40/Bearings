@@ -752,12 +752,13 @@ var
   L: TSockLen;
   P: TFilDes;
   Pid: TPid;
-  Args: array[0..2] of PAnsiChar;
+  Args: array[0..3] of PAnsiChar;
+  I: Integer;
   Outp, Got: RawByteString;
   Buf: array[0..255] of AnsiChar;
   N: LongInt;
   T0: QWord;
-  Exe: RawByteString;
+  Exe, Runner: RawByteString;
 begin
   { the "systemd" side: a listening socket, passed as descriptor 3 }
   Sock := fpSocket(AF_INET, SOCK_STREAM, 0);
@@ -784,12 +785,22 @@ begin
     SetEnv('LISTEN_FDS', '1');
     SetEnv('LISTEN_FDNAMES', 'http');
     SetEnv('HEAPTRC', 'log=/dev/null');   { a -gh build: the child's heap report must not land in the parent's log or output }
-    Args[0] := PAnsiChar(Exe);
-    Args[1] := '--sd-child';
-    Args[2] := nil;
+    { under an emulator (TARGET=aarch64 in tests/unit/run_all.sh) the child
+      is started through the runner named by BEARINGS_RUNNER; it keeps the
+      pid (LISTEN_PID) and descriptor 3 }
+    Runner := GetEnvironmentVariable('BEARINGS_RUNNER');
+    I := 0;
+    if Runner <> '' then
+    begin
+      Args[I] := PAnsiChar(Runner);
+      Inc(I);
+    end;
+    Args[I] := PAnsiChar(Exe);
+    Args[I + 1] := '--sd-child';
+    Args[I + 2] := nil;
     { FpExecv would pass the RTL's copy of the environment, taken at start:
       the variables set above would be lost. libc's execv uses libc's. }
-    execv(PAnsiChar(Exe), @Args[0]);
+    execv(Args[0], @Args[0]);
     FpExit(127);
   end;
   AssertTrue('fork', Pid > 0);

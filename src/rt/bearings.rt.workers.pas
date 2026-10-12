@@ -204,7 +204,7 @@ begin
     if Item = nil then
       Break;
     ExecuteItem(Slot, Item);
-    InterLockedIncrement64(Pool.FExecuted);
+    AtomicInc64(Pool.FExecuted);
   end;
   if Pool.FHooks <> nil then
     try
@@ -219,7 +219,7 @@ begin
     with HappensAfter in Shutdown, declares that order (only in -dWD_DRD
     builds; a no-op otherwise). }
   HappensBefore(@Pool.FAlive);
-  if InterLockedDecrement(Pool.FAlive) = 0 then
+  if AtomicDec(Pool.FAlive) = 0 then
     RTLEventSetEvent(Pool.FAllExited);
   Result := 0;
 end;

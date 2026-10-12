@@ -1,12 +1,16 @@
-{ bearings.rt.sys - raw Linux x86_64 system calls and the constants they need.
+{ bearings.rt.sys - raw Linux system calls and the constants they need
+  (x86_64 and aarch64).
 
   The rest of the runtime (event loop, sockets, workers, synchronization)
   calls the kernel through this unit instead of FPC's BaseUnix/Sockets
   units. Every Sys* routine is a small assembler routine that executes the
-  `syscall` instruction directly. The Linux x86_64 convention is: rax holds
-  the system call number; the arguments go in rdi, rsi, rdx, r10, r8, r9.
-  The SysV calling convention that FPC uses passes the 4th argument in rcx,
-  so the routines that take 4 or more arguments copy rcx to r10.
+  system call instruction directly: `syscall` on x86_64
+  (bearings.rt.sys.x86_64.inc), `svc #0` on aarch64
+  (bearings.rt.sys.aarch64.inc). The two include files hold the routines;
+  this unit holds the declarations, the system call numbers of each
+  architecture and the constants, which are the same on both (the errno
+  values, the socket, epoll, eventfd and futex constants all come from the
+  generic Linux headers on x86_64 and aarch64 alike).
 
   Result convention: each routine returns the raw kernel value, >= 0 on
   success and -errno on failure (for example -ESysEAGAIN). The routines do
@@ -99,7 +103,10 @@ const
     sched_setaffinity: 1024 CPUs, the same as glibc's cpu_set_t. }
   CPU_SET_BYTES = 128;
 
-  { x86_64 syscall numbers }
+  { System call numbers. x86_64: arch/x86/entry/syscalls/syscall_64.tbl;
+    aarch64: the generic table (include/uapi/asm-generic/unistd.h), which
+    has no epoll_wait (epoll_pwait with a null signal mask replaces it). }
+  {$ifdef cpux86_64}
   SYS_READ = 0;
   SYS_WRITE = 1;
   SYS_CLOSE = 3;
@@ -121,6 +128,30 @@ const
   SYS_ACCEPT4 = 288;
   SYS_EVENTFD2 = 290;
   SYS_EPOLL_CREATE1 = 291;
+  {$endif}
+  {$ifdef cpuaarch64}
+  SYS_READ = 63;
+  SYS_WRITE = 64;
+  SYS_CLOSE = 57;
+  SYS_SCHED_YIELD = 124;
+  SYS_WRITEV = 66;
+  SYS_SENDFILE = 71;
+  SYS_SOCKET = 198;
+  SYS_SHUTDOWN = 210;
+  SYS_BIND = 200;
+  SYS_LISTEN = 201;
+  SYS_GETSOCKNAME = 204;
+  SYS_SETSOCKOPT = 208;
+  SYS_GETSOCKOPT = 209;
+  SYS_FUTEX = 98;
+  SYS_SCHED_SETAFFINITY = 122;
+  SYS_SCHED_GETAFFINITY = 123;
+  SYS_EPOLL_PWAIT = 22;
+  SYS_EPOLL_CTL = 21;
+  SYS_ACCEPT4 = 242;
+  SYS_EVENTFD2 = 19;
+  SYS_EPOLL_CREATE1 = 20;
+  {$endif}
 
 type
   { struct sockaddr_storage (128 bytes): large enough for any socket address
@@ -132,9 +163,11 @@ type
   PSockAddrStorage = ^TSockAddrStorage;
 
   { struct epoll_event. The kernel declares it packed on x86_64 (12 bytes,
-    no padding between Events and Data). Data is returned unchanged by
-    epoll_wait; the event loop stores its own pointer there. }
-  TEpollEvent = packed record
+    no padding between Events and Data) and with natural alignment
+    everywhere else (16 bytes on aarch64: 4 bytes of padding after Events).
+    Data is returned unchanged by epoll_wait; the event loop stores its own
+    pointer there. }
+  TEpollEvent = {$ifdef cpux86_64}packed{$endif} record
     Events: Cardinal;
     Data: Pointer;
   end;
@@ -173,181 +206,14 @@ function SysSchedYield: SizeInt;
 
 implementation
 
-{$asmmode att}
-
-{ int arguments (cint) are sign-extended to 64 bits before the syscall; the
-  kernel reads the low 32 bits either way. }
-
-function SysRead(Fd: cint; Buf: Pointer; Count: SizeUInt): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movl   $0, %eax
-  syscall
-end;
-
-function SysWrite(Fd: cint; Buf: Pointer; Count: SizeUInt): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movl   $1, %eax
-  syscall
-end;
-
-function SysWriteV(Fd: cint; Iov: PSysIoVec; IovCnt: cint): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movslq %edx, %rdx
-  movl   $20, %eax
-  syscall
-end;
-
-function SysSendFile(OutFd, InFd: cint; Offset: PInt64; Count: SizeUInt): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movslq %esi, %rsi
-  movq   %rcx, %r10
-  movl   $40, %eax
-  syscall
-end;
-
-function SysAccept4(Fd: cint; Addr: PSockAddrStorage; AddrLen: PCardinal; Flags: cint): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movslq %ecx, %r10
-  movl   $288, %eax
-  syscall
-end;
-
-function SysEpollCreate1(Flags: cint): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movl   $291, %eax
-  syscall
-end;
-
-function SysEpollCtl(EpFd, Op, Fd: cint; Event: PEpollEvent): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movslq %esi, %rsi
-  movslq %edx, %rdx
-  movq   %rcx, %r10
-  movl   $233, %eax
-  syscall
-end;
-
-function SysEpollWait(EpFd: cint; Events: PEpollEvent; MaxEvents, TimeoutMs: cint): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movslq %edx, %rdx
-  movslq %ecx, %r10
-  movl   $232, %eax
-  syscall
-end;
-
-function SysEventFd2(InitVal: Cardinal; Flags: cint): SizeInt; assembler; nostackframe;
-asm
-  movl   %edi, %edi
-  movslq %esi, %rsi
-  movl   $290, %eax
-  syscall
-end;
-
-function SysShutdown(Fd, How: cint): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movslq %esi, %rsi
-  movl   $48, %eax
-  syscall
-end;
-
-function SysClose(Fd: cint): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movl   $3, %eax
-  syscall
-end;
-
-function SysSetSockOpt(Fd, Level, OptName: cint; OptVal: Pointer; OptLen: Cardinal): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movslq %esi, %rsi
-  movslq %edx, %rdx
-  movq   %rcx, %r10
-  movl   %r8d, %r8d
-  movl   $54, %eax
-  syscall
-end;
-
-function SysGetSockOpt(Fd, Level, OptName: cint; OptVal: Pointer; OptLen: PCardinal): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movslq %esi, %rsi
-  movslq %edx, %rdx
-  movq   %rcx, %r10
-  movl   $55, %eax
-  syscall
-end;
-
-function SysGetSockName(Fd: cint; Addr: PSockAddrStorage; AddrLen: PCardinal): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movl   $51, %eax
-  syscall
-end;
-
-function SysBind(Fd: cint; Addr: PSockAddrStorage; AddrLen: Cardinal): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movl   %edx, %edx
-  movl   $49, %eax
-  syscall
-end;
-
-function SysListen(Fd, Backlog: cint): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movslq %esi, %rsi
-  movl   $50, %eax
-  syscall
-end;
-
-function SysSocket(Domain, SockType, Protocol: cint): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movslq %esi, %rsi
-  movslq %edx, %rdx
-  movl   $41, %eax
-  syscall
-end;
-
-function SysFutex(Addr: PLongInt; Op: cint; Val: LongInt; TimeoutTs: Pointer): SizeInt; assembler; nostackframe;
-asm
-  movslq %esi, %rsi
-  movslq %edx, %rdx
-  movq   %rcx, %r10
-  xorl   %r8d, %r8d
-  xorl   %r9d, %r9d
-  movl   $202, %eax
-  syscall
-end;
-
-function SysSchedGetAffinity(Pid: cint; CpuSetSize: SizeUInt; Mask: Pointer): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movl   $204, %eax
-  syscall
-end;
-
-function SysSchedSetAffinity(Pid: cint; CpuSetSize: SizeUInt; Mask: Pointer): SizeInt; assembler; nostackframe;
-asm
-  movslq %edi, %rdi
-  movl   $203, %eax
-  syscall
-end;
-
-function SysSchedYield: SizeInt; assembler; nostackframe;
-asm
-  movl   $24, %eax
-  syscall
-end;
+{$ifdef cpux86_64}
+{$i bearings.rt.sys.x86_64.inc}
+{$endif}
+{$ifdef cpuaarch64}
+{$i bearings.rt.sys.aarch64.inc}
+{$endif}
+{$if not defined(cpux86_64) and not defined(cpuaarch64)}
+{$error bearings.rt.sys: no system call routines for this CPU (x86_64 and aarch64 only)}
+{$endif}
 
 end.

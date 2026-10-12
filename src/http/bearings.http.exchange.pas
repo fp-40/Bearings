@@ -1198,7 +1198,7 @@ begin
   WakeMsg.Arg := Self;
   FreeMsg.Kind := lmFreeExchange;
   FreeMsg.Arg := Self;
-  InterLockedIncrement(ExchangesLive);
+  AtomicInc(ExchangesLive);
 end;
 
 destructor TExchange.Destroy;
@@ -1210,7 +1210,7 @@ begin
   Resp.Head.Headers.Free;
   ReqTrailers.Free;
   FChannel.Free;
-  InterLockedDecrement(ExchangesLive);
+  AtomicDec(ExchangesLive);
   inherited Destroy;
 end;
 
@@ -1262,7 +1262,7 @@ begin
   Assert(AtomicLoad(FAnswerClaim) = 0,
     'TExchange: the response head is written after the terminal call');
   Me := Pointer(PtrUInt(GetCurrentThreadId));
-  Old := InterlockedCompareExchange(FHeadWriter, Me, nil);
+  Old := AtomicCasPtr(FHeadWriter, Me, nil);
   Assert((Old = nil) or (Old = Me),
     'TExchange: the response head is written by two threads');
 end;
@@ -1278,7 +1278,7 @@ var
 begin
   { the claiming terminal call (shared exchange) is made by the thread that
     built the head, if one did }
-  W := InterlockedCompareExchange(FHeadWriter, nil, nil);
+  W := AtomicCasPtr(FHeadWriter, nil, nil);
   Result := (W = nil) or (W = Pointer(PtrUInt(GetCurrentThreadId)));
 end;
 
@@ -1941,7 +1941,7 @@ end;
 function TExchange.ClaimAnswer(CheckHead: Boolean): Boolean;
 begin
   Result := (AtomicLoad(FState) = Ord(xsCalled))
-    and (InterlockedCompareExchange(FAnswerClaim, 1, 0) = 0);
+    and (AtomicCas(FAnswerClaim, 1, 0) = 0);
   {$ifopt C+}
   if Result and CheckHead and not DbgHeadClaimOk then
   begin
@@ -1949,7 +1949,7 @@ begin
       the job's error
       answer (HandlerRaised) can still claim; the caller releases what it
       carried and then raises (DbgClaimRefused) }
-    InterLockedExchange(FAnswerClaim, 0);
+    AtomicXchg(FAnswerClaim, 0);
     DbgClaimRefusedFlag := True;
     Result := False;
   end;
@@ -1976,7 +1976,7 @@ begin
   Resp.Body := Body;
   Resp.Source := nil;
   HappensBefore(@FState);
-  if InterlockedCompareExchange(FState, Ord(xsAnswered), Ord(xsCalled)) <> Ord(xsCalled) then
+  if AtomicCas(FState, Ord(xsAnswered), Ord(xsCalled)) <> Ord(xsCalled) then
   begin
     B := Resp.Body;
     Resp.Body := BodyEmpty;
@@ -2011,7 +2011,7 @@ begin
   Resp.Body := BodyEmpty;
   Resp.Source := Source;
   HappensBefore(@FState);
-  if InterlockedCompareExchange(FState, Ord(xsAnswered), Ord(xsCalled)) <> Ord(xsCalled) then
+  if AtomicCas(FState, Ord(xsAnswered), Ord(xsCalled)) <> Ord(xsCalled) then
   begin
     Resp.Source := nil;
     if Source <> nil then
@@ -2038,7 +2038,7 @@ begin
   Resp.Failed := True;
   Resp.FailText := Msg;
   HappensBefore(@FState);
-  if InterlockedCompareExchange(FState, Ord(xsAnswered), Ord(xsCalled)) <> Ord(xsCalled) then
+  if AtomicCas(FState, Ord(xsAnswered), Ord(xsCalled)) <> Ord(xsCalled) then
     Exit(False);                        { canceled: nobody reads the slot before the recycle }
   Wake;
   Result := True;
@@ -2196,8 +2196,8 @@ begin
     { the pool is shut down: the reference goes back, the call stays
       unanswered; the exception aborts the connection task }
     FHandler := nil;
-    InterLockedDecrement(FHolders);      { the call still holds the request: never 0 here }
-    InterLockedDecrement(FRefCount);
+    AtomicDec(FHolders);      { the call still holds the request: never 0 here }
+    AtomicDec(FRefCount);
     RaisePoolStopped;
   end;
 end;
@@ -2232,8 +2232,8 @@ begin
       N := AtomicLoad(FHolders);
       if N <= 0 then
         raise EExchangeState.Create('TExchange.Share: the request was released by its last holder');
-    until InterlockedCompareExchange(FHolders, N + 1, N) = N;
-  InterLockedIncrement(FRefCount);
+    until AtomicCas(FHolders, N + 1, N) = N;
+  AtomicInc(FRefCount);
   Result := Self;
 end;
 
@@ -2266,7 +2266,7 @@ begin
   if Assigned(ReleaseBeforeDecrementHook) then
     ReleaseBeforeDecrementHook(Self);
   {$endif}
-  N := InterLockedDecrement(FRefCount);
+  N := AtomicDec(FRefCount);
   {$ifopt C+}
   if Assigned(ReleaseTestHook) then
     ReleaseTestHook(Self, N);            { tests: the window after the decrement }
@@ -2294,7 +2294,7 @@ begin
     (or is the loop with the transport's), so the exchange is not recycled
     meanwhile. }
   HappensBefore(@FHolders);
-  if InterLockedDecrement(FHolders) = 0 then
+  if AtomicDec(FHolders) = 0 then
   begin
     HappensAfter(@FHolders);
     ReleaseRequestShared;
@@ -2353,7 +2353,7 @@ begin
   if C <> nil then
     HappensAfter(@FChannel);
   HappensBefore(@FRefCount);
-  if InterLockedDecrement(FRefCount) = 0 then
+  if AtomicDec(FRefCount) = 0 then
   begin
     HappensAfter(@FRefCount);
     FinalRelease;
@@ -2380,7 +2380,7 @@ begin
       FOwner.Wake;
     Exit;
   end;
-  if InterlockedCompareExchange(FWakeQueued, 1, 0) = 0 then
+  if AtomicCas(FWakeQueued, 1, 0) = 0 then
   begin
     { the loop reset FWakeQueued after it took WakeMsg off the inbox: the
       node may be pushed again }
@@ -2497,11 +2497,11 @@ begin
   SyncShared;
   if (FUpgrade <> nil) and (FUpgrade.Handler = nil) then
     FUpgrade.RxAlive := False;
-  NoAnswer := InterlockedCompareExchange(FState, Ord(xsDone), Ord(xsCalled)) = Ord(xsCalled);
+  NoAnswer := AtomicCas(FState, Ord(xsDone), Ord(xsCalled)) = Ord(xsCalled);
   if NoAnswer then
     NoResponse                             { before DropHolder: the head may still be read }
   else if AtomicLoad(FState) = Ord(xsAnswered) then
-    InterlockedExchange(FState, Ord(xsDone));
+    AtomicXchg(FState, Ord(xsDone));
   DropHolder;
   {$ifopt C+}
   if NoAnswer then
@@ -2525,7 +2525,7 @@ begin
     after the completion. Either way the call gives up its holder
     (DropHolder). The head stays pinned while a holder may read it. }
   HappensBefore(@FState);
-  if InterlockedCompareExchange(FState, Ord(xsCanceled), Ord(xsCalled)) = Ord(xsCalled) then
+  if AtomicCas(FState, Ord(xsCanceled), Ord(xsCalled)) = Ord(xsCalled) then
     CloseBodyFromLoop;                   { unparks a reader parked in a body read }
   FOwner := nil;
   SyncShared;
@@ -2568,7 +2568,7 @@ begin
     raises only after that, so the exchange is consistent: the exception
     leaves Execute through its finally (the worker's Release) and ends in
     the worker pool's safety net, which reports it on stderr. }
-  InterlockedIncrement(NoResponseFailures);
+  AtomicInc(NoResponseFailures);
   {$ifopt C+}
   Msg := NoResponseText('the handler returned');
   Expected := FExpectNoResponse;           { read before the answer: the loop may move on }
@@ -2748,7 +2748,7 @@ begin
     still pinned, so the message can name the request }
   Resp.Failed := True;
   Resp.FailText := 'handler returned no response';
-  InterlockedIncrement(NoResponseFailures);
+  AtomicInc(NoResponseFailures);
   {$ifopt C+}
   FNoResponseMsg := NoResponseText('the call completed');
   {$endif}
@@ -3349,23 +3349,23 @@ constructor TUpgradeSlot.Create;
 begin
   inherited Create;
   FRefs := 1;
-  InterLockedIncrement(UpgradeSlotsLive);
+  AtomicInc(UpgradeSlotsLive);
 end;
 
 destructor TUpgradeSlot.Destroy;
 begin
-  InterLockedDecrement(UpgradeSlotsLive);
+  AtomicDec(UpgradeSlotsLive);
   inherited Destroy;
 end;
 
 procedure TUpgradeSlot.AddRef;
 begin
-  InterLockedIncrement(FRefs);
+  AtomicInc(FRefs);
 end;
 
 procedure TUpgradeSlot.Release;
 begin
-  if InterLockedDecrement(FRefs) = 0 then
+  if AtomicDec(FRefs) = 0 then
     Free;
 end;
 
@@ -3533,7 +3533,7 @@ begin
   Assert(Ex.FWakeGen = Ex.FGen, 'ExchangeWakeMsg: the exchange was recycled while its WakeMsg was queued');
   Assert(AtomicLoad(Ex.FWakeQueued) = 1, 'ExchangeWakeMsg: a WakeMsg that was not queued');
   HappensBefore(@Ex.FWakeQueued);
-  InterlockedExchange(Ex.FWakeQueued, 0);
+  AtomicXchg(Ex.FWakeQueued, 0);
   if Ex.FFreePending then
   begin
     { the last reference went while this message was queued }

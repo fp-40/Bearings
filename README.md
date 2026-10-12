@@ -7,8 +7,10 @@ server a service object; the server calls it once per request with a
 `TExchange` (the request and its response) and writes the response the
 service produces.
 
-It runs on Linux x86_64 only: it calls epoll, eventfd, accept4, sendfile
-and writev directly.
+It runs on Linux only: it calls epoll, eventfd, accept4, sendfile and
+writev directly. x86_64 is the tested platform; an ARM64 (aarch64) build
+exists and runs under emulation but has not run on ARM64 hardware yet
+(section "ARM64").
 
 ## What it is and is not
 
@@ -34,8 +36,8 @@ Combined Log Format) and keep metrics with a Prometheus text export
 
 ## Requirements
 
-Free Pascal 3.2.2, Linux x86_64. Nothing else to run a program that uses
-the library.
+Free Pascal 3.2.2, Linux x86_64 (or ARM64, section "ARM64"). Nothing
+else to run a program that uses the library.
 
 The tests and benchmarks also use Python 3, Rust/cargo (the conformance
 harness and the differential tests against hyper and httparse), and
@@ -294,8 +296,7 @@ connection. Without systemd the same program can be tried with
 - `examples/`: four complete programs (`hello.pas`, `worker.pas`,
   `stream.pas`, `ws_echo.pas`) and the command that builds them
   (`examples/README.md`).
-- The header comment of every unit under `src/` explains what the unit does
-  for a reader who knows Free Pascal but not web servers.
+- The header comment of every unit under `src/` explains what the unit does.
 - `docs/design.md`: the design: the decisions and their reasons, the
   invariants a contributor must respect, and the deviations from what an
   HTTP library usually does.
@@ -339,13 +340,97 @@ Build output goes under `build/` (ignored by git).
   valgrind drd), the worker stress test, the echo test under valgrind, the
   split fuzz and the hot-path assembler check (`tools/check-hot-asm.sh`,
   which fails when a routine of the request path got an implicit
-  exception frame).
+  exception frame). `TARGET=aarch64 tests/unit/run_all.sh` cross-compiles
+  the unit suites for ARM64 and runs them under qemu (section "ARM64").
+- `tools/get-cross-aarch64.sh`: builds the ARM64 cross compiler into
+  `build/tools/` (section "ARM64").
+- `tools/install-package.sh`: installs the units as an FPC package, so that
+  programs compile without `-Fu` (section "Installing as a package").
 - `conformance/pascal-server/gate.sh`: the wire conformance cases
   (`conformance/cases`) against the Pascal conformance server; the runner
   and the hyper reference server are in the Cargo workspace `conformance/`.
 - `bench/`: the throughput benchmarks against hyper (`bench/run_gate.sh`,
   `bench/plaintext.pas`), the offload cost (`bench/run_offload.sh`) and
   micro-benchmarks (`bench/bench_dispatch.pas`).
+
+## Installing as a package
+
+Instead of passing the five `-Fu` paths, install the units once with FPC's
+own package tool (`fpmake.pp` at the repository root, built on `fpmkunit`):
+
+```sh
+tools/install-package.sh            # x86_64
+tools/install-package.sh aarch64    # the ARM64 cross build (section "ARM64")
+```
+
+The units go to `~/.fppkg/lib/fpc/3.2.2/units/<cpu>-linux/bearings/`, a
+directory `/etc/fpc.cfg` already searches (and so does
+`build/tools/bin/fpc-aarch64`). A program then compiles with no paths:
+
+```sh
+fpc -Mobjfpc -Sh hello.pas
+build/tools/bin/fpc-aarch64 -Mobjfpc -Sh hello.pas
+```
+
+Re-run the script after changing the library: the installed units are a
+copy. `fpmake.pp` lists the units and the compiler options (`-O2`); the
+script adds the two directories fpmake needs (`--prefix`, and
+`--globalunitdir`, where the compiler's own units are, which fpmake needs
+to check the dependency on the RTL). `PREFIX` overrides `~/.fppkg`. The
+fpmake output stays in `units/` and `build/fpmake/` (ignored by git).
+
+## ARM64
+
+The library compiles for aarch64-linux (ARM64) as well as x86_64-linux.
+Two units know the architecture: `bearings.rt.sys` (the system call
+stubs: `syscall` with the x86_64 call numbers in
+`bearings.rt.sys.x86_64.inc`, `svc #0` with the generic call numbers in
+`bearings.rt.sys.aarch64.inc`, where `epoll_pwait` stands in for the
+missing `epoll_wait`; and `struct epoll_event`, packed on x86_64 only) and
+`bearings.rt.sync` (the spin-wait hint, the valgrind client request for
+drd builds, and the memory ordering below). Everything else is the same
+source.
+
+Memory ordering. The lock-free code (`bearings.rt.sync`, `TLoop.Post`,
+the exchange's state, counters and claims, the WebSocket's references)
+was written against the x86-64 model: locked instructions are full
+barriers, and plain aligned loads and stores keep program order among
+themselves. ARM64 is weaker, and FPC 3.2.2's `Interlocked*` routines on
+ARM64 are plain `ldxr`/`stxr` loops with no barrier at all. So every
+shared-word access of the library goes through the `Atomic*` wrappers of
+`bearings.rt.sync`, never through `Interlocked*` directly, and on ARM64
+the wrappers add the barriers that give each access the x86-64 guarantee:
+a load barrier after an `AtomicLoad*`, a full barrier before an
+`AtomicStore*`, and a full barrier on both sides of each read-modify-write
+(`AtomicXchg`, `AtomicCas`, `AtomicInc`, ...). This is deliberately
+conservative: correct by construction, with more barriers than a per-site
+acquire/release analysis would need. On x86_64 the wrappers compile to the
+same instructions as before.
+
+Status: not verified on hardware. The ARM64 build has been exercised only
+under `qemu-aarch64` on an x86_64 host, which runs the ARM64 instructions
+on a strongly ordered CPU and so cannot show a missing barrier. What that
+run checks: the system call stubs (`test_rt_sys` compares each one with
+the FPC RTL), the record layouts, and every unit suite with its heaptrc
+run. What it does not check: the memory ordering argument above, and the
+test programs' own direct `Interlocked*` calls (relaxed on ARM64; they are
+counters checked after a join, but they have not been reviewed). The first
+run on an ARM64 machine should be `TARGET=aarch64` with `RUN=` empty and
+`FPC=fpc` on that machine, then `tools/s7-stress.sh`.
+
+Setup on an x86_64 host (Ubuntu or Debian): install
+`binutils-aarch64-linux-gnu`, `libc6-arm64-cross` and `qemu-user`, then
+run `tools/get-cross-aarch64.sh`. It builds the FPC 3.2.2 cross compiler,
+RTL and packages from the FPC source (fetched and checked by hash) into
+`build/tools/fpc-aarch64/`, with one patch to the C start-up code for
+glibc 2.34 and later, fetches the ARM64 `libgcc_s` package without
+installing it, and writes two wrappers: `build/tools/bin/fpc-aarch64`
+(fpc for the cross target) and `build/tools/bin/run-aarch64` (runs an
+ARM64 binary under qemu). `TARGET=aarch64 tests/unit/run_all.sh` then
+builds and runs the unit suites and their heaptrc runs in
+`build/unit-aarch64/`; the valgrind, drd, stress, echo, split-fuzz and
+hot-asm steps are x86_64-only and skipped. `FPC=build/tools/bin/fpc-aarch64
+tools/compile-each-unit.sh` compiles every unit on its own for ARM64.
 
 ## Version and license
 

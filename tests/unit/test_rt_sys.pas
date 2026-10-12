@@ -310,11 +310,16 @@ begin
   AssertEquals(N2, N1);
   AssertEquals('same event bits', Out2[0].Events, Out1[0].Events);
   AssertTrue('same data', PtrUInt(Out1[0].Data) = Out2[0].Data.u64);
-  AssertTrue('TEpollEvent is 12 bytes, like the RTL record', SizeOf(TEpollEvent) = SizeOf(EPoll_Event));
+  AssertTrue('TEpollEvent has the size of the RTL record (12 bytes on x86_64, 16 on aarch64)', SizeOf(TEpollEvent) = SizeOf(EPoll_Event));
   AssertEquals(0, SysEpollCtl(E1, EPOLL_CTL_DEL, R, @Ev));
   CheckErr('epoll_wait bad fd', SysEpollWait(-1, @Out1[0], 4, 0), epoll_wait(-1, @Out2[0], 4, 0));
   fpClose(R); fpClose(W); fpClose(E1); fpClose(E2);
 end;
+
+{ eventfd2's number: the Syscall unit of FPC 3.2.2 has it for aarch64 but
+  not for x86_64 }
+const
+  NR_EVENTFD2 = {$ifdef cpux86_64}290{$else}syscall_nr_eventfd2{$endif};
 
 procedure TTestSys.EventFd2_vs_rtl;
 var
@@ -322,7 +327,7 @@ var
   V: QWord;
 begin
   F1 := SysEventFd2(0, EFD_NONBLOCK or EFD_CLOEXEC);
-  F2 := do_syscall(290 {eventfd2}, 0, EFD_NONBLOCK or EFD_CLOEXEC);
+  F2 := do_syscall(NR_EVENTFD2, 0, EFD_NONBLOCK or EFD_CLOEXEC);
   AssertTrue(F1 >= 0);
   AssertTrue(F2 >= 0);
   AssertEquals('same flags', fpfcntl(cint(F2), F_GETFL), fpfcntl(cint(F1), F_GETFL));
@@ -334,7 +339,7 @@ begin
   AssertEquals(8, SysRead(cint(F1), @V, 8));
   AssertEquals('counter summed', 7, V);
   AssertEquals('reset: EAGAIN', -ESysEAGAIN, SysRead(cint(F1), @V, 8));
-  CheckErr('eventfd2 bad flags', SysEventFd2(0, $7FFFFFFF), do_syscall(290 {eventfd2}, 0, $7FFFFFFF));
+  CheckErr('eventfd2 bad flags', SysEventFd2(0, $7FFFFFFF), do_syscall(NR_EVENTFD2, 0, $7FFFFFFF));
   fpClose(cint(F1));
   fpClose(cint(F2));
 end;
@@ -509,11 +514,25 @@ begin
   AssertEquals(StrToInt(RunOut('nproc', [])), DefaultLoopCount);
 end;
 
+{ Under an emulator (TARGET=aarch64 in tests/unit/run_all.sh) the host's
+  taskset cannot start this binary directly: BEARINGS_RUNNER names the
+  command to put before it (build/tools/bin/run-aarch64). }
 procedure TTestCpu.DefaultLoopCount_under_taskset_0_3_is_4;
+var
+  Runner: string;
 begin
-  AssertEquals('taskset -c 0-3', '4', RunOut('taskset', ['-c', '0-3', ParamStr(0), '--print-loop-count']));
+  Runner := GetEnvironmentVariable('BEARINGS_RUNNER');
+  if Runner = '' then
+  begin
+    AssertEquals('taskset -c 0-3', '4', RunOut('taskset', ['-c', '0-3', ParamStr(0), '--print-loop-count']));
+    AssertEquals('taskset -c 5', '1', RunOut('taskset', ['-c', '5', ParamStr(0), '--print-loop-count']));
+  end
+  else
+  begin
+    AssertEquals('taskset -c 0-3', '4', RunOut('taskset', ['-c', '0-3', Runner, ParamStr(0), '--print-loop-count']));
+    AssertEquals('taskset -c 5', '1', RunOut('taskset', ['-c', '5', Runner, ParamStr(0), '--print-loop-count']));
+  end;
   AssertEquals('nproc agrees', '4', RunOut('taskset', ['-c', '0-3', 'nproc']));
-  AssertEquals('taskset -c 5', '1', RunOut('taskset', ['-c', '5', ParamStr(0), '--print-loop-count']));
 end;
 
 procedure WriteText(const Path, Text: string);

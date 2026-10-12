@@ -43,7 +43,7 @@ Requirements: cargo/rustc (tested with 1.98.1) and network access on the first b
 hyper from GitHub.
 
 ```sh
-cd /home/jps/Code/bearings/conformance
+cd conformance        # from the repository root
 cargo build --release                     # builds target/release/{runner,reference-server,dumb-server}
 
 # assertion mode: run cases against a server command
@@ -423,7 +423,7 @@ Exactly one class, checked in this order (hyper `Error` predicates):
 | `incomplete` | `is_incomplete_message()` | EOF in the middle of a request head, or EOF while a request was in progress with `half_close` false |
 | `user` | `is_user()` | the handler failed (including test_service body errors), or the handler returned a 1xx final status (hyper writes a 500) |
 | `canceled`, `closed`, `body_write_aborted`, `shutdown` | the matching predicate | rare internal cases |
-| `io` | source is an `io::Error` | socket error |
+| `io` | source is an `io::Error` | socket error; in bearings also a request body error (malformed framing, a socket error, the body rate rule) after the handler answered, where hyper reports `ok` (docs/design.md section 10) |
 | `other` | none of the above | |
 
 ---

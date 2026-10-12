@@ -291,7 +291,10 @@ var
     calls of the validating mutators (Add, Insert, SetValue and their Try*
     forms). Tests use it to show that the server's own code uses the
     *Trusted forms. Incremented with an interlocked add because worker
-    threads build response heads too. }
+    threads build response heads too. A statistic only: no ordering with
+    other memory is needed, so it uses InterLockedIncrement64 directly (a
+    relaxed atomic on ARM64) instead of bearings.rt.sync, which this unit
+    does not use. }
   ValidatingMutatorCalls: QWord = 0;
 {$ENDIF}
 

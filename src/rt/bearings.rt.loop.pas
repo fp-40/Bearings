@@ -762,7 +762,7 @@ end;
 
 procedure TLoop.RequestStop;
 begin
-  if InterlockedExchange(FStopPosted, 1) = 0 then
+  if AtomicXchg(FStopPosted, 1) = 0 then
     Post(@FStopMsg);
 end;
 

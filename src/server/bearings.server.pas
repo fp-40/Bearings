@@ -763,7 +763,7 @@ begin
     D.GracefulShutdown;
     D := D.NextConn;
   end;
-  if InterlockedDecrement(SL.Server.FGsPending) = 0 then
+  if AtomicDec(SL.Server.FGsPending) = 0 then
     RTLEventSetEvent(SL.Server.FGsEvent);
 end;
 
@@ -800,7 +800,7 @@ begin
     if (not D.StallReported) and D.StallCandidate(SL.Loop.NowMs, STALL_MS) then
     begin
       D.StallReported := True;
-      InterlockedIncrement(StallReports);
+      AtomicInc(StallReports);
       WriteLn(StdErr, 'bearings.server: STALL loop ', SL.Index, ' conn ', D.ConnId, ': mid-message, not run for ',
         SL.Loop.NowMs - D.LastRunMs, ' ms, ', D.StallReason, ' (reading ', Ord(D.Conn.State.Reading),
         ', writing ', Ord(D.Conn.State.Writing), ', buffered ', D.Conn.Io.ReadBuf.Len, ')');
@@ -863,7 +863,7 @@ var
 begin
   SL := TServerLoop(Arg);
   SL.SnapshotMetrics(SL.Server.FHooks.Snap[SL.Index]);
-  if InterlockedDecrement(SL.Server.FMetricsPending) = 0 then
+  if AtomicDec(SL.Server.FMetricsPending) = 0 then
     RTLEventSetEvent(SL.Server.FMetricsEvent);
 end;
 
@@ -955,7 +955,7 @@ begin
       SL := S.FLoops[I];
       { a ping still in the inbox (the loop has not run since) is not
         posted again: the message record is the inbox node }
-      if InterlockedExchange(SL.FWdPosted, 1) = 0 then
+      if AtomicXchg(SL.FWdPosted, 1) = 0 then
       begin
         SL.FWdTick := Tick;
         SL.Loop.Post(@SL.FWdMsg);
@@ -1204,7 +1204,7 @@ begin
       Continue;
     if AtomicLoadThreadId(SL.Loop.ThreadId) = Me then
       SL.ResumeListeners
-    else if InterlockedExchange(SL.FLimitPosted, 1) = 0 then
+    else if AtomicXchg(SL.FLimitPosted, 1) = 0 then
       SL.Loop.Post(@SL.FLimitMsg);
   end;
 end;
@@ -1561,7 +1561,7 @@ begin
   { the claim is atomic: two threads calling Stop at once must not post the
     same FStopMsg twice (the message record is itself the inbox node, so a
     second push would corrupt the inbox list) }
-  if not FStarted or (InterlockedExchange(FStopClaim, 1) <> 0) then
+  if not FStarted or (AtomicXchg(FStopClaim, 1) <> 0) then
     Exit;
   FStopRequested := True;
   StopWatchdog;
@@ -1608,7 +1608,7 @@ begin
     Tick.tv_nsec := 200 * 1000 * 1000;
     repeat
       R := FpSigTimedWait(Sigs, nil, @Tick);
-    until (R > 0) or (InterlockedCompareExchange(FStopClaim, 0, 0) <> 0);
+    until (R > 0) or (AtomicCas(FStopClaim, 0, 0) <> 0);
     if R > 0 then
       Result := R
     else

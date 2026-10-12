@@ -27,7 +27,14 @@
 # role.rs, body decoder vs decode.rs) run from their own scripts:
 # tests/unit/test_parser_diff.sh, test_role_diff.sh, test_codec_diff.sh.
 # Usage: tests/unit/run_all.sh
-# Env: OUT_DIR overrides the build directory; HOT_ASM_ARGS overrides the
+# Env: TARGET=aarch64 cross-compiles the suites for ARM64 with
+#      build/tools/bin/fpc-aarch64 and runs them under qemu with
+#      build/tools/bin/run-aarch64 (both from tools/get-cross-aarch64.sh),
+#      in build/unit-aarch64: the fpcunit suites and their heaptrc runs
+#      only; the drd, stress, echo, split-fuzz and hot-asm steps are
+#      host-only and skipped (README.md, "ARM64"). FPC and RUN override
+#      the compiler and the runner prefix for either target.
+#      OUT_DIR overrides the build directory; HOT_ASM_ARGS overrides the
 #      check-hot-asm.sh arguments (default --s7); VALGRIND names the
 #      valgrind command (default: build/tools/bin/valgrind; run
 #      tools/get-tools.sh first); ECHO_BYTES (default 1073741824);
@@ -35,7 +42,21 @@
 # Exit status 0 only when every suite passes and the asm check passes.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-OUT=${OUT_DIR:-$ROOT/build/unit}
+TARGET=${TARGET:-x86_64}
+case $TARGET in
+  x86_64)
+    FPC=${FPC:-fpc}
+    RUN=${RUN:-}
+    OUT=${OUT_DIR:-$ROOT/build/unit} ;;
+  aarch64)
+    FPC=${FPC:-$ROOT/build/tools/bin/fpc-aarch64}
+    RUN=${RUN:-$ROOT/build/tools/bin/run-aarch64}
+    OUT=${OUT_DIR:-$ROOT/build/unit-aarch64}
+    [ -x "$FPC" ] || { echo "run_all: no $FPC (run tools/get-cross-aarch64.sh)"; exit 1; }
+    # test_rt_sys starts this binary again through taskset: via the runner
+    export BEARINGS_RUNNER=$RUN ;;
+  *) echo "run_all: unknown TARGET $TARGET (x86_64 or aarch64)"; exit 1 ;;
+esac
 mkdir -p "$OUT"
 # absolute: the drd runs cd into $OUT/drd (a relative OUT_DIR broke their paths)
 OUT=$(cd "$OUT" && pwd)
@@ -52,13 +73,14 @@ for T in test_parser test_codec test_role test_headers_validate \
   XD=
   if [ "$T" = test_h1_dispatch ]; then D=$OUT/dispatch; XD="-dWD_DEBUG -dWD_STALL"; mkdir -p "$D"; fi
   # shellcheck disable=SC2086
-  if ! fpc -Mobjfpc -Sh -O2 -gl -Cr -Co -Ct -Sa $XD $FU -FU"$D" -FE"$OUT" \
+  if ! "$FPC" -Mobjfpc -Sh -O2 -gl -Cr -Co -Ct -Sa $XD $FU -FU"$D" -FE"$OUT" \
       "$ROOT/tests/unit/$T.pas" > "$OUT/$T.build.log" 2>&1; then
     echo "$T: BUILD FAILED (see $OUT/$T.build.log)"
     FAIL=1
     continue
   fi
-  if "$OUT/$T" --all --format=plain > "$OUT/$T.out" 2>&1; then R=0; else R=$?; fi
+  # shellcheck disable=SC2086
+  if $RUN "$OUT/$T" --all --format=plain > "$OUT/$T.out" 2>&1; then R=0; else R=$?; fi
   # the fpcunit summary line (a suite may log to stderr before it)
   LINE=$(grep -m 1 -E '^ Time:[0-9:.]+ N:[0-9]+ E:' "$OUT/$T.out" || head -n 1 "$OUT/$T.out")
   N=$(echo "$LINE" | sed -n 's/.* N:\([0-9]*\) .*/\1/p')
@@ -79,14 +101,15 @@ for T in test_h1_conn test_body_chan test_exchange test_h1_dispatch test_workers
   if [ "$T" = test_h1_dispatch ]; then XD="-dWD_DEBUG -dWD_STALL"; fi
   mkdir -p "$HT/u-$T"
   # shellcheck disable=SC2086
-  if ! fpc -Mobjfpc -Sh -O2 -gl -gh -Cr -Co -Ct -Sa $XD $FU -FU"$HT/u-$T" -FE"$HT" \
+  if ! "$FPC" -Mobjfpc -Sh -O2 -gl -gh -Cr -Co -Ct -Sa $XD $FU -FU"$HT/u-$T" -FE"$HT" \
       "$ROOT/tests/unit/$T.pas" > "$HT/$T.build.log" 2>&1; then
     echo "$T (heaptrc): BUILD FAILED (see $HT/$T.build.log)"
     FAIL=1
     continue
   fi
   rm -f "$HT/$T.heap"
-  if HEAPTRC="log=$HT/$T.heap" "$HT/$T" --all --format=plain > "$HT/$T.out" 2>&1; then R=0; else R=$?; fi
+  # shellcheck disable=SC2086
+  if HEAPTRC="log=$HT/$T.heap" $RUN "$HT/$T" --all --format=plain > "$HT/$T.out" 2>&1; then R=0; else R=$?; fi
   U=$(sed -n 's/^\([0-9]*\) unfreed memory blocks.*/\1/p' "$HT/$T.heap" 2>/dev/null | head -n 1)
   HL=$(grep -m 1 -E '^ Time:[0-9:.]+ N:[0-9]+ E:' "$HT/$T.out" || head -n 1 "$HT/$T.out")
   echo "$T (heaptrc): $HL (exit $R), unfreed blocks: ${U:-?}"
@@ -94,6 +117,11 @@ for T in test_h1_conn test_body_chan test_exchange test_h1_dispatch test_workers
     FAIL=1
   fi
 done
+if [ "$TARGET" != x86_64 ]; then
+  echo "run_all ($TARGET): the drd, stress, echo, split-fuzz and hot-asm steps run on x86_64 only; skipped"
+  [ "$FAIL" -eq 0 ] && echo "run_all ($TARGET): passed" || echo "run_all ($TARGET): FAILED"
+  exit $FAIL
+fi
 # S7 exit criterion: the worker stress tests under valgrind --tool=drd
 # (docs/design.md section 9), built with -dWD_DRD (bearings.rt.sync's happens-before client
 # requests), tools/drd.supp, WD_ITER=20 (loop counts at 20 %): drd must
