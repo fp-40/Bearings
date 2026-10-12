@@ -164,8 +164,20 @@ noted.
 
 - Access log: one line per completed request with the time, the client
   address, the method, the request target, the status, the response body
-  bytes, the duration, and optionally the user agent. Ask the user for the
-  format (the Common/Combined log format of web servers, or JSON lines).
+  bytes, the duration, and optionally the user agent.
+  - Format (decided by the user, 2026-10-11): JSON lines by default (one
+    JSON object per line), with the field names of the OpenTelemetry
+    semantic conventions for HTTP: `time` (RFC 3339 UTC with
+    milliseconds), `client.address`, `http.request.method`, `url.path`,
+    `url.query` (when present), `network.protocol.version`,
+    `http.response.status_code`, `http.response.body.size`,
+    `http.server.request.duration` (seconds), `user_agent.original`.
+    Option: the Combined Log Format
+    (`host - - [time] "request line" status bytes "referer" "user agent"`)
+    for people and classic log tools.
+  - Write the JSON by hand into the loop's log buffer (escape `"`, `\` and
+    control bytes, and bytes over 0x7F as UTF-8 or `\u` escapes when they
+    are not valid UTF-8); no JSON library and no allocation per line.
   - Get the data where it exists: the request head is in the exchange; the
     status and the number of bytes written are known to the connection
     state machine; the start time is when the head was read.
@@ -238,5 +250,4 @@ noted.
    and the default file mode.
 2. Connection limit: stop accepting or accept-and-close at the limit? Is
    the per-IP limit wanted?
-3. Access log format (Common/Combined or JSON lines) and the default
-   destination (stderr or a file).
+3. The access log's default destination (stderr or a file).
