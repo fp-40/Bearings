@@ -12,7 +12,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT=${1:-${OUT_DIR:-$ROOT/build/compile-each-unit}}
 rm -rf "$OUT"
 mkdir -p "$OUT"
-FU="-Fu$ROOT/src/rt -Fu$ROOT/src/http -Fu$ROOT/src/http1 -Fu$ROOT/src/server -Fu$ROOT/tests/support"
+FU="-Fu$ROOT/src/rt -Fu$ROOT/src/http -Fu$ROOT/src/http1 -Fu$ROOT/src/server -Fu$ROOT/src/ws -Fu$ROOT/tests/support"
 FAIL=0
 N=0
 for F in $(find "$ROOT/src" "$ROOT/tests/support" -name '*.pas' | sort); do

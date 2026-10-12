@@ -16,11 +16,16 @@ bearings speaks HTTP/1.1 (and HTTP/1.0) over plain TCP: keep-alive,
 pipelining, chunked bodies, trailers, `Expect: 100-continue`, connection
 upgrades (the hand-off of the socket after a `101 Switching Protocols`
 response), request body backpressure, streamed responses with
-backpressure, file bodies with sendfile, graceful shutdown.
+backpressure, file bodies with sendfile, graceful shutdown. It speaks the
+WebSocket protocol (RFC 6455) on the event loop: the opening handshake,
+fragmented messages, UTF-8 checks, ping/pong, the close handshake, a
+message size limit, idle and close timeouts, send backpressure, and sends
+from other threads (`src/ws`, section "WebSocket" below).
 
-It has no TLS, no HTTP/2 and no WebSocket protocol code yet. For TLS, put a
-reverse proxy such as nginx in front of it. WebSocket support on top of the
-existing upgrade hand-off is planned work: `docs/handoff-websocket.md`. It
+It has no TLS and no HTTP/2. For TLS, put a reverse proxy such as nginx in
+front of it. The WebSocket code negotiates no extension (no
+permessage-deflate compression) and its handlers run on the loop thread
+only (there is no blocking WebSocket API for worker threads). It
 listens on TCP or on a Unix domain socket, runs under systemd socket
 activation with readiness and watchdog notifications, can cap the number
 of open connections, and can write an access log (JSON lines or the
@@ -152,6 +157,58 @@ kill %1
 unit of the library uses. `cthreads` must be the first unit of the program:
 the server starts threads.
 
+## WebSocket
+
+A service accepts a WebSocket in its call: `CheckRequest` checks the
+handshake, `AcceptWebSocket` answers `101 Switching Protocols` and hands
+the connection to a `TWebSocket`, which calls the application's
+`TWebSocketHandler` on the loop thread. The connection mode must allow
+upgrades (`TH1Config.Mode = cmWithUpgrades`, which `ProductionServerConfig`
+sets). The full program is `examples/ws_echo.pas`.
+
+```pascal
+uses ..., bearings.ws.frame, bearings.ws.handshake, bearings.ws.conn;
+
+type
+  TChat = class(TWebSocketHandler)
+  public
+    procedure OnText(WS: TWebSocket; P: PByte; Len: SizeInt); override;
+    procedure OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString); override;
+  end;
+
+procedure TChat.OnText(WS: TWebSocket; P: PByte; Len: SizeInt);
+begin
+  WS.SendText(P, Len);               { wsOk, wsFull (wait for OnWritable) or wsClosed }
+end;
+
+procedure TChat.OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString);
+begin
+  { the last call; WS and this handler are freed after it }
+end;
+
+function TMyCall.Poll(Ex: TExchange): TCallPoll;
+var
+  R: TWsHandshake;
+begin
+  if Ex.WantsUpgrade and PathIs(Ex, '/chat') then
+  begin
+    R := CheckRequest(Ex, ['chat.v1']);        { the subprotocols it supports }
+    if R.Ok then
+      AcceptWebSocket(Ex, R, TChat.Create, DefaultWsConfig)
+    else
+      RespondHandshakeError(Ex, R);            { 400, or 426 for a wrong version }
+  end
+  else
+    Ex.RespondText(404, 'not found');
+  Result := cpReady;
+end;
+```
+
+`DefaultWsConfig`: messages up to 16 MiB, a 60 s idle timeout, no
+periodic ping, a 5 s close timeout, and a 1 MiB send queue limit. The unit
+headers of `bearings.ws.conn`, `bearings.ws.frame` and
+`bearings.ws.handshake` describe the behaviour in full.
+
 ## Running under systemd
 
 bearings talks to systemd without libsystemd (unit `bearings.rt.sd`):
@@ -226,23 +283,24 @@ connection. Without systemd the same program can be tried with
   (configure, answer inline or on a worker, read request bodies, stream
   responses, upgrades, shutdown), with a reference table of every public
   type and routine and its threading rule.
-- `examples/`: three complete programs (`hello.pas`, `worker.pas`,
-  `stream.pas`) and the command that builds them (`examples/README.md`).
+- `examples/`: four complete programs (`hello.pas`, `worker.pas`,
+  `stream.pas`, `ws_echo.pas`) and the command that builds them
+  (`examples/README.md`).
 - The header comment of every unit under `src/` explains what the unit does
   for a reader who knows Free Pascal but not web servers.
 - `docs/design.md`: the design: the decisions and their reasons, the
   invariants a contributor must respect, and the deviations from what an
   HTTP library usually does.
-- `docs/design/m3-perf-report.md`: the performance measurements and how
-  they were made (written while this code was part of another project; the
-  unit names were updated).
+- `docs/perf-report.md`: the performance measurements and how they were
+  made.
 
 ## Layers
 
 `src/rt` uses nothing from the other directories. `src/http` uses the
 parser, encoder and decoder of `src/http1`, and the connection and
 dispatcher units of `src/http1` use `src/http`. `src/server` uses all of
-them.
+them. `src/ws` uses `src/rt`, `src/http1` and `src/http`; nothing uses
+`src/ws`.
 
 | Directory     | Units                    | What it does |
 |---------------|--------------------------|--------------|
@@ -250,21 +308,23 @@ them.
 | `src/http1`   | `bearings.http1.*`, `bearings.http.date`, `bearings.http.headers`, `bearings.http.uri` | HTTP/1.1: request parser, response encoder, body decoder, connection state machine, dispatcher. `bearings.http.date` keeps each loop's Date header through the loop's tick hook (`LoopTickProc`, `TLoop.Ext`). |
 | `src/http`    | `bearings.http.exchange`, `bearings.http.error` | The request/response exchange that a service (application) handles, inline on the loop or on a worker thread. |
 | `src/server`  | `bearings.server`, `bearings.server.accesslog`, `bearings.server.metrics` | `TServer`: listeners, loops, workers, signals, graceful stop, the connection limit; the access log and the metrics. |
+| `src/ws`      | `bearings.ws.handshake`, `bearings.ws.frame`, `bearings.ws.conn` | WebSocket (RFC 6455): the opening handshake, the frame reader and encoder, the connection on the event loop. |
 
-An application puts all four directories on its unit path (`-Fu`). The
+An application puts all five directories on its unit path (`-Fu`). The
 units a program normally uses directly are `bearings.server`,
 `bearings.http.exchange`, `bearings.rt.buf` (the body constructors),
 `bearings.http.headers`, `bearings.http1.config`, `bearings.rt.loop`,
-`bearings.rt.workers`, for upgrades `bearings.rt.stream`, and under systemd
+`bearings.rt.workers`, for upgrades `bearings.rt.stream`, for WebSocket
+`bearings.ws.handshake` and `bearings.ws.conn`, and under systemd
 `bearings.rt.sd` (through `ApplySdListenFds` in `bearings.server`).
 
 ## Building and testing
 
 There is no build step for the library itself: programs compile its units
-with `fpc -Mobjfpc -Sh -Fusrc/rt -Fusrc/http -Fusrc/http1 -Fusrc/server`.
+with `fpc -Mobjfpc -Sh -Fusrc/rt -Fusrc/http -Fusrc/http1 -Fusrc/server -Fusrc/ws`.
 Build output goes under `build/` (ignored by git).
 
-- `examples/README.md`: the command that builds the three example programs
+- `examples/README.md`: the command that builds the four example programs
   into `build/examples/`.
 - `tools/get-tools.sh`: fetches valgrind, wrk and wrk2 into `build/tools/`.
 - `tests/unit/run_all.sh`: every unit suite (also under heaptrc and

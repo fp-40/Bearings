@@ -39,7 +39,8 @@
   (Wake), so one busy client cannot hold the loop. While the output queue
   holds more than SendHighWater bytes the connection stops reading: a
   client that sends faster than it reads the answers is slowed down by TCP
-  instead of filling the server's memory.
+  instead of filling the server's memory. Reading resumes when a data send
+  would be accepted again (fewer than SendHighWater bytes queued).
 
   Sending. A frame is written to the socket at once when nothing is queued
   (header and payload in one writev); what the socket does not take is
@@ -84,7 +85,10 @@
   LoopErrorProc (bearings.rt.loop) and fails the connection with 1011.
 
   Not supported: extensions (permessage-deflate), a blocking API for worker
-  threads.
+  threads. Server shutdown (bearings.server) waits for the HTTP connections
+  only: a TWebSocket still open when its loop exits gets no close frame and
+  is not freed, so an application closes its WebSockets before it stops
+  the server.
 
   Threading: everything runs on the loop thread of the TUpgraded, except
   PostText, PostBinary, AddRef and Release. }
@@ -406,7 +410,7 @@ begin
     if not FEnded then
       ReadInput;
     Flush;
-    if FReadPaused and not FEnded and (Queued <= FCfg.SendHighWater) then
+    if FReadPaused and not FEnded and (Queued < FCfg.SendHighWater) then
     begin
       { the queue drained below the mark in this run: read what waited }
       ReadInput;
@@ -474,7 +478,7 @@ begin
   while not FEnded do
   begin
     { backpressure: the client does not read what we send }
-    FReadPaused := (not Ending) and (Queued > FCfg.SendHighWater);
+    FReadPaused := (not Ending) and (Queued >= FCfg.SendHighWater);
     if FReadPaused then
       Exit;
     if FReadBlk = nil then

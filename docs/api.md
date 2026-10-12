@@ -924,9 +924,50 @@ hand-off. The handler owns it from `Upgraded(U)` on and must take it
 
 If `Upgraded` raises while `U` is not taken, `U` is closed before the
 exception goes on to the loop. Everything in `TUpgraded` runs on the loop
-thread except what the caller does with a detached `Fd`. The WebSocket
-protocol itself (framing, the handshake check) is not in the library yet;
-`docs/handoff-websocket.md` is the plan.
+thread except what the caller does with a detached `Fd`.
+
+### WebSocket (units `bearings.ws.handshake`, `bearings.ws.conn`)
+
+The WebSocket protocol (RFC 6455) is built on the hand-off above. In the
+call that sees `Ex.WantsUpgrade`:
+
+1. `R := CheckRequest(Ex, Protocols)` checks the opening handshake (GET,
+   HTTP/1.1, `Upgrade: websocket`, `Connection: upgrade`, a
+   `Sec-WebSocket-Key` of 16 bytes in base64, `Sec-WebSocket-Version: 13`)
+   and picks the subprotocol: the first one the client lists that is in
+   `Protocols`.
+2. If `R.Ok`: `AcceptWebSocket(Ex, R, Handler, Cfg)` answers 101 with the
+   handshake headers and arranges for a `TWebSocket` to take the connection
+   over with the application's `TWebSocketHandler`. It owns `Handler` from
+   then on (freed without callbacks if the upgrade does not happen).
+   Otherwise `RespondHandshakeError(Ex, R)` answers 400, or 426 with
+   `Sec-WebSocket-Version: 13` when only the version was wrong.
+
+The handler's methods run on the loop thread: `OnOpen`, `OnText` and
+`OnBinary` (a complete message; the bytes are valid during the call only),
+`OnPong`, `OnWritable` (after a send returned `wsFull`, the queue went down
+to half the mark), `OnError(Code, Msg)` (the connection failed: 1002, 1007,
+1009 for client errors, 1011 when a handler method raised, 1006 for a
+socket error), and `OnClose(Code, Reason)` once, last (the client's close
+code; 1005 when its close frame had none; 1006 when no close frame came).
+The `TWebSocket` and, by default, its handler are freed after `OnClose`.
+
+Sending on the loop thread: `SendText`, `SendBinary`, `Ping`, `CloseWith(Code,
+Reason)`. A send returns `wsOk`, `wsFull` (the output queue holds
+`SendHighWater` bytes or more; nothing was queued) or `wsClosed`. While the
+queue is at the mark the connection also stops reading. From another
+thread: `PostText`, `PostBinary`, after taking a reference with `AddRef` on
+the loop thread (for example in `OnOpen`); `Release` gives it back.
+
+`TWsConfig` (`DefaultWsConfig`): `MaxMessage` 16 MiB, `IdleTimeoutMs` 60000
+(then `CloseWith(1001)`), `PingIntervalMs` 0 (off), `CloseTimeoutMs` 5000,
+`SendHighWater` 1 MiB. No extension is negotiated (no permessage-deflate).
+`examples/ws_echo.pas` is a complete server.
+
+Server shutdown does not close WebSocket connections: `TServer.Stop`
+waits for the HTTP connections only, and a WebSocket still open when the
+loop exits is neither closed with a close frame nor freed. An application
+closes its WebSockets (`CloseWith(1001)`) before it stops the server.
 
 ## 11. The connection observer
 
@@ -1221,6 +1262,22 @@ methods are internal and are left out.
 | `TUpgraded.Detach(out Fd, out Rest): Boolean` | leave the loop; the caller owns the blocking `Fd` | loop (then `Fd`: any) |
 | `TUpgraded.Close` | closes the socket and the task | loop |
 | `TUpgraded.Taken: Boolean` | attached, detached or closed | loop |
+
+### bearings.ws.handshake, bearings.ws.conn, bearings.ws.frame
+
+| Member | Description | Thread |
+|--------|-------------|--------|
+| `CheckRequest(Ex, Protocols): TWsHandshake` | checks the opening handshake; `Ok`, `Accept`, `Protocol`, `HttpStatus`, `Text` | loop |
+| `CheckHandshake(Method, Version, IsUpgrade, Headers, Protocols)` | the same on the parts of a request | any |
+| `AcceptValue(Key)` | base64(SHA-1(Key + GUID)) | any |
+| `Respond101(Ex, R, H)`, `RespondHandshakeError(Ex, R)` | the answers | loop |
+| `AcceptWebSocket(Ex, R, Handler, Cfg): Boolean` | 101 plus a `TWebSocket` for the connection | loop |
+| `TWebSocketHandler.OnOpen`, `OnText`, `OnBinary`, `OnPong`, `OnWritable`, `OnError`, `OnClose` | the application's callbacks | loop |
+| `TWebSocket.SendText`, `SendBinary`, `Ping`, `CloseWith`, `Queued`, `Closing`, `User` | sending and state | loop |
+| `TWebSocket.PostText`, `PostBinary`, `AddRef`, `Release` | sending from another thread | any (`AddRef`: loop, or a holder) |
+| `TWebSocket.Create(Handler, Cfg, OwnsHandler)`, `Start(U)`, `TWsUpgradeHandler` | for an application with its own `TUpgradeHandler` | loop |
+| `TWsConfig`, `DefaultWsConfig` | limits and timeouts | any |
+| `TWsReader`, `WsEncodeHeader`, `TUtf8Check`, `WS_OP_*`, `WS_CLOSE_*` | the frame layer | any (one reader per connection) |
 
 ### bearings.http.error
 
