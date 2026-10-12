@@ -338,7 +338,7 @@ the loop's inbox. When `Run` returns, the worker's reference is released.
 
 Rules:
 
-- One `Offload` per request. A second one raises. `Offload` with the pool
+- One `Offload` per request. A second one raises `EExchangeState`.
   shut down raises `EWorkerPoolStopped`; the exception aborts the
   connection task.
 - `Run` must make exactly one terminal call. If it returns without one, the
@@ -674,6 +674,7 @@ Exceptions a program meets:
 | `EBodyError` | `bearings.http.exchange` | a blocking body read: the body could not be read (`Kind: TBodyErrorKind`) |
 | `EClientGone` | `bearings.http.exchange` | a blocking body read after a cancel or a release |
 | `EBodyTooLarge` | `bearings.http.exchange` | `ReadAll`: the body is over the limit |
+| `EExchangeState` | `bearings.http.exchange` | a call the exchange's state does not allow: a second `Offload` of one request; `Share` with no call in flight or after the request's last holder released it |
 | `EWorkerPoolStopped` | `bearings.rt.workers` | `Submit` or `Offload` after `Shutdown` started |
 | `EH1Panic` | `bearings.http.error` | a program error inside the HTTP/1 code (for example a response version the encoder cannot write); the loop aborts the connection |
 
@@ -938,7 +939,7 @@ methods are internal and are left out.
 | `TExchange.AbortStream(Msg)` | end the streamed body with an error | any holder, after `BeginStream` |
 | `TExchange.OnUpgrade(H)` | register the upgrade handler | loop, before answering |
 | `TExchange.OnLoopThread: Boolean` | the caller is the loop thread (a query) | any |
-| `TExchange.Offload(Pool, H)` | `Share` and queue on the pool; a worker runs `H.Run` | loop, from `Poll`, once per request |
+| `TExchange.Offload(Pool, H)` | `Share` and queue on the pool; a worker runs `H.Run`; a second call raises `EExchangeState` | loop, from `Poll`, once per request |
 | `TExchange.Share: TExchange` | switch to shared mode, +1 reference | loop |
 | `TExchange.Release` | -1 reference; the last one recycles the exchange | any, after `Share` |
 | `TExchange.Wake` | run the owning connection again | loop when unshared; any when shared |
@@ -954,6 +955,7 @@ methods are internal and are left out.
 | `TWriteResult` | `wrOk`, `wrWouldBlock`, `wrCanceled` | - |
 | `TBodyErrorKind` | `bekUnexpectedEof`, `bekInvalidData`, `bekInvalidInput`, `bekIo`, `bekOther` | - |
 | `EClientGone`, `EBodyError` (`Kind`), `EBodyTooLarge` | body read exceptions (section 6) | - |
+| `EExchangeState` | a second `Offload`; `Share` in a state that does not allow it (section 9) | - |
 | `TExchangeState` | `xsIdle`, `xsCalled`, `xsAnswered`, `xsCanceled`, `xsDone` | - |
 | `TWakeTimer.Arm(Ex, DelayMs)`, `Fired`, `Cancel(Ex)` | an application timer that wakes the connection | loop |
 | `TBodySource.SizeHint`, `IsEndStream`, `PollFrame`, `Done` | a response body produced piece by piece | loop (called by the dispatcher) |

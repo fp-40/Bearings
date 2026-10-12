@@ -299,6 +299,9 @@ type
   EClientGone = class(Exception);         { a blocking body read after a cancel or a release }
   EBodyError = class(Exception) public Kind: TBodyErrorKind; end;   { the body could not be read }
   EBodyTooLarge = class(Exception);       { ReadAll: the body is over the limit }
+  { a call the exchange's state does not allow: a second Offload of one request, a Share with no
+    call in flight or after the request's last holder released it }
+  EExchangeState = class(Exception);
 
   TExchangeState = (xsIdle, xsCalled, xsAnswered, xsCanceled, xsDone);   { see the unit header }
 
@@ -2154,7 +2157,7 @@ begin
     the offload path, and the exception aborts the connection task (see
     bearings.rt.loop) }
   if FHandler <> nil then
-    raise Exception.Create('TExchange.Offload: the request was already offloaded');
+    raise EExchangeState.Create('TExchange.Offload: the request was already offloaded');
   FHandler := H;
   Share;
   if not Pool.TrySubmit(Self) then
@@ -2185,7 +2188,7 @@ begin
       released by CompleteShared or CancelShared. No other thread holds the
       exchange yet: plain stores }
     if (FState <> Ord(xsCalled)) and (FState <> Ord(xsAnswered)) then
-      raise Exception.Create('TExchange.Share: no call in flight');
+      raise EExchangeState.Create('TExchange.Share: no call in flight');
     FHolders := 2;                       { the call and the reference returned here }
     FShared := True;                     { a second Share (another producer) leaves it: workers read it }
   end
@@ -2197,7 +2200,7 @@ begin
     repeat
       N := AtomicLoad(FHolders);
       if N <= 0 then
-        raise Exception.Create('TExchange.Share: the request was released by its last holder');
+        raise EExchangeState.Create('TExchange.Share: the request was released by its last holder');
     until InterlockedCompareExchange(FHolders, N + 1, N) = N;
   InterLockedIncrement(FRefCount);
   Result := Self;

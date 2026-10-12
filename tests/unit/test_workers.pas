@@ -3657,7 +3657,7 @@ begin
   try
     FEx.Share;
   except
-    on E: Exception do
+    on E: EExchangeState do
       Msg := E.Message;
   end;
   AssertTrue('Share after the last holder raised (got: ' + Msg + ')',
@@ -3672,7 +3672,7 @@ begin
   try
     FEx.Share;
   except
-    on E: Exception do
+    on E: EExchangeState do
       Msg := E.Message;
   end;
   AssertTrue('Share with no call in flight raised (got: ' + Msg + ')', Pos('no call in flight', Msg) > 0);
@@ -4178,7 +4178,7 @@ begin
     try
       FEx.Offload(FWork, H2);
     except
-      on E: Exception do
+      on E: EExchangeState do
         Raised := True;
     end;
     AssertTrue('a second Offload of the request raises', Raised);
