@@ -90,7 +90,10 @@ The exchange has three parts:
   buffer; they are not copied. They are valid until the request is
   released, which happens at the latest when the call completes (section
   3) or when the last holder of a shared exchange releases it (section 4).
-  `TByteSlice` (`P: PByte; Len: SizeInt`) is how the head hands out bytes.
+  `TByteSlice` (`P: PByte; Len: SizeInt`) is how the head hands out bytes;
+  `SliceToStr(S)` copies one into a `RawByteString`, `SliceEquals(S, Text)`
+  compares one with a string byte for byte, and `PathIs(Ex, Text)` is
+  `SliceEquals(Ex.Path, Text)`.
 - the request body: `TryRead` on the loop, `Read`, `ReadChunk`, `ReadAll`,
   `ReadFrame` on a worker, `DiscardBody`, `RequestTrailers` (section 6).
 - the response: `Status`, `ResponseVersion`, `SetReason`,
@@ -423,6 +426,19 @@ the record for other arrangements; no constructor builds it.
 For a response to a HEAD request, a 1xx, 204 or 304 status, or a 2xx to
 CONNECT, no body bytes go on the wire; for HEAD the `Content-Length` the
 body would have had is kept in the head.
+
+### A text with a status: RespondText
+
+`RespondText(Status, Text, ContentType = 'text/plain; charset=utf-8'):
+Boolean` is `Respond(BodyString(Text))` with the status and the
+`Content-Type` header set first: it assigns `Status`, sets the header with
+`ResponseHeaders.Insert` (one `Content-Type` entry, the value validated:
+`EInvalidHeader` on a bad value, and the exchange stays unanswered), then
+responds. It returns False, and touches neither the head nor the body,
+when the exchange is canceled or already answered. It is for error
+answers and the worker path (`examples/worker.pas`, `examples/stream.pas`):
+it builds a string reference per call, so the inline fast path keeps
+`BodyStatic` (section 13).
 
 ### A body of unknown length: BeginStream, Write, Finish
 
@@ -889,6 +905,9 @@ methods are internal and are left out.
 | `TOffloadCall` (`Pool`, `Handler`, `Poll`) | a stateless call that offloads every request | loop |
 | `TExchangeAttachment.Detach(Ex)` | per-request state the exchange detaches at recycle or next request | loop |
 | `TByteSlice` | `P: PByte; Len: SizeInt` | - |
+| `SliceToStr(S): RawByteString` | a copy of the slice's bytes as a string | any holder, while the slice is valid |
+| `SliceEquals(S, Text): Boolean` | the slice holds exactly the bytes of `Text` (byte for byte) | any holder, while the slice is valid |
+| `PathIs(Ex, Text): Boolean` | `SliceEquals(Ex.Path, Text)` | same as `TExchange.Path` |
 | `TRequestHead` (`Ex.Head`) | the parsed head: `View`, `Method`, `MethodSlice`, `Target`, `Uri`, `Version`, `Headers`, `ContentLength`, `ExpectContinue`, `WantsUpgrade`, `Peer`, `Local`, `ConnId`, `RequestNo`, `Released`; read through the accessors below | any holder, until the request is released |
 | `TExchange.Method`, `MethodBytes`, `Target`, `Path`, `Query(out Q)`, `Version`, `Headers`, `Header(Name, out V)`, `ContentLength`, `ExpectsContinue`, `WantsUpgrade`, `ConnId`, `RequestNo`, `PeerAddr` | request head accessors; valid until the request is released; `Headers` is read-only by contract | loop when unshared; any holder when shared |
 | `TExchange.ReleaseRequest` | the application is done with the request: body receiver closed, head unpinned | loop when unshared; any holder when shared |
@@ -904,6 +923,7 @@ methods are internal and are left out.
 | `TExchange.SetReason(P, Len): Boolean` | a custom reason phrase; False for an invalid byte | the answering thread, before the terminal call |
 | `TExchange.ResponseHeaders: THttpHeaders` | the response header list | the answering thread, before the terminal call |
 | `TExchange.Respond(Body): Boolean` | terminal: known length or empty | any holder |
+| `TExchange.RespondText(Status, Text, ContentType = 'text/plain; charset=utf-8'): Boolean` | terminal: `Status`, the `Content-Type` header and `Respond(BodyString(Text))` in one call; False (nothing touched) when canceled or already answered | any holder |
 | `TExchange.RespondStream(Source): Boolean` | terminal: a `TBodySource` | any holder |
 | `TExchange.BeginStream(HighWater = 65536): Boolean` | terminal: the exchange's own channel body | any holder |
 | `TExchange.Fail(Msg): Boolean` | terminal: no response, the connection closes with a user error | any holder |

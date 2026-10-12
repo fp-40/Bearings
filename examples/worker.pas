@@ -57,13 +57,6 @@ type
     procedure Started(Server: TServer);
   end;
 
-{ A string copy of a byte slice (the slice points into the connection's
-  read buffer and is valid only while the request head is). }
-function SliceToStr(const S: TByteSlice): RawByteString;
-begin
-  SetString(Result, PAnsiChar(S.P), S.Len);
-end;
-
 procedure TEchoHandler.Run(Ex: TExchange);
 var
   Body: TBytes;
@@ -76,14 +69,12 @@ begin
   except
     on EBodyTooLarge do
     begin
-      Ex.Status := 413;
-      Ex.Respond(BodyString('request body too large'#10));
+      Ex.RespondText(413, 'request body too large'#10);   { status, content-type and body in one call }
       Exit;
     end;
     on E: EBodyError do
     begin
-      Ex.Status := 400;
-      Ex.Respond(BodyString('bad request body: ' + Ex.BodyErrorMessage + #10));
+      Ex.RespondText(400, 'bad request body: ' + Ex.BodyErrorMessage + #10);
       Exit;
     end;
     on EClientGone do
@@ -95,7 +86,7 @@ begin
     Exit;
   SetString(S, PAnsiChar(Body), N);
   if Ex.Header('content-type', CType) then
-    Ex.ResponseHeaders.Add('content-type', SliceToStr(CType))
+    Ex.ResponseHeaders.Add('content-type', SliceToStr(CType))   { a copy: the slice dies with the request head }
   else
     Ex.ResponseHeaders.Add('content-type', 'application/octet-stream');
   Ex.ResponseHeaders.Add('x-echo-bytes', IntToStr(N));

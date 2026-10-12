@@ -114,11 +114,13 @@ type
     procedure Try_read_frames;
     procedure Try_read_error_kinds;
     procedure Try_read_canceled;
+    procedure Slice_helpers;
   end;
 
   TTestExchangeResponse = class(TExCase)
   published
     procedure Respond_once;
+    procedure Respond_text;
     procedure Respond_stream_and_fail;
     procedure Set_reason;
     procedure Body_copy_uses_loop_pool;
@@ -585,7 +587,78 @@ begin
   AssertTrue(FEx.TryRead(Ch) = brCanceled);
 end;
 
+procedure TTestExchangeRequest.Slice_helpers;
+var
+  S, E: TByteSlice;
+begin
+  StartRequest('GET /items?x=1 HTTP/1.1' + CRLF + 'Host: h' + CRLF + CRLF);
+  AssertEquals('/items', SliceToStr(FEx.Path));
+  AssertTrue('the path', PathIs(FEx, '/items'));
+  AssertFalse('a prefix', PathIs(FEx, '/item'));
+  AssertFalse('a longer text', PathIs(FEx, '/items/'));
+  AssertFalse('byte-exact: no case folding', PathIs(FEx, '/Items'));
+  AssertFalse('the query is not part of the path', PathIs(FEx, '/items?x=1'));
+  AssertTrue(FEx.Header('host', S));
+  AssertTrue('a header value', SliceEquals(S, 'h'));
+  AssertFalse(SliceEquals(S, 'H'));
+  AssertFalse(SliceEquals(S, ''));
+  E.P := nil;
+  E.Len := 0;
+  AssertTrue('an empty slice equals the empty string', SliceEquals(E, ''));
+  AssertFalse(SliceEquals(E, 'a'));
+  AssertEquals('', SliceToStr(E));
+end;
+
 { ================= response ================= }
+
+procedure TTestExchangeResponse.Respond_text;
+var
+  S: RawByteString;
+  Raised: Boolean;
+begin
+  StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+  AssertTrue(FEx.RespondText(404, 'not found'#10));
+  AssertEquals(404, FEx.Status);
+  AssertEquals('text/plain; charset=utf-8', FEx.ResponseHeaders.GetValue('content-type'));
+  AssertEquals('one content-type', 1, FEx.ResponseHeaders.Count);
+  SetString(S, PAnsiChar(FEx.Resp.Body.P), FEx.Resp.Body.Len);
+  AssertEquals('not found'#10, S);
+  AssertFalse('second terminal call refused', FEx.RespondText(500, 'x', 'text/html'));
+  AssertEquals('the first answer''s status stands', 404, FEx.Status);
+  AssertEquals('and its content-type', 'text/plain; charset=utf-8', FEx.ResponseHeaders.GetValue('content-type'));
+  AssertEquals('and its body', 10, FEx.Resp.Body.Len);
+  FEx.CompleteCall;
+
+  { a content-type set earlier is replaced, not duplicated; the given type is kept }
+  StartRequest('GET /2 HTTP/1.1' + CRLF + CRLF, 2);
+  FEx.ResponseHeaders.Add('content-type', 'text/plain');
+  AssertTrue(FEx.RespondText(200, '<p>hi</p>', 'text/html; charset=utf-8'));
+  AssertEquals(1, FEx.ResponseHeaders.CountOf('content-type'));
+  AssertEquals('text/html; charset=utf-8', FEx.ResponseHeaders.GetValue('content-type'));
+  FEx.CompleteCall;
+
+  { an invalid content-type raises (the validating mutator) and leaves the exchange unanswered }
+  StartRequest('GET /3 HTTP/1.1' + CRLF + CRLF, 3);
+  Raised := False;
+  try
+    FEx.RespondText(200, 'x', 'text/plain'#13#10'x-injected: 1');
+  except
+    on EInvalidHeader do
+      Raised := True;
+  end;
+  AssertTrue('EInvalidHeader', Raised);
+  AssertFalse('not answered', FEx.Answered);
+  AssertTrue(FEx.RespondText(204, ''));
+  AssertEquals(0, FEx.Resp.Body.Len);
+  FEx.CompleteCall;
+
+  { canceled: refused }
+  StartRequest('GET /4 HTTP/1.1' + CRLF + CRLF, 4);
+  FEx.Cancel;
+  AssertFalse('canceled', FEx.RespondText(200, 'late'));
+  AssertEquals('the head was not touched', 200, FEx.Status);
+  AssertEquals(0, FEx.ResponseHeaders.Count);
+end;
 
 procedure TTestExchangeResponse.Respond_once;
 begin

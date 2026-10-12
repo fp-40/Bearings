@@ -6,8 +6,8 @@ of its source and in `docs/api.md`.
 | Program      | What it shows |
 |--------------|---------------|
 | `hello.pas`  | A `TServer` with `ProductionServerConfig` and one service that answers "Hello" to every request, inline on the loop thread, with a static body (`BodyStatic`). |
-| `worker.pas` | Every request is handed to a worker thread (`TOffloadCall`, `TBlockingHandler`). The worker reads the request body with `ReadAll` and echoes it back with `BodyString`; it handles `EBodyTooLarge`, `EBodyError`, `EClientGone` and `IsCanceled`. |
-| `stream.pas` | A streamed response from a worker (`BeginStream`, `Write`, `Finish`: ten lines, one per 100 ms) and a file response (`BodyFile`, sent with sendfile). |
+| `worker.pas` | Every request is handed to a worker thread (`TOffloadCall`, `TBlockingHandler`). The worker reads the request body with `ReadAll` and echoes it back with `BodyString`; it handles `EBodyTooLarge`, `EBodyError`, `EClientGone` and `IsCanceled`; the error answers use `RespondText`. |
+| `stream.pas` | A streamed response from a worker (`BeginStream`, `Write`, `Finish`: ten lines, one per 100 ms) and a file response (`BodyFile`, sent with sendfile). Routes are matched with `PathIs`. |
 
 ## Build
 

@@ -439,6 +439,13 @@ type
     function BeginStream(HighWater: SizeInt = 65536): Boolean;     { RespondStream(TChannelBody) }
     { the handler failed: no response is written, the connection closes with a user error (Msg) }
     function Fail(const Msg: RawByteString): Boolean;
+    { Status, Content-Type and a text body in one call: Status := AStatus, the Content-Type header
+      is set to ContentType (ResponseHeaders.Insert: it replaces one already set and validates
+      the value), then Respond(BodyString(Text)). Same rules and result as Respond; a canceled or
+      already answered exchange is refused (False) before the head is touched. It builds a string
+      reference per call: for the worker path and error answers, not the inline fast path. }
+    function RespondText(AStatus: Word; const Text: RawByteString;
+      const ContentType: RawByteString = 'text/plain; charset=utf-8'): Boolean;
 
     { ---- stream writer after BeginStream (any holder of a shared exchange;
          the loop thread otherwise) ---- }
@@ -678,6 +685,16 @@ type
 { A block from the loop's pool (heap without a loop) holding a copy of P^; the block is owned
   by the returned TBodyData and goes back in ReleaseBody. }
 function BodyCopy(Ex: TExchange; P: Pointer; Len: SizeInt): TBodyData;
+
+{ TByteSlice helpers. The head accessors (Path, Target, Header, ...) hand out slices into the
+  connection's read buffer, valid only while the request head is (see TRequestHead). }
+{ a copy of the slice's bytes as a string }
+function SliceToStr(const S: TByteSlice): RawByteString;
+{ True when the slice holds exactly the bytes of Text (compared byte for byte; no case folding,
+  no percent-decoding) }
+function SliceEquals(const S: TByteSlice; const Text: RawByteString): Boolean;
+{ SliceEquals(Ex.Path, Text): the request path is exactly Text }
+function PathIs(Ex: TExchange; const Text: RawByteString): Boolean;
 
 var
   { TUpgradeSlot objects alive (created and not yet freed); tests check the slot's reference
@@ -1855,6 +1872,20 @@ begin
   Resp.FailText := Msg;
   FState := Ord(xsAnswered);
   Result := True;
+end;
+
+function TExchange.RespondText(AStatus: Word; const Text: RawByteString;
+  const ContentType: RawByteString): Boolean;
+begin
+  { cold. A canceled or already answered exchange is refused before the head
+    is touched, so a refused call leaves the answer that stands alone; the
+    head writes then follow the same rules as writing Status and
+    ResponseHeaders directly, and Respond decides }
+  if AtomicLoad(FState) <> Ord(xsCalled) then
+    Exit(False);
+  Status := AStatus;
+  ResponseHeaders.Insert('content-type', ContentType);
+  Result := Respond(BodyString(Text));
 end;
 
 { ---- terminal calls on a shared exchange: the first call claims the
@@ -3318,6 +3349,24 @@ begin
   Result.Own := boCustom;
   Result.Ctx := B;
   Result.ReleaseProc := @ReleaseCopyBlock;
+end;
+
+{ ---- TByteSlice helpers ---- }
+
+function SliceToStr(const S: TByteSlice): RawByteString;
+begin
+  SetString(Result, PAnsiChar(S.P), S.Len);
+end;
+
+function SliceEquals(const S: TByteSlice; const Text: RawByteString): Boolean;
+begin
+  Result := (S.Len = Length(Text))
+    and ((S.Len = 0) or (CompareByte(S.P^, Text[1], S.Len) = 0));
+end;
+
+function PathIs(Ex: TExchange; const Text: RawByteString): Boolean;
+begin
+  Result := SliceEquals(Ex.Path, Text);
 end;
 
 { ---- loop messages of a shared exchange ---- }

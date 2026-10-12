@@ -16,7 +16,8 @@
              sent with BodyFile: the kernel copies the file to the socket
              (sendfile), and the file descriptor is closed after the last
              byte (CloseAfter = True). Content-Length is the file size.
-    other    404.
+    other    404 (RespondText: status, content-type and a text body in one
+             call; the error answers of /file use it too).
 
   Both routes run on a worker (TOffloadCall), because the stream producer
   sleeps and open(2) may block.
@@ -61,14 +62,6 @@ type
     procedure Started(Server: TServer);
   end;
 
-function PathIs(Ex: TExchange; const S: RawByteString): Boolean;
-var
-  P: TByteSlice;
-begin
-  P := Ex.Path;
-  Result := (P.Len = Length(S)) and (CompareByte(P.P^, S[1], P.Len) = 0);
-end;
-
 procedure TStreamHandler.ServeLines(Ex: TExchange);
 var
   I: Integer;
@@ -98,15 +91,13 @@ begin
   Fd := FpOpen(FileName, O_RDONLY or O_CLOEXEC);
   if Fd < 0 then
   begin
-    Ex.Status := 404;
-    Ex.Respond(BodyString('cannot open ' + FileName + #10));
+    Ex.RespondText(404, 'cannot open ' + FileName + #10);
     Exit;
   end;
   if FpFStat(Fd, St) <> 0 then
   begin
     FpClose(Fd);
-    Ex.Status := 500;
-    Ex.Respond(BodyString('fstat failed'#10));
+    Ex.RespondText(500, 'fstat failed'#10);
     Exit;
   end;
   Ex.ResponseHeaders.Add('content-type', 'text/plain');
@@ -117,15 +108,12 @@ end;
 
 procedure TStreamHandler.Run(Ex: TExchange);
 begin
-  if PathIs(Ex, '/') then
+  if PathIs(Ex, '/') then                     { PathIs: the request path is exactly this text }
     ServeLines(Ex)
   else if PathIs(Ex, '/file') then
     ServeFile(Ex)
   else
-  begin
-    Ex.Status := 404;
-    Ex.Respond(BodyString('not found'#10));
-  end;
+    Ex.RespondText(404, 'not found'#10);
 end;
 
 constructor TStreamService.Create(Srv: TServer; H: TBlockingHandler);

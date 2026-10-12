@@ -4246,14 +4246,6 @@ begin
   AssertEquals('none in Post afterwards', 0, FLoop.PostsInProgress);
 end;
 
-function PathIs(Ex: TExchange; const P: RawByteString): Boolean;
-var
-  S: TByteSlice;
-begin
-  S := Ex.Path;
-  Result := (S.Len = Length(P)) and (CompareByte(S.P^, P[1], S.Len) = 0);
-end;
-
 procedure TSrvHandler.Run(Ex: TExchange);
 var
   Dst: TBytes;
