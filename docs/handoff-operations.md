@@ -11,8 +11,7 @@ Add four features that matter when bearings runs in production:
    machine (nginx, Caddy) can talk to bearings without TCP.
 2. systemd socket activation (`LISTEN_FDS`), so the service can restart
    without refusing connections.
-3. Limits on simultaneous connections: in total, and optionally per client
-   IP address.
+3. A limit on simultaneous connections.
 4. An access log and basic metrics: open connections, requests, latency.
 
 Each one is a separate step with its own tests and commit. Suggested order:
@@ -149,21 +148,22 @@ noted.
   (`Finish`, or wherever the dispatcher is freed; an upgraded connection
   also counts until it closes). The count is shared by all loops: an
   atomic counter.
-- What happens at the limit (ask the user): either stop accepting (take
-  the listeners out of epoll like `TListener.Pause`, and put them back when
-  a connection closes; new clients wait in the kernel's accept queue), or
-  accept and close at once. Stopping accept is the usual choice; it keeps
-  the waiting clients instead of failing them.
-- Per-IP limit (optional): `MaxConnectionsPerIp`. With `SO_REUSEPORT` the
-  kernel spreads one client's connections over several loops, so the count
-  must be shared: a small hash table of address -> count under a lock, or
-  sharded by address hash. A connection over the limit is closed right
-  after accept. Behind a reverse proxy all connections come from the proxy,
-  so this limit only makes sense when bearings faces clients directly;
-  document that.
-- Tests: N+1 connections with a limit of N (the last waits, or is closed,
-  per the chosen rule; it proceeds when one closes); the per-IP case from
-  127.0.0.1 and 127.0.0.2; counts return to 0 after Stop; no leak.
+- At the limit (decided by the user, 2026-10-11): stop accepting. Take the
+  listeners out of epoll as `TListener.Pause` does, and put them back when
+  a connection closes and the count is below the limit again; new clients
+  wait in the kernel's accept queue (bounded by the listen backlog) instead
+  of being refused. With several loops, the loop that closes a connection
+  must be able to resume the other loops' listeners: post a message to
+  them, or let each loop re-check the count on its own timer.
+- No per-IP limit (decided by the user, 2026-10-11): that policy belongs
+  to the reverse proxy or the firewall, and behind a proxy every
+  connection comes from the proxy's address anyway. An application that
+  faces clients directly and wants one can implement it in
+  `TConnObserver.OnAccept`, which receives the peer address and may close
+  the connection; document this in the unit header.
+- Tests: N+1 connections with a limit of N (the last one waits in the
+  accept queue and is served when one of the N closes); the listeners
+  resume on every loop; counts return to 0 after Stop; no leak.
 
 ### 3.4 Access log and metrics
 
@@ -253,7 +253,7 @@ noted.
 - Implement the features, not other servers' exact behaviour.
 - Do not modify `/home/jps/Code/proper` or any Proper checkout.
 
-## 6. Questions to ask the user at the start
+## 6. Open questions
 
-1. Connection limit: stop accepting or accept-and-close at the limit? Is
-   the per-IP limit wanted?
+None. Every design choice above was decided by the user on 2026-10-11; ask
+only if the code contradicts something written here.
