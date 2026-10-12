@@ -199,4 +199,4 @@ Build output goes under `build/` (ignored by git).
 
 Version: `bearings.version.BEARINGS_VERSION` (0.1.0).
 
-There is no license file yet.
+License: MIT (see `LICENSE`).
