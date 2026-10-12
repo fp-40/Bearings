@@ -379,6 +379,11 @@ type
     destructor Destroy; override;
 
     { ---- request head (any thread holding the exchange; valid until ReleaseRequest) ---- }
+    { Threading rule for the accessors below: an unshared exchange belongs to
+      its loop thread and may be read only there (builds with assertions
+      check it, DbgLoopOnly); a shared exchange (after Share) may be read
+      by any thread that holds a reference. "Any thread" in the comments
+      of this unit means that. }
     function Method: THttpMethod; inline;
     function MethodBytes: TByteSlice;
     function Target: TByteSlice;                         { request-target as received }
@@ -435,12 +440,23 @@ type
     { the handler failed: no response is written, the connection closes with a user error (Msg) }
     function Fail(const Msg: RawByteString): Boolean;
 
-    { ---- stream writer after BeginStream (any thread) ---- }
-    function Write(P: PByte; Len: SizeInt): TWriteResult;          { off the loop: parks while full }
+    { ---- stream writer after BeginStream (any holder of a shared exchange;
+         the loop thread otherwise) ---- }
+    { On a worker thread Write parks while HighWater bytes are queued. On
+      the loop thread it cannot park (the loop itself drains the queue), so
+      there it behaves like TryWrite and returns wrWouldBlock when full. }
+    function Write(P: PByte; Len: SizeInt): TWriteResult;
     function TryWrite(P: PByte; Len: SizeInt): TWriteResult;       { never blocks: wrWouldBlock }
     function WriteString(const S: RawByteString): TWriteResult;    { keeps one reference, no copy }
-    function Finish(Trailers: THttpHeaders = nil): Boolean;        { trailers copied; sent if allowed }
-    procedure AbortStream(const Msg: RawByteString);               { body error: no last chunk }
+    { Ends the stream. Trailers are copied; they are sent only when the
+      response is chunked, the request carried "TE: trailers", and the
+      names were announced in the response's Trailer header; otherwise
+      they are dropped. }
+    function Finish(Trailers: THttpHeaders = nil): Boolean;
+    { Ends the stream with a body error: no last chunk is written, so the
+      client sees a truncated body. Msg becomes the connection's error
+      text, reported to the observer when the connection closes. }
+    procedure AbortStream(const Msg: RawByteString);
 
     { ---- upgrades ---- }
     procedure OnUpgrade(H: TUpgradeHandler);                       { loop thread, before answering }
@@ -452,8 +468,8 @@ type
     function Share: TExchange;      { loop thread: switch to shared mode, +1 reference (atomic) }
     procedure Release;              { any thread, after Share; last release posts the recycle }
     procedure Wake;                 { re-run the owning connection: local Wake, or Post if shared }
-    function IsCanceled: Boolean;   { any thread }
-    function Answered: Boolean;     { any thread }
+    function IsCanceled: Boolean;   { any holder of a shared exchange; the loop thread otherwise }
+    function Answered: Boolean;     { any holder of a shared exchange; the loop thread otherwise }
     procedure SetBodyErrorText(const Msg: RawByteString);          { cold; for TBodySource }
     function Loop: TLoop; inline;
     property User: TObject read FUser write FUser;                 { per-request application state }

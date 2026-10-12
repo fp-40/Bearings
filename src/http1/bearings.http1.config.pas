@@ -82,8 +82,8 @@ type
       limit, the head is limited only by MaxBufSize. }
     MaxHeaderSize: SizeInt;
     { The largest the read buffer may grow (bearings.http1.io). A request head
-      must fit in it. -1: DEFAULT_MAX_BUFFER_SIZE (about 400 KiB); the
-      minimum is 8192. }
+      must fit in it. -1: DEFAULT_MAX_BUFFER_SIZE (417 792 bytes, 408 KiB);
+      the minimum is 8192. }
     MaxBufSize: SizeInt;
     { True: the connection may arm timers on its loop. Timeouts need it. }
     Timer: Boolean;
