@@ -1,0 +1,29 @@
+# Test tooling only (never shipped).
+#
+# Runs hyper v1.12.0's own src/proto/h1/decode.rs and src/headers.rs
+# (commit 7f67699ce32d717081deb7018b4da7d679277ac0, copied byte-for-byte to
+# src/proto/h1/decode.rs and src/headers.rs) over random cases and writes
+# hyper's results, so test_codec_diff.pas can compare bearings.http1.decode and
+# bearings.http.headers with them. See test_codec_diff.sh.
+[package]
+name = "test_codec_diff_rs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+# the cfg(feature = ...) gates used inside the copied hyper files
+default = ["http1", "server", "client", "http2"]
+http1 = []
+server = []
+client = []
+http2 = []
+
+[dependencies]
+bytes = "1.2"
+http = "1"
+http-body = "1"
+futures-core = "0.3.31"
+httparse = "=1.10.1"
+
+[workspace]

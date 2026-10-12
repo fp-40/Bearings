@@ -1,0 +1,435 @@
+{
+  "description": "hyper v1.12.0 tests/server.rs (chunk3): HTTP/1.0 responses, URI length, graceful shutdown, half-close, header read timeout, upgrades/CONNECT, parse errors.",
+  "cases": [
+    {
+      "name": "http_10_request_receives_http_10_response",
+      "source": "tests/server.rs:1169",
+      "notes": "serve() fixture, no reply queued (default reply: 200, empty body). The request is HTTP/1.0 with no Host header. hyper asserts that the first read (256-byte buffer) returns at least 36 bytes and starts with 'HTTP/1.0 200 OK\\r\\ncontent-length: 0\\r\\n': the response version follows the request version, and content-length is the first header. The check runs on the test thread (enforced). No server-side assertion: serve() runs serve_connection(..).unwrap() in a spawned task.",
+      "server": {"handler": "test_service"},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.0\r\n\r\n"},
+        {"op": "read_once", "max": 256, "expect": [
+          {"starts_with": "HTTP/1.0 200 OK\r\ncontent-length: 0\r\n"}
+        ]}
+      ]
+    },
+    {
+      "name": "http_11_uri_too_long",
+      "source": "tests/server.rs:1189",
+      "notes": "serve() fixture. Request-target is '/' + 65534 'a' (65535 bytes), one over MAX_URI_LEN (role.rs:34). hyper asserts n >= expected.len() and the read starts with the expected prefix, including header order.",
+      "server": {"handler": "test_service"},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": ["GET /", {"repeat": "a", "count": 65534}, " HTTP/1.1\r\n\r\n"]},
+        {"op": "read_once", "max": 256, "expect": [
+          {"starts_with": "HTTP/1.1 414 URI Too Long\r\nconnection: close\r\ncontent-length: 0\r\n"}
+        ]}
+      ]
+    },
+    {
+      "name": "disable_keep_alive_mid_request",
+      "source": "tests/server.rs:1206",
+      "notes": "HelloWorld service. hyper runs this over an in-memory duplex; TCP is equivalent for the server. The client writes the request line only; the test then calls graceful_shutdown() on the connection and only after that lets the client write the rest of the head. In hyper the server has already read the partial line when graceful_shutdown() runs, because try_select polls the connection before rx1. Here the server spec sets bytes_read_events, and the case waits for the bytes_read event with total 16 (all of 'GET / HTTP/1.1\\r\\n' is in the HTTP layer's read buffer) before sending the graceful_shutdown control command. Without that wait, a shutdown that arrives before any byte is read closes the connection with no response (SPEC 6.2). Client checks (enforced, the client task is awaited): read_to_end starts with 'HTTP/1.1 200 OK\\r\\n' and contains 'connection: close\\r\\n'. Server check (enforced): the connection future resolves Ok -> conn_close outcome ok.",
+      "server": {"handler": "hello_world", "bytes_read_events": true},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\n"},
+        {"op": "await_event", "match": {"event": "bytes_read", "conn": 1, "total": 16}, "comment": "hyper: the connection has polled the partial request line before rx1 (16 bytes)"},
+        {"op": "control", "command": "graceful_shutdown"},
+        {"op": "write", "data": "Host: localhost\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"starts_with": "HTTP/1.1 200 OK\r\n"},
+          {"contains": "connection: close\r\n"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "ok"}
+      ]
+    },
+    {
+      "name": "disable_keep_alive_post_request",
+      "source": "tests/server.rs:1260",
+      "notes": "HelloWorld service. The client sends one keep-alive request and reads until the bytes end with 'hello'. Then the test calls graceful_shutdown() on the idle connection, and the client's next read (1024-byte buffer) must return 0 (EOF, not an error). The client thread is joined (enforced). Server checks (enforced, main task): try_select(server, rx1) panics with 'expected rx first' if the connection future completes before the client signals, so the server must keep the connection open after the response; and the connection future resolves Ok -> conn_close outcome ok. The first check is encoded as expect_open for 100 ms after the response, with no bytes received (the window length is a port decision: a correct keep-alive server keeps the connection open indefinitely, and a server that closes after the response sends its FIN within milliseconds). The DebugStream/Dropped assertions (transport dropped only after the connection future completes) are in-process API checks with no wire equivalent beyond the EOF.",
+      "server": {"handler": "hello_world"},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "hello"}},
+        {"op": "expect_open", "for_ms": 100, "expect": [{"len": 0}], "comment": "hyper: 'expected rx first', the connection is still open when the client signals"},
+        {"op": "control", "command": "graceful_shutdown"},
+        {"op": "read_once", "max": 1024, "expect": [{"len": 0}, {"end": "eof"}]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "ok"}
+      ]
+    },
+    {
+      "name": "http1_allow_half_close",
+      "source": "tests/server.rs:1403",
+      "notes": "http1::Builder::half_close(true). The service ignores the request, sleeps 500 ms, then returns 200 with an empty body (reply: read_body false, delay_ms 500). The client sends the request, shuts down its write side (FIN), and one read (256-byte buffer, 1 s timeout) must start with 'HTTP/1.1 200 OK\\r\\n'. The client thread is joined (enforced). Server check (enforced): serve_connection(..).await.unwrap() -> conn_close outcome ok. Port decision: in hyper the 500 ms sleep is test code, so the client's FIN always reaches the server while the handler is busy, which is the situation half_close(true) is about. Here the sleep is the server's delay_ms, so the read step also has a timing window (425..1000 ms after connect, SPEC 13). Without it, a server that ignores delay_ms answers before the FIN matters and passes; the dumb-server mutation check (MANIFEST.md) found exactly that.",
+      "server": {
+        "config": {"half_close": true},
+        "handler": "test_service",
+        "replies": [{"read_body": false, "delay_ms": 500}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "shutdown_write"},
+        {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 200 OK\r\n"}],
+         "timing": {"since": "connect", "min_ms": 425, "max_ms": 1000},
+         "comment": "timing window is a port decision (SPEC 13): it checks that the server's handler really slept 500 ms, so the FIN reached the server while the request was in progress"}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "ok"}
+      ]
+    },
+    {
+      "name": "disconnect_after_reading_request_before_responding",
+      "source": "tests/server.rs:1437",
+      "notes": "http1::Builder::half_close(false) (set explicitly, same as the default). hyper's service sleeps 2 s and then panics with 'response future should have been dropped'; here the reply sleeps 2 s and would then respond, and that is caught by handler_dropped being required and handler_done being forbidden. The client sends the request and drops the socket (close; no unread data, so FIN). Server check (enforced): serve_connection(..).await.expect_err -> the connection ends with an error. hyper only asserts Err; the outcome class 'incomplete' is what hyper produces (conn.rs:497-506, EOF read while busy with half_close false -> Error::new_incomplete), confirmed against the reference server. The client makes no wire assertion.",
+      "server": {
+        "config": {"half_close": false},
+        "handler": "test_service",
+        "replies": [{"read_body": false, "delay_ms": 2000}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "close"}
+      ],
+      "expect_events": [
+        {"event": "request", "req": 1},
+        {"event": "handler_dropped", "req": 1},
+        {"event": "conn_close", "outcome": "incomplete"}
+      ],
+      "forbid_events": [
+        {"event": "handler_done"}
+      ]
+    },
+    {
+      "name": "returning_1xx_response_is_error",
+      "source": "tests/server.rs:1464",
+      "notes": "The service ignores the request and returns status 100 (Continue) with an empty body as its final response (reply: status 100, read_body false). Client check: one read (256-byte buffer) starts with 'HTTP/1.1 500 '. That check runs in an unjoined thread in hyper (not enforced); encoded as intended and confirmed against the reference server. Server check (enforced): serve_connection(..).await.expect_err('1xx status code should error'). hyper only asserts Err; the outcome class 'user' (user unsupported status code, role.rs:411-416) is what hyper produces, confirmed against the reference server.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{"status": 100, "read_body": false}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 500 "}]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "user"}
+      ]
+    },
+    {
+      "name": "header_name_too_long",
+      "source": "tests/server.rs:1496",
+      "notes": "serve() fixture. Request: 'GET / HTTP/1.1\\r\\n' + 65536 'x' + ': foo\\r\\n\\r\\n' (65561 bytes, under the default max_buf_size 417792). A header name of 65536 bytes or more is Parse::TooLarge (role.rs record_header_indices), answered with 431. hyper asserts one read (1024-byte buffer) starts with 'HTTP/1.1 431 Request Header Fields Too Large\\r\\n' (enforced, test thread). No server-side assertion: serve() runs serve_connection(..).unwrap() in a spawned task.",
+      "server": {"handler": "test_service"},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": ["GET / HTTP/1.1\r\n", {"repeat": "x", "count": 65536}, ": foo\r\n\r\n"]},
+        {"op": "read_once", "max": 1024, "expect": [
+          {"starts_with": "HTTP/1.1 431 Request Header Fields Too Large\r\n"}
+        ]}
+      ]
+    },
+    {
+      "name": "header_read_timeout_slow_writes",
+      "source": "tests/server.rs:1513",
+      "notes": "http1::Builder with timer + header_read_timeout(5 s), driven with without_shutdown(). The service would return 200 with an empty body; it is never called. hyper's client timeline: t=0 'GET / HTTP/1.1\\r\\n'; t=3 s 'Something: 1\\r\\n'; t=9 s 'Works: 0\\r\\n\\r\\n' with expect_err. That client thread is not joined (not enforced), and on Linux the first write after the peer's FIN succeeds, so the literal expect_err does not hold even against hyper (the reference server accepts this write: result ok). The intended client assertion, 'the server has closed the connection before t=9 s', is encoded as a read_to_eof after write 2 whose per-read timeout ends at t=9 s, with no response bytes (hyper returns Err(new_header_timeout) from poll_read_head without writing a response, conn.rs:262-270). The timing window 4250..5500 ms after connect is a port decision (SPEC 13), not a hyper assertion: the timer starts at the first head read after accept and is not reset by partial data (conn.rs:224-238); the reference closes at about 5000 ms. Write 3 is kept with may_fail. Server check (enforced): without_shutdown().await.expect_err('header timeout'); hyper only asserts Err; the class 'timeout' is what hyper produces. The request event is forbidden because the head never completes before the timeout.",
+      "server": {
+        "config": {"timer": true, "header_read_timeout_ms": 5000, "conn_mode": "without_shutdown"},
+        "handler": "test_service",
+        "replies": [{"read_body": false}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\n"},
+        {"op": "sleep", "ms": 3000},
+        {"op": "write", "data": "Something: 1\r\n"},
+        {"op": "read_to_eof", "timeout_ms": 6000, "allow_reset": true,
+         "timing": {"since": "connect", "min_ms": 4250, "max_ms": 5500},
+         "expect": [{"len": 0}, {"end": "closed"}]},
+        {"op": "sleep", "ms": 4000, "comment": "hyper's client writes the rest of the head at t=9 s"},
+        {"op": "write", "data": "Works: 0\r\n\r\n", "may_fail": true}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "timeout"}
+      ],
+      "forbid_events": [
+        {"event": "request"}
+      ]
+    },
+    {
+      "name": "header_read_timeout_starts_immediately",
+      "source": "tests/server.rs:1560",
+      "notes": "http1::Builder with timer + header_read_timeout(2s), unreachable_service. Client connects, sends nothing, sleeps 3 s, reads: expects 0 (EOF). That client check runs in an unjoined thread in hyper (not enforced); it is encoded here as intended and confirmed against the reference server. The enforced check is conn.await -> Err with is_timeout(), encoded as conn_close outcome 'timeout'.",
+      "server": {
+        "config": {"timer": true, "header_read_timeout_ms": 2000},
+        "handler": "unreachable"
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "sleep", "ms": 3000},
+        {"op": "read_once", "max": 256, "expect": [{"len": 0}, {"end": "eof"}]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "timeout"}
+      ],
+      "forbid_events": [
+        {"event": "request"}
+      ]
+    },
+    {
+      "name": "header_read_timeout_slow_writes_multiple_requests",
+      "source": "tests/server.rs:1581",
+      "notes": "http1::Builder with timer + header_read_timeout(5 s), driven with without_shutdown(); the service ignores the request and returns 200 with an empty body. hyper's client never reads. Its timeline: t=0 'GET / HTTP/1.1\\r\\n'; t=3 'Something: 1\\r\\n\\r\\n' (request 1 complete); t=6 'GET / HTTP/1.1\\r\\n'; t=9 'Something: 1\\r\\n\\r\\n'; t=15 'GET / HTTP/1.1\\r\\nSomething: 1\\r\\n'; t=21 'Works: 0\\r\\n\\r\\n\\n        ' with expect_err (writes 1-5 use expect). Only the server check is enforced: without_shutdown().await.unwrap_err().is_timeout() -> conn_close outcome 'timeout'. The client script's implied expectations (request 2 completes, the timeout hits request 3) do NOT match hyper: the header timer restarts when the connection goes back to reading a head after response 1 (conn.rs:224-238), so it fires at about t=8 while request 2 is incomplete. Measured against the reference server: the connection closes 5001 ms after write 2, only request 1 reaches the service, write 4 at t=9 succeeds (first write after FIN), and write 5 at t=15 fails (so hyper's own unjoined thread panics at expect('write 5')). This case encodes the reference behavior: the timeline up to write 4; after write 3, read_to_eof gets response 1 (unread since t=3) and then EOF, with nothing after response 1 (no response to request 2). Port decisions (SPEC 13 and catalog port note): reading response 1 and the timing window 4250..5500 ms after write 2. Writes 5 and 6 are omitted: they only exercise the client kernel's behavior on a socket the server has closed. Write 4 is kept with may_fail.",
+      "server": {
+        "config": {"timer": true, "header_read_timeout_ms": 5000, "conn_mode": "without_shutdown"},
+        "handler": "test_service",
+        "replies": [{"read_body": false}, {"read_body": false}, {"read_body": false}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\n"},
+        {"op": "sleep", "ms": 3000},
+        {"op": "write", "data": "Something: 1\r\n\r\n", "mark": "request_1_sent"},
+        {"op": "sleep", "ms": 3000},
+        {"op": "write", "data": "GET / HTTP/1.1\r\n"},
+        {"op": "read_to_eof", "timeout_ms": 3000, "allow_reset": true,
+         "timing": {"since": "request_1_sent", "min_ms": 4250, "max_ms": 5500},
+         "expect": [
+           {"starts_with": "HTTP/1.1 200 OK\r\n"},
+           {"scope": "after_head", "len": 0},
+           {"end": "closed"}
+         ]},
+        {"op": "sleep", "ms": 1000, "comment": "hyper's client writes the rest of request 2 at t=9 s"},
+        {"op": "write", "data": "Something: 1\r\n\r\n", "may_fail": true}
+      ],
+      "expect_events": [
+        {"event": "request", "req": 1},
+        {"event": "conn_close", "outcome": "timeout"}
+      ],
+      "forbid_events": [
+        {"event": "request", "req": 2}
+      ]
+    },
+    {
+      "name": "header_read_timeout_as_idle_timeout",
+      "source": "tests/server.rs:1657",
+      "notes": "http1::Builder with timer + header_read_timeout(3 s), driven with without_shutdown(); the service ignores the request and returns 200 with an empty body. hyper's client sends request 1, never reads, sleeps 6 s, and writes request 2 with expect_err. That client thread is not joined (not enforced), and on Linux the first write after the peer's FIN succeeds, so the literal expect_err does not hold against hyper (the reference server accepts the write: result ok). The intended client assertion, 'the idle connection is closed before t=6 s', is encoded as read_to_eof after request 1 (per-read timeout 6 s): the capture is response 1 followed by EOF, with nothing after response 1. Reading response 1 and the timing window 2550..3500 ms after connect are port decisions (SPEC 13, catalog port note): the header timer restarts when the connection waits for the next head, so it acts as a keep-alive idle timeout (conn.rs:224-238); the reference closes about 3000 ms after response 1. Request 2 is still written at t=6 s with may_fail. Server check (enforced): without_shutdown().await.unwrap_err().is_timeout() -> conn_close outcome 'timeout'.",
+      "server": {
+        "config": {"timer": true, "header_read_timeout_ms": 3000, "conn_mode": "without_shutdown"},
+        "handler": "test_service",
+        "replies": [{"read_body": false}, {"read_body": false}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "read_to_eof", "timeout_ms": 6000, "allow_reset": true,
+         "timing": {"since": "connect", "min_ms": 2550, "max_ms": 3500},
+         "expect": [
+           {"starts_with": "HTTP/1.1 200 OK\r\n"},
+           {"scope": "after_head", "len": 0},
+           {"end": "closed"}
+         ]},
+        {"op": "sleep", "ms": 3000, "comment": "hyper's client writes request 2 at t=6 s"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n", "may_fail": true}
+      ],
+      "expect_events": [
+        {"event": "request", "req": 1},
+        {"event": "conn_close", "outcome": "timeout"}
+      ],
+      "forbid_events": [
+        {"event": "request", "req": 2}
+      ]
+    },
+    {
+      "name": "upgrades",
+      "source": "tests/server.rs:1701",
+      "notes": "Older upgrade API: serve_connection(..).without_shutdown() returns Parts {io, read_buf}. The service ignores the request (no upgrade::on, body not read) and returns 101 with 'upgrade: foobar'. The upgrade actions run on Parts.io (on_upgrade false). The 'read_101' signal stands in for hyper's oneshot: the server writes 'foo=bar' only after the client has read the 101. Client checks (first read starts with 'HTTP/1.1 101 Switching Protocols\\r\\n', second read == 'foo=bar') run in an unjoined thread, but they are enforced indirectly: a failed first check panics before tx.send, so the dropped sender makes the main task's rx.await.unwrap() panic; a failed second check panics before the client writes 'bar=foo', so the server's read_to_end assertion fails. Encoded as written and confirmed against the reference server. Server checks (enforced): without_shutdown().await.unwrap() -> conn_close ok; parts.read_buf == 'eagerly optimistic'; read_to_end of the raw socket == 'bar=foo'.",
+      "server": {
+        "config": {"conn_mode": "without_shutdown"},
+        "handler": "test_service",
+        "replies": [
+          {
+            "status": 101,
+            "headers": [["upgrade", "foobar"]],
+            "read_body": false,
+            "upgrade": {"on_upgrade": false, "await_signal": "read_101", "write": "foo=bar", "read_to_eof": true}
+          }
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nUpgrade: foobar\r\nConnection: upgrade\r\n\r\neagerly optimistic"},
+        {"op": "read_once", "max": 256, "expect": [
+          {"starts_with": "HTTP/1.1 101 Switching Protocols\r\n"}
+        ]},
+        {"op": "control", "command": "signal", "name": "read_101"},
+        {"op": "read_once", "max": 256, "expect": [{"equals": "foo=bar"}]},
+        {"op": "write", "data": "bar=foo"},
+        {"op": "close"}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "ok"},
+        {"event": "upgraded", "read_buf": "eagerly optimistic"},
+        {"event": "upgrade_read", "data": "bar=foo", "end": "eof"}
+      ]
+    },
+    {
+      "name": "http_connect",
+      "source": "tests/server.rs:1757",
+      "notes": "Older upgrade API (without_shutdown() -> Parts). Request: 'CONNECT localhost:80 HTTP/1.1' followed by tunnel bytes 'eagerly optimistic'. The service ignores the request and returns 200 with an empty body. The upgrade actions run on Parts.io (on_upgrade false); the 'read_200' signal stands in for hyper's oneshot (server writes 'foo=bar' only after the client has read the 200). Client checks (first read starts with 'HTTP/1.1 200 OK\\r\\n', second read == 'foo=bar') run in an unjoined thread, but they are enforced indirectly: a failed first check panics before tx.send, so the main task's rx.await.unwrap() panics; a failed second check means the client never writes 'bar=foo', so the server's read_to_end assertion fails. Encoded as written and confirmed against the reference server. hyper does not check the 200 head for content-length/transfer-encoding here, so this case does not either. Server checks (enforced): without_shutdown().await.unwrap() -> conn_close ok; parts.read_buf == 'eagerly optimistic'; read_to_end == 'bar=foo'.",
+      "server": {
+        "config": {"conn_mode": "without_shutdown"},
+        "handler": "test_service",
+        "replies": [
+          {
+            "status": 200,
+            "read_body": false,
+            "upgrade": {"on_upgrade": false, "await_signal": "read_200", "write": "foo=bar", "read_to_eof": true}
+          }
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "CONNECT localhost:80 HTTP/1.1\r\n\r\neagerly optimistic"},
+        {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 200 OK\r\n"}]},
+        {"op": "control", "command": "signal", "name": "read_200"},
+        {"op": "read_once", "max": 256, "expect": [{"equals": "foo=bar"}]},
+        {"op": "write", "data": "bar=foo"},
+        {"op": "close"}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "ok"},
+        {"event": "upgraded", "read_buf": "eagerly optimistic"},
+        {"event": "upgrade_read", "data": "bar=foo", "end": "eof"}
+      ]
+    },
+    {
+      "name": "upgrades_new",
+      "source": "tests/server.rs:1810",
+      "notes": "serve_connection(...).with_upgrades(); the service calls hyper::upgrade::on(req) and returns 101 + upgrade: foobar without polling the body. The 'read_101' signal stands in for hyper's read_101 oneshot: the server writes foo=bar only after the client has read the 101. Client-side checks (101 prefix, no content-length in the head, second read == 'foo=bar') run in an unjoined thread, but they are enforced indirectly: a failed 101 or content-length check panics before read_101_tx.send, so the main task's read_101_rx.await.unwrap() panics; a failed second read means the client never writes 'bar=foo', so the server's read_to_end assertion fails. Encoded as written (has_header check made case-insensitive per the catalog port note and SPEC 14) and confirmed against the reference server. Enforced server-side checks: conn future Ok, upgraded read_buf == 'eagerly optimistic', read_to_end == 'bar=foo'.",
+      "server": {
+        "config": {"conn_mode": "with_upgrades"},
+        "handler": "test_service",
+        "replies": [
+          {
+            "status": 101,
+            "headers": [["upgrade", "foobar"]],
+            "read_body": false,
+            "upgrade": {"on_upgrade": true, "await_signal": "read_101", "write": "foo=bar", "read_to_eof": true}
+          }
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nUpgrade: foobar\r\nConnection: upgrade\r\n\r\neagerly optimistic"},
+        {"op": "read_once", "max": 256, "expect": [
+          {"starts_with": "HTTP/1.1 101 Switching Protocols\r\n"},
+          {"scope": "head", "not_contains": "content-length", "ci": true}
+        ]},
+        {"op": "control", "command": "signal", "name": "read_101"},
+        {"op": "read_once", "max": 256, "expect": [{"equals": "foo=bar"}]},
+        {"op": "write", "data": "bar=foo"},
+        {"op": "close"}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "ok"},
+        {"event": "upgraded", "read_buf": "eagerly optimistic"},
+        {"event": "upgrade_read", "data": "bar=foo", "end": "eof"}
+      ]
+    },
+    {
+      "name": "upgrades_ignored",
+      "source": "tests/server.rs:1879",
+      "notes": "Server: serve_connection(..).with_upgrades(). The service asserts req.headers()['upgrade'] == 'yolo' and returns 200 with an empty body; it never calls upgrade::on and drops the body unread. The client is hyper client::conn::http1 (TestClient), one new TCP connection per request. Its bytes: absolute-form 'GET http://127.0.0.1:<port>/ HTTP/1.1', headers in insertion order and lowercase (upgrade: yolo, connection: upgrade), no Host, no content-length (empty body). Client checks (enforced, test body): both responses have status 200. A panic in the service would fail the request, so the upgrade header check is enforced too: encoded as the request event pattern. After each response the TestClient drops its sender, and the client connection shuts down; this is the close step. The server task's expect('server task') runs in a spawned task (not enforced); encoded as conn_close ok for both connections and confirmed against the reference server. The await_event after the first close orders conn 1's close before conn 2's events (harness synchronization only; hyper does not wait for it).",
+      "server": {
+        "config": {"conn_mode": "with_upgrades"},
+        "handler": "test_service",
+        "replies": [{"read_body": false}, {"read_body": false}]
+      },
+      "steps": [
+        {"op": "connect", "conn": "c1"},
+        {"op": "write", "conn": "c1", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\nupgrade: yolo\r\nconnection: upgrade\r\n\r\n"},
+        {"op": "read_response", "conn": "c1", "expect": [{"status": 200}]},
+        {"op": "close", "conn": "c1"},
+        {"op": "await_event", "match": {"event": "conn_close", "conn": 1}},
+        {"op": "connect", "conn": "c2"},
+        {"op": "write", "conn": "c2", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\nupgrade: yolo\r\nconnection: upgrade\r\n\r\n"},
+        {"op": "read_response", "conn": "c2", "expect": [{"status": 200}]},
+        {"op": "close", "conn": "c2"}
+      ],
+      "expect_events": [
+        {"event": "request", "conn": 1, "headers": {"$includes": [["upgrade", "yolo"]]}},
+        {"event": "conn_close", "conn": 1, "outcome": "ok"},
+        {"event": "request", "conn": 2, "headers": {"$includes": [["upgrade", "yolo"]]}},
+        {"event": "conn_close", "conn": 2, "outcome": "ok"}
+      ]
+    },
+    {
+      "name": "http_connect_new",
+      "source": "tests/server.rs:1922",
+      "notes": "Newer upgrade API: the service calls hyper::upgrade::on(req) and returns 200 with an empty body; serve_connection(..).with_upgrades(). Request: 'CONNECT localhost HTTP/1.1' (authority-form without a port) followed by tunnel bytes 'eagerly optimistic'. The 'read_200' signal stands in for hyper's read_200 oneshot. Client checks (first read starts with 'HTTP/1.1 200 OK\\r\\n', second read == 'foo=bar') run in an unjoined thread, but they are enforced indirectly: a failed first check panics before read_200_tx.send, so the main task's read_200_rx.await.unwrap() panics; a failed second read means the client never writes 'bar=foo', so the server's read_to_end assertion fails. Encoded as written and confirmed against the reference server. Server checks (enforced): with_upgrades().await.unwrap() -> conn_close ok; upgraded read_buf == 'eagerly optimistic'; read_to_end == 'bar=foo'.",
+      "server": {
+        "config": {"conn_mode": "with_upgrades"},
+        "handler": "test_service",
+        "replies": [
+          {
+            "status": 200,
+            "read_body": false,
+            "upgrade": {"on_upgrade": true, "await_signal": "read_200", "write": "foo=bar", "read_to_eof": true}
+          }
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "CONNECT localhost HTTP/1.1\r\n\r\neagerly optimistic"},
+        {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 200 OK\r\n"}]},
+        {"op": "control", "command": "signal", "name": "read_200"},
+        {"op": "read_once", "max": 256, "expect": [{"equals": "foo=bar"}]},
+        {"op": "write", "data": "bar=foo"},
+        {"op": "close"}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "ok"},
+        {"event": "upgraded", "read_buf": "eagerly optimistic"},
+        {"event": "upgrade_read", "data": "bar=foo", "end": "eof"}
+      ]
+    },
+    {
+      "name": "parse_errors_send_4xx_response",
+      "source": "tests/server.rs:2669",
+      "notes": "HelloWorld service. Request line 'GE T / HTTP/1.1'. httparse 1.10.1 (the version the harness Cargo.lock resolves, same as the vendored clone) reads method 'GE' and target 'T', then fails on the version field '/ HTTP/1.1'; hyper reports Parse::Version (reference detail: 'invalid HTTP version parsed'), mapped to 400. Client check: one read (256-byte buffer) starts with 'HTTP/1.1 400 '. That check runs in an unjoined thread in hyper (not enforced); encoded as intended and confirmed against the reference server. Server check (enforced): serve_connection(..).await.expect_err('HTTP parse error'). hyper only asserts Err; the class 'parse' is what hyper produces, confirmed against the reference server.",
+      "server": {"handler": "hello_world"},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GE T / HTTP/1.1\r\n\r\n"},
+        {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 400 "}]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "parse"}
+      ]
+    },
+    {
+      "name": "illegal_request_length_returns_400_response",
+      "source": "tests/server.rs:2691",
+      "notes": "HelloWorld service. Request 'POST / HTTP/1.1' with 'Content-Length: foo' (Parse::Header(ContentLengthInvalid), mapped to 400). Client check: one read (256-byte buffer) starts with 'HTTP/1.1 400 '. That check runs in an unjoined thread in hyper (not enforced); encoded as intended and confirmed against the reference server. Server check (enforced): serve_connection(..).await.expect_err('illegal Content-Length should error'). hyper only asserts Err; the class 'parse' is what hyper produces, confirmed against the reference server.",
+      "server": {"handler": "hello_world"},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\nContent-Length: foo\r\n\r\n"},
+        {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 400 "}]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "parse"}
+      ]
+    }
+  ]
+}

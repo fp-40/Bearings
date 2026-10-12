@@ -1,0 +1,24 @@
+[package]
+name = "hyper-tfb"
+version = "0.1.0"
+edition = "2021"
+publish = false
+# TFB frameworks/Rust/hyper (57d92fb) main.rs + plaintext.rs, DB routes removed,
+# hyper pinned to v1.12.0 (rev 7f67699) like the conformance reference server.
+
+[dependencies]
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"], default-features = false }
+hyper-util = { version = "0.1.10", features = ["http1", "server", "service", "tokio"] }
+num_cpus = "1.16.0"
+socket2 = { version = "0.5.8", features = ["all"] }
+tokio = { version = "1.44.2", features = ["rt", "rt-multi-thread", "net", "time"] }
+
+[patch.crates-io]
+hyper = { git = "https://github.com/hyperium/hyper", rev = "7f67699ce32d717081deb7018b4da7d679277ac0" }
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = true

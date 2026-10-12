@@ -1,0 +1,38 @@
+# Test tooling only (never shipped).
+#
+# Runs hyper v1.12.0's own src/proto/h1/role.rs (Server::parse,
+# Server::encode) over generated cases and writes hyper's results, so
+# test_role_diff.pas can compare bearings.http1.role and bearings.http.uri with them.
+# role.rs, encode.rs, headers.rs, body/length.rs and ext/h1_reason_phrase.rs
+# are copied byte-for-byte from hyper (commit
+# 7f67699ce32d717081deb7018b4da7d679277ac0). The other modules are reduced
+# copies of hyper's parent-module items those files import; common/date.rs
+# is a stub that writes a fixed date. See test_role_diff.sh.
+[package]
+name = "test_role_diff_rs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+# the cfg(feature = ...) gates used inside the copied hyper files:
+# server side only, as in bearings.http1.role
+default = ["http1", "server"]
+http1 = []
+server = []
+client = []
+http2 = []
+ffi = []
+tracing = []
+
+[dependencies]
+bytes = "1.2"
+http = "=1.5.0"
+httparse = "=1.10.1"
+itoa = "1"
+smallvec = { version = "1.12", features = ["const_generics", "const_new"] }
+
+[profile.release]
+debug-assertions = false
+
+[workspace]

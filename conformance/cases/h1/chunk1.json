@@ -1,0 +1,387 @@
+{
+  "description": "hyper v1.12.0 tests/server.rs (chunk1): GET body handling, response_body_lengths::*, custom reason phrase, keep-alive after a chunked response, POST Content-Length. All assertions in these tests run on the test's main thread (no unjoined client threads). The serve() fixture's serve_connection(..).await.unwrap() runs in a spawned task whose panic is never observed, so no case asserts the connection outcome.",
+  "cases": [
+    {
+      "name": "get_should_ignore_body",
+      "source": "tests/server.rs:38",
+      "notes": "serve() fixture, default reply. hyper asserts: one read() of up to 256 bytes returns Ok (an RST or a 1 s timeout would fail the unwrap; Ok(0) would pass), and server.body() == b\"\" (the first body the TestService read). The bytes after the head are not body (GET without Content-Length/Transfer-Encoding) and, with Connection: close, are not parsed as a second request (not asserted).",
+      "server": {"handler": "test_service", "replies": [{}]},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\nI shouldn't be read.\r\n"},
+        {"op": "read_once", "max": 256}
+      ],
+      "expect_events": [
+        {"event": "request_body", "conn": 1, "req": 1, "body": ""}
+      ]
+    },
+    {
+      "name": "get_with_body",
+      "source": "tests/server.rs:59",
+      "notes": "serve() fixture, default reply. hyper asserts: one read() of up to 256 bytes returns Ok, and server.body() == \"I'm a good request.\" (19 bytes: Content-Length frames the GET body, the trailing CRLF is not body). What the server does with the leftover CRLF on the keep-alive connection is not asserted.",
+      "server": {"handler": "test_service", "replies": [{}]},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nContent-Length: 19\r\n\r\nI'm a good request.\r\n"},
+        {"op": "read_once", "max": 256}
+      ],
+      "expect_events": [
+        {"event": "request_body", "conn": 1, "req": 1, "body": "I'm a good request."}
+      ]
+    },
+    {
+      "name": "response_body_lengths::fixed_response_known",
+      "source": "tests/server.rs:181",
+      "notes": "run_test (tests/server.rs:94-178): GET HTTP/1.1 with Connection: close, read_to_string to EOF. body.find(\"\\r\\n\\r\\n\").unwrap() -> contains CRLFCRLF. has_header = substring of the text before the first CRLFCRLF -> scope head. expects_chunked=false: no 'transfer-encoding:' and no 'chunked\\r\\n'; expects_con_len=true: 'content-length:' present (case-sensitive, as in hyper). Body after the head == 'foo bar baz'. Port decision: the not_contains checks add ci:true (hyper's check is case-sensitive; ci is stricter and states the intent that no such header appears in any case; hyper passes both).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "11"]], "body": {"known": "foo bar baz"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "not_contains": "transfer-encoding:", "ci": true},
+          {"scope": "head", "not_contains": "chunked\r\n", "ci": true},
+          {"scope": "head", "contains": "content-length:"},
+          {"scope": "after_head", "equals": "foo bar baz"}
+        ]}
+      ]
+    },
+    {
+      "name": "response_body_lengths::fixed_response_unknown",
+      "source": "tests/server.rs:192",
+      "notes": "run_test (tests/server.rs:94-178), see fixed_response_known. Reply: content-length: 11 header with an Unknown (streamed, no size hint) body 'foo bar baz' (stream::once). The server must frame the stream with the user's Content-Length, not chunked. Asserts: CRLFCRLF present; head has no 'transfer-encoding:' / 'chunked\\r\\n', has 'content-length:'; body after the head == 'foo bar baz'. not_contains checks add ci:true (port decision, see fixed_response_known).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "11"]], "body": {"stream": [{"data": "foo bar baz"}]}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "not_contains": "transfer-encoding:", "ci": true},
+          {"scope": "head", "not_contains": "chunked\r\n", "ci": true},
+          {"scope": "head", "contains": "content-length:"},
+          {"scope": "after_head", "equals": "foo bar baz"}
+        ]}
+      ]
+    },
+    {
+      "name": "response_body_lengths::fixed_response_known_empty",
+      "source": "tests/server.rs:203",
+      "notes": "run_test (tests/server.rs:94-178), see fixed_response_known. Reply: content-length: 0 header, Known body '' (Full::new of empty bytes). Asserts: CRLFCRLF present; head has no 'transfer-encoding:' / 'chunked\\r\\n', has 'content-length:'; body after the head is empty. not_contains checks add ci:true (port decision, see fixed_response_known).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "0"]], "body": {"known": ""}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "not_contains": "transfer-encoding:", "ci": true},
+          {"scope": "head", "not_contains": "chunked\r\n", "ci": true},
+          {"scope": "head", "contains": "content-length:"},
+          {"scope": "after_head", "equals": ""}
+        ]}
+      ]
+    },
+    {
+      "name": "response_body_lengths::chunked_response_known",
+      "source": "tests/server.rs:214",
+      "notes": "run_test (tests/server.rs:94-178), see fixed_response_known. Reply: transfer-encoding: chunked header with a Known body 'foo bar baz' (hyper keeps the user's TE header although the length is known). Asserts: CRLFCRLF present; head has 'transfer-encoding:' and 'chunked\\r\\n', no 'content-length:'. Chunk layout (n = index after the head): body[n+1..n+3] == CRLF (one-character size line), body[n+3..len-7] == 'foo bar baz', body[len-7..] == '\\r\\n0\\r\\n\\r\\n'; the after_head regex encodes exactly these three slices (hex case and digit value are not checked). not_contains check adds ci:true (port decision). Pilot case from the harness author, kept; added the CRLFCRLF and ci checks. Applies to every chunked case in this file: has_header() searches only the text before the first CRLFCRLF, so 'chunked\\r\\n' is found only if the transfer-encoding line is not the last header line. hyper writes date last (role.rs encode_headers), so its TE line is never last. A server that writes TE as the last header line fails hyper's assertion and this case, although its response is valid HTTP.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["transfer-encoding", "chunked"]], "body": {"known": "foo bar baz"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "contains": "transfer-encoding:"},
+          {"scope": "head", "contains": "chunked\r\n"},
+          {"scope": "head", "not_contains": "content-length:", "ci": true},
+          {"scope": "after_head", "regex": "(?s)\\A.\r\nfoo bar baz\r\n0\r\n\r\n\\z"}
+        ]}
+      ]
+    },
+    {
+      "name": "response_body_lengths::chunked_response_known_empty",
+      "source": "tests/server.rs:226",
+      "notes": "run_test (tests/server.rs:94-178), see fixed_response_known. Reply: transfer-encoding: chunked header, Known body ''. hyper still sends chunked framing with only the last chunk. Asserts: CRLFCRLF present; head has 'transfer-encoding:' and 'chunked\\r\\n', no 'content-length:'; body after the head == '0\\r\\n\\r\\n' (empty body_str branch). not_contains check adds ci:true (port decision).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["transfer-encoding", "chunked"]], "body": {"known": ""}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "contains": "transfer-encoding:"},
+          {"scope": "head", "contains": "chunked\r\n"},
+          {"scope": "head", "not_contains": "content-length:", "ci": true},
+          {"scope": "after_head", "equals": "0\r\n\r\n"}
+        ]}
+      ]
+    },
+    {
+      "name": "response_body_lengths::chunked_response_unknown",
+      "source": "tests/server.rs:237",
+      "notes": "run_test (tests/server.rs:94-178), see fixed_response_known and chunked_response_known. Reply: transfer-encoding: chunked header, Unknown (streamed, one data frame) body 'foo bar baz'. Asserts: CRLFCRLF present; head has 'transfer-encoding:' and 'chunked\\r\\n', no 'content-length:'; after the head: one size character, CRLF, 'foo bar baz', then '\\r\\n0\\r\\n\\r\\n'. not_contains check adds ci:true (port decision).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["transfer-encoding", "chunked"]], "body": {"stream": [{"data": "foo bar baz"}]}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "contains": "transfer-encoding:"},
+          {"scope": "head", "contains": "chunked\r\n"},
+          {"scope": "head", "not_contains": "content-length:", "ci": true},
+          {"scope": "after_head", "regex": "(?s)\\A.\r\nfoo bar baz\r\n0\r\n\r\n\\z"}
+        ]}
+      ]
+    },
+    {
+      "name": "response_body_lengths::te_response_adds_chunked",
+      "source": "tests/server.rs:248",
+      "notes": "run_test (tests/server.rs:94-178), see fixed_response_known and chunked_response_known. Reply: transfer-encoding: gzip header (body not actually gzipped), Unknown body 'foo bar baz'. The server must add chunked as the final transfer coding (hyper writes 'transfer-encoding: gzip, chunked'; only the substrings below are asserted). Asserts: CRLFCRLF present; head has 'transfer-encoding:' and 'chunked\\r\\n', no 'content-length:'; chunked body layout as in chunked_response_known. not_contains check adds ci:true (port decision). Observed on the reference (not asserted by hyper): the head is 'transfer-encoding: gzip, chunked\\r\\nconnection: close, chunked\\r\\n': role.rs encode_headers never resets must_write_chunked, so the next multi-valued field written by the same code path (here the connection: close hyper adds for the request's Connection: close) also gets ', chunked' appended. Diff mode compares these bytes.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["transfer-encoding", "gzip"]], "body": {"stream": [{"data": "foo bar baz"}]}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "contains": "transfer-encoding:"},
+          {"scope": "head", "contains": "chunked\r\n"},
+          {"scope": "head", "not_contains": "content-length:", "ci": true},
+          {"scope": "after_head", "regex": "(?s)\\A.\r\nfoo bar baz\r\n0\r\n\r\n\\z"}
+        ]}
+      ]
+    },
+    {
+      "name": "response_body_lengths::chunked_response_trumps_length",
+      "source": "tests/server.rs:263",
+      "pending": "#[ignore] upstream (tests/server.rs:258-262): 'This used to be the case, but providing this functionality got in the way of performance.' hyper v1.12.0 does not pass it.",
+      "notes": "run_test (tests/server.rs:94-178). Reply: headers transfer-encoding: chunked AND content-length: 11, Known body 'foo bar baz'. Intended (not current) behavior: chunked response with the content-length header stripped. The steps encode that intent. Observed on the reference server with pending removed (2026-10-07): read_to_eof gets 0 bytes then EOF; events: handler_done status 200, then conn_close outcome user, detail 'user sent unexpected header' (role.rs encode_headers CONTENT_LENGTH branch: wrote_len && !is_name_written -> rewind, Error::new_user_header). So hyper v1.12.0 writes nothing for this reply.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["transfer-encoding", "chunked"], ["content-length", "11"]], "body": {"known": "foo bar baz"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "contains": "transfer-encoding:"},
+          {"scope": "head", "contains": "chunked\r\n"},
+          {"scope": "head", "not_contains": "content-length:", "ci": true},
+          {"scope": "after_head", "regex": "(?s)\\A.\r\nfoo bar baz\r\n0\r\n\r\n\\z"}
+        ]}
+      ]
+    },
+    {
+      "name": "response_body_lengths::auto_response_with_unknown_length",
+      "source": "tests/server.rs:278",
+      "notes": "run_test (tests/server.rs:94-178), see fixed_response_known and chunked_response_known. Reply: no headers, Unknown body 'foo bar baz': the server must choose chunked for an HTTP/1.1 peer. Asserts: CRLFCRLF present; head has 'transfer-encoding:' and 'chunked\\r\\n', no 'content-length:'; chunked body layout as in chunked_response_known. not_contains check adds ci:true (port decision).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"body": {"stream": [{"data": "foo bar baz"}]}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "contains": "transfer-encoding:"},
+          {"scope": "head", "contains": "chunked\r\n"},
+          {"scope": "head", "not_contains": "content-length:", "ci": true},
+          {"scope": "after_head", "regex": "(?s)\\A.\r\nfoo bar baz\r\n0\r\n\r\n\\z"}
+        ]}
+      ]
+    },
+    {
+      "name": "response_body_lengths::auto_response_with_known_length",
+      "source": "tests/server.rs:290",
+      "notes": "run_test (tests/server.rs:94-178), see fixed_response_known. Reply: no headers, Known body 'foo bar baz': the server derives Content-Length from the body. Asserts: CRLFCRLF present; head has no 'transfer-encoding:' / 'chunked\\r\\n', has 'content-length:'; body after the head == 'foo bar baz'. not_contains checks add ci:true (port decision).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"body": {"known": "foo bar baz"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "not_contains": "transfer-encoding:", "ci": true},
+          {"scope": "head", "not_contains": "chunked\r\n", "ci": true},
+          {"scope": "head", "contains": "content-length:"},
+          {"scope": "after_head", "equals": "foo bar baz"}
+        ]}
+      ]
+    },
+    {
+      "name": "response_body_lengths::auto_response_known_empty",
+      "source": "tests/server.rs:302",
+      "notes": "run_test (tests/server.rs:94-178), see fixed_response_known. Reply: no headers, Known body '' (Full::new of empty bytes, exact size hint 0). Asserts: CRLFCRLF present; head has no 'transfer-encoding:' / 'chunked\\r\\n', has 'content-length:'; body after the head is empty. not_contains checks add ci:true (port decision).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"body": {"known": ""}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "not_contains": "transfer-encoding:", "ci": true},
+          {"scope": "head", "not_contains": "chunked\r\n", "ci": true},
+          {"scope": "head", "contains": "content-length:"},
+          {"scope": "after_head", "equals": ""}
+        ]}
+      ]
+    },
+    {
+      "name": "response_body_lengths::http10_auto_response_with_unknown_length",
+      "source": "tests/server.rs:314",
+      "notes": "run_test (tests/server.rs:94-178) with version 0: request line 'GET / HTTP/1.0', Connection: close, read to EOF. Reply: no headers, Unknown body 'foo bar baz'. No chunked toward an HTTP/1.0 peer and no length: the body is close-delimited. Asserts: CRLFCRLF present; head has none of 'transfer-encoding:', 'chunked\\r\\n', 'content-length:'; body after the head == 'foo bar baz'. not_contains checks add ci:true (port decision, see fixed_response_known).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"body": {"stream": [{"data": "foo bar baz"}]}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.0\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "not_contains": "transfer-encoding:", "ci": true},
+          {"scope": "head", "not_contains": "chunked\r\n", "ci": true},
+          {"scope": "head", "not_contains": "content-length:", "ci": true},
+          {"scope": "after_head", "equals": "foo bar baz"}
+        ]}
+      ]
+    },
+    {
+      "name": "response_body_lengths::http10_chunked_response",
+      "source": "tests/server.rs:326",
+      "notes": "run_test (tests/server.rs:94-178) with version 0: request line 'GET / HTTP/1.0', Connection: close, read to EOF. Reply: transfer-encoding: chunked header, Unknown body 'foo bar baz'. The server strips the user's TE header for an HTTP/1.0 peer and sends a close-delimited body. Asserts: CRLFCRLF present; head has none of 'transfer-encoding:', 'chunked\\r\\n', 'content-length:'; body after the head == 'foo bar baz'. not_contains checks add ci:true (port decision, see fixed_response_known).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["transfer-encoding", "chunked"]], "body": {"stream": [{"data": "foo bar baz"}]}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.0\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"contains": "\r\n\r\n"},
+          {"scope": "head", "not_contains": "transfer-encoding:", "ci": true},
+          {"scope": "head", "not_contains": "chunked\r\n", "ci": true},
+          {"scope": "head", "not_contains": "content-length:", "ci": true},
+          {"scope": "after_head", "equals": "foo bar baz"}
+        ]}
+      ]
+    },
+    {
+      "name": "get_response_custom_reason_phrase",
+      "source": "tests/server.rs:391",
+      "notes": "serve() fixture. Reply: reason phrase 'Cool' (hyper::ext::ReasonPhrase), status 200, empty body. Read to EOF (Connection: close). hyper asserts with str::lines(): the first line is 'HTTP/1.1 200 Cool'; after skipping to the first empty line, that line exists and nothing follows it. expect[0] is an exact transcription of that lines() check: str::lines() splits at LF and strips one CR before it, so a line is empty iff its bytes before the LF are '' or '\\r', and a non-empty line is 2+ bytes or 1 byte other than CR; the regex is: status line, LF-terminated non-empty lines, one empty line, end of input. It rejects responses that the SPEC 14 mapping alone accepts: an empty line inside the head before the first CRLFCRLF, e.g. 'X: a\\n\\nY: b\\r\\n\\r\\n' or 'Y: b\\n\\r\\n\\r\\n' (hyper fails both; checked with a Rust transcription of the assertions). expect[1..3] are the SPEC 14 mapping (starts_with the status line + CRLF, CRLFCRLF present, nothing after the head). Port decision: expect[1..3] require CRLF line ends, which lines() does not (it accepts a bare LF); hyper writes CRLF and RFC 9112 2.1 requires CRLF from senders.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"reason": "Cool"}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"regex": "\\AHTTP/1\\.1 200 Cool\\r?\\n(?:(?:[^\\n]{2,}|[^\\r\\n])\\n)*\\r?\\n\\z"},
+          {"starts_with": "HTTP/1.1 200 Cool\r\n"},
+          {"contains": "\r\n\r\n"},
+          {"scope": "after_head", "len": 0}
+        ]}
+      ]
+    },
+    {
+      "name": "get_chunked_response_with_ka",
+      "source": "tests/server.rs:418",
+      "notes": "serve() fixture. Request 1 (Connection: keep-alive); reply 1: transfer-encoding: chunked, Known body 'foo bar baz'. read_until (8192-byte buffer) the received bytes end with '\\r\\nfoo bar baz\\r\\n0\\r\\n\\r\\n'. Request 2 on the same socket (Connection: close); reply 2: content-length: 8, body 'zar quux'. read_until the bytes end with 'zar quux'. hyper queues reply 2 after reading response 1; queuing both up front is equivalent (SPEC 5.2). The connection must stay open after the chunked response; an EOF before 'zar quux' fails the read_until (hyper's read_until would spin on Ok(0) and never finish).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["transfer-encoding", "chunked"]], "body": {"known": "foo bar baz"}},
+          {"headers": [["content-length", "8"]], "body": {"known": "zar quux"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: keep-alive\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "\r\nfoo bar baz\r\n0\r\n\r\n"}, "max": 8192},
+        {"op": "write", "data": "GET /quux HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "zar quux"}, "max": 8192}
+      ]
+    },
+    {
+      "name": "post_with_content_length_body",
+      "source": "tests/server.rs:460",
+      "notes": "serve() fixture, default reply. Request has NO Host header (hyper accepts an HTTP/1.1 request without Host; RFC 9112 3.2 says a server MUST answer 400, so this case pins hyper's lenient behavior). hyper asserts: one read() of up to 256 bytes returns Ok, and server.body() == 'hello'.",
+      "server": {"handler": "test_service", "replies": [{}]},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello"},
+        {"op": "read_once", "max": 256}
+      ],
+      "expect_events": [
+        {"event": "request_body", "conn": 1, "req": 1, "body": "hello"}
+      ]
+    },
+    {
+      "name": "post_with_invalid_prefix_content_length",
+      "source": "tests/server.rs:478",
+      "notes": "serve() fixture. 'Content-Length: +5' is not 1*DIGIT, so the head is a parse error and the server answers 400. hyper asserts: one read() into a zeroed 256-byte buffer returns Ok, and its first 26 bytes == 'HTTP/1.1 400 Bad Request\\r\\n' (so the read must return at least those 26 bytes). The rest of the response and the connection outcome are not asserted.",
+      "server": {"handler": "test_service", "replies": [{}]},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\nContent-Length: +5\r\n\r\nhello"},
+        {"op": "read_once", "max": 256, "expect": [
+          {"starts_with": "HTTP/1.1 400 Bad Request\r\n"}
+        ]}
+      ]
+    }
+  ]
+}

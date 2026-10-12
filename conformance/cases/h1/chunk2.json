@@ -1,0 +1,355 @@
+{
+  "description": "hyper v1.12.0 tests/server.rs (chunk2): chunked request bodies, HEAD/304, keep-alive, Expect: 100-continue, pipelining.",
+  "cases": [
+    {
+      "name": "post_with_chunked_body",
+      "source": "tests/server.rs:498",
+      "notes": "serve() fixture, no reply queued (default reply). hyper asserts: one read(&mut [0; 256]) returns Ok (any length, so no timeout and no RST), then server.body() == \"qwert\". The serve() fixture's serve_connection().unwrap() runs in a spawned task, so the connection result is not asserted.",
+      "server": {"handler": "test_service"},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\nHost: example.domain\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nq\r\n2\r\nwe\r\n2\r\nrt\r\n0\r\n\r\n"},
+        {"op": "read_once", "max": 256}
+      ],
+      "expect_events": [
+        {"event": "request_body", "body": "qwert"}
+      ]
+    },
+    {
+      "name": "post_with_chunked_overflow",
+      "source": "tests/server.rs:524",
+      "notes": "serve() fixture, default reply. The 17-hex-digit chunk size overflows u64. hyper asserts: one read(&mut [0; 256]) returns Ok (no timeout, no RST), then server.body_err().source().to_string() contains \"overflow\" (decode.rs: \"invalid chunk size: overflow\"; table 7.1 canonical text). The smuggled 'GET /sneaky' is not separately asserted by hyper: if the size were truncated to 3, the body would be \"abc\" and body_err() would panic, so the body-error assertion already covers it. Observed on the reference: EOF with 0 bytes (TestService fails, hyper writes nothing).",
+      "server": {"handler": "test_service"},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\nHost: example.domain\r\nTransfer-Encoding: chunked\r\n\r\nf0000000000000003\r\nabc\r\n0\r\n\r\nGET /sneaky HTTP/1.1\r\n\r\n"},
+        {"op": "read_once", "max": 256}
+      ],
+      "expect_events": [
+        {"event": "request_body_error", "message": {"$contains": "overflow"}}
+      ]
+    },
+    {
+      "name": "post_with_incomplete_body",
+      "source": "tests/server.rs:554",
+      "notes": "serve() fixture, default reply. Content-Length 10 with only 5 body bytes, then shutdown(Write). hyper asserts, in this order: server.body_err() returns an error (any kind; mirrored by await_event, which blocks like the mpsc recv), then one read(&mut [0; 256]) returns Ok (no timeout, no RST). Observed on the reference: EOF with 0 bytes.",
+      "server": {"handler": "test_service"},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\nHost: example.domain\r\nContent-Length: 10\r\n\r\n12345"},
+        {"op": "shutdown_write"},
+        {"op": "await_event", "match": {"event": "request_body_error"}},
+        {"op": "read_once", "max": 256}
+      ]
+    },
+    {
+      "name": "post_with_chunked_missing_final_digit",
+      "source": "tests/server.rs:576",
+      "notes": "serve() fixture, default reply. After chunk 'Z' the next chunk-size line is empty. hyper asserts, in this order: server.body_err() returns an error (any kind; mirrored by await_event), then one read(&mut [0; 256]) returns Ok (no timeout, no RST). Observed on the reference: EOF with 0 bytes.",
+      "server": {"handler": "test_service"},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\nHost: example.domain\r\ntransfer-encoding: chunked\r\n\r\n1\r\nZ\r\n\r\n\r\n"},
+        {"op": "await_event", "match": {"event": "request_body_error"}},
+        {"op": "read_once", "max": 256}
+      ]
+    },
+    {
+      "name": "head_response_can_send_content_length",
+      "source": "tests/server.rs:599",
+      "notes": "serve() fixture. Reply: header content-length: 1024, empty body. hyper reads to EOF (read_to_string, which also fails on invalid UTF-8: encoded as the (?su)\\A.*\\z regex) and asserts: the response contains \"content-length: 1024\\r\\n\"; the first line is \"HTTP/1.1 200 OK\"; after skipping to the first empty line, that empty line exists and no line follows it. The last two are encoded as starts_with \"HTTP/1.1 200 OK\\r\\n\", ends_with CRLFCRLF and after_head len 0. str::lines() also accepts bare LF line ends; the case requires CRLF on the status line and the blank line (RFC 9112 requires senders to use CRLF, so only a non-conforming server is affected).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "1024"]]}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "HEAD / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"},
+          {"contains": "content-length: 1024\r\n"},
+          {"starts_with": "HTTP/1.1 200 OK\r\n"},
+          {"ends_with": "\r\n\r\n"},
+          {"scope": "after_head", "len": 0}
+        ]}
+      ]
+    },
+    {
+      "name": "head_response_doesnt_send_body",
+      "source": "tests/server.rs:628",
+      "notes": "serve() fixture. Reply: Full body \"foo bar baz\", no headers. hyper reads to EOF (read_to_string, which also fails on invalid UTF-8: encoded as the (?su)\\A.*\\z regex) and asserts: the response contains \"content-length: 11\\r\\n\"; the first line is \"HTTP/1.1 200 OK\"; after the first empty line nothing follows (encoded as ends_with CRLFCRLF plus after_head len 0). str::lines() also accepts bare LF line ends; the case requires CRLF on the status line and the blank line (RFC 9112 requires senders to use CRLF).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"body": {"known": "foo bar baz"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "HEAD / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"},
+          {"contains": "content-length: 11\r\n"},
+          {"starts_with": "HTTP/1.1 200 OK\r\n"},
+          {"ends_with": "\r\n\r\n"},
+          {"scope": "after_head", "len": 0}
+        ]}
+      ]
+    },
+    {
+      "name": "response_does_not_set_chunked_if_body_not_allowed",
+      "source": "tests/server.rs:658",
+      "notes": "serve() fixture. Reply: status 304, header transfer-encoding: chunked, empty body. hyper reads to EOF (read_to_string, which also fails on invalid UTF-8: encoded as the (?su)\\A.*\\z regex) and asserts: the response does not contain \"transfer-encoding\" (literal, case-sensitive in hyper; ci added here to check the intent: no Transfer-Encoding field in any case); the first line is \"HTTP/1.1 304 Not Modified\"; nothing follows the first empty line (no body, no 0\\r\\n\\r\\n). str::lines() also accepts bare LF line ends; the case requires CRLF on the status line and the blank line (RFC 9112 requires senders to use CRLF).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"status": 304, "headers": [["transfer-encoding", "chunked"]]}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"},
+          {"not_contains": "transfer-encoding", "ci": true},
+          {"starts_with": "HTTP/1.1 304 Not Modified\r\n"},
+          {"ends_with": "\r\n\r\n"},
+          {"scope": "after_head", "len": 0}
+        ]}
+      ]
+    },
+    {
+      "name": "keep_alive",
+      "source": "tests/server.rs:691",
+      "notes": "serve() fixture. Reply 1: content-length: 11 + body \"foo bar baz\"; reply 2 (queued in hyper after response 1 was read; the harness queue is equivalent): content-length: 8 + body \"zar quux\". hyper asserts only that each read_until (8192-byte buffer, 1 s per read) reaches a buffer ending with the body, on the same socket.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "11"]], "body": {"known": "foo bar baz"}},
+          {"headers": [["content-length", "8"]], "body": {"known": "zar quux"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "foo bar baz"}},
+        {"op": "write", "data": "GET /quux HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "zar quux"}}
+      ]
+    },
+    {
+      "name": "http_10_keep_alive",
+      "source": "tests/server.rs:731",
+      "notes": "serve() fixture. Both read_until calls use hyper's 8192-byte read_until buffer. Only response 1 is checked for 'connection: keep-alive\\r\\n'; hyper converts it with s(), which unwraps from_utf8, so response 1 must also be valid UTF-8 (the (?su)\\A.*\\z regex). hyper does not assert the HTTP/1.0 status line (enforce_version downgrade).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "11"]], "body": {"known": "foo bar baz"}},
+          {"headers": [["content-length", "8"]], "body": {"known": "zar quux"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.0\r\nHost: example.domain\r\nConnection: keep-alive\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "foo bar baz"}, "expect": [
+          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (s() unwraps from_utf8)"},
+          {"contains": "connection: keep-alive\r\n"}
+        ]},
+        {"op": "write", "data": "GET /quux HTTP/1.0\r\nHost: example.domain\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "zar quux"}}
+      ]
+    },
+    {
+      "name": "http_10_close_on_no_ka",
+      "source": "tests/server.rs:780",
+      "notes": "serve() fixture. Reply: version HTTP/1.0 (no keep-alive header), content-length: 11, body \"foo bar baz\". hyper reads to EOF (read_to_end, 1 s per read, so the server must close) and asserts: the bytes end with \"foo bar baz\" and do not contain \"connection: keep-alive\\r\\n\" (literal, case-sensitive in hyper; ci added here to check the intent). The not-contains check runs on s(&buf), which unwraps from_utf8, so the bytes must also be valid UTF-8 (the (?su)\\A.*\\z regex).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"version": "HTTP/1.0", "headers": [["content-length", "11"]], "body": {"known": "foo bar baz"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.0\r\nHost: example.domain\r\nConnection: keep-alive\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"ends_with": "foo bar baz"},
+          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (s() unwraps from_utf8)"},
+          {"not_contains": "connection: keep-alive\r\n", "ci": true}
+        ]}
+      ]
+    },
+    {
+      "name": "disable_keep_alive",
+      "source": "tests/server.rs:818",
+      "notes": "serve_opts().keep_alive(false). Reply: content-length: 11, body \"foo bar baz\". hyper reads to EOF (read_to_end, so the server must close although the request asked for keep-alive) and asserts the bytes end with \"foo bar baz\". Not asserted by hyper: the connection: close header that enforce_version adds.",
+      "server": {
+        "config": {"keep_alive": false},
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "11"]], "body": {"known": "foo bar baz"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: keep-alive\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"ends_with": "foo bar baz"}
+        ]}
+      ]
+    },
+    {
+      "name": "header_connection_close",
+      "source": "tests/server.rs:844",
+      "notes": "serve() fixture. Reply headers content-length: 11 and connection: close, body \"foo bar baz\". hyper reads to EOF (read_to_end, so the server must close) and asserts the bytes end with \"foo bar baz\" and contain \"connection: close\\r\\n\". The contains check runs on s(&buf), which unwraps from_utf8, so the bytes must also be valid UTF-8 (the (?su)\\A.*\\z regex).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "11"], ["connection", "close"]], "body": {"known": "foo bar baz"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: keep-alive\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"ends_with": "foo bar baz"},
+          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (s() unwraps from_utf8)"},
+          {"contains": "connection: close\r\n"}
+        ]}
+      ]
+    },
+    {
+      "name": "expect_continue_sends_100",
+      "source": "tests/server.rs:877",
+      "notes": "serve() fixture; TestService polls the body, which triggers the 100 Continue. read_exact of the 25-byte interim response, then the body is sent and the connection is read to EOF (Connection: Close). read_to_string also fails on invalid UTF-8, so the rest of the response must be valid UTF-8 (the (?su)\\A.*\\z regex). Server body side channel = request_body event.",
+      "server": {"handler": "test_service", "replies": [{}]},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST /foo HTTP/1.1\r\nHost: example.domain\r\nExpect: 100-continue\r\nContent-Length: 5\r\nConnection: Close\r\n\r\n"},
+        {"op": "read_exact", "len": 25, "expect": [{"equals": "HTTP/1.1 100 Continue\r\n\r\n"}]},
+        {"op": "write", "data": "hello"},
+        {"op": "read_to_eof", "expect": [
+          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request_body", "body": "hello"}
+      ]
+    },
+    {
+      "name": "expect_continue_accepts_upper_cased_expectation",
+      "source": "tests/server.rs:910",
+      "notes": "Same as expect_continue_sends_100 with 'Expect: 100-Continue' (value compared case-insensitively). hyper asserts: read_exact of 25 bytes == \"HTTP/1.1 100 Continue\\r\\n\\r\\n\"; after sending \"hello\", read_to_string to EOF succeeds (EOF reached and the bytes are valid UTF-8: the (?su)\\A.*\\z regex); server.body() == \"hello\".",
+      "server": {"handler": "test_service", "replies": [{}]},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST /foo HTTP/1.1\r\nHost: example.domain\r\nExpect: 100-Continue\r\nContent-Length: 5\r\nConnection: Close\r\n\r\n"},
+        {"op": "read_exact", "len": 25, "expect": [{"equals": "HTTP/1.1 100 Continue\r\n\r\n"}]},
+        {"op": "write", "data": "hello"},
+        {"op": "read_to_eof", "expect": [
+          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request_body", "body": "hello"}
+      ]
+    },
+    {
+      "name": "expect_continue_but_http_10_is_ignored",
+      "source": "tests/server.rs:943",
+      "notes": "serve() fixture, default reply. HTTP/1.0 request with Expect: 100-Continue; the client sends the head and then \"hello\" in a second write without waiting. hyper asserts: read_exact of 17 bytes == \"HTTP/1.0 200 OK\\r\\n\" (no 100 Continue for HTTP/1.0), read_to_string to EOF succeeds (EOF reached and the bytes are valid UTF-8: the (?su)\\A.*\\z regex), server.body() == \"hello\".",
+      "server": {"handler": "test_service", "replies": [{}]},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST /foo HTTP/1.0\r\nHost: example.domain\r\nExpect: 100-Continue\r\nContent-Length: 5\r\nConnection: Close\r\n\r\n"},
+        {"op": "write", "data": "hello"},
+        {"op": "read_exact", "len": 17, "expect": [{"equals": "HTTP/1.0 200 OK\r\n"}]},
+        {"op": "read_to_eof", "expect": [
+          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request_body", "body": "hello"}
+      ]
+    },
+    {
+      "name": "expect_continue_but_no_body_is_ignored",
+      "source": "tests/server.rs:976",
+      "notes": "serve() fixture, default reply. No Content-Length or Transfer-Encoding, so the body is empty and Expect: 100-continue is ignored. hyper reads to EOF (read_to_string, which also fails on invalid UTF-8: the (?su)\\A.*\\z regex) and asserts the response begins with \"HTTP/1.1 200 OK\\r\\n\" (so no 100 Continue precedes it).",
+      "server": {"handler": "test_service", "replies": [{}]},
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST /foo HTTP/1.1\r\nHost: example.domain\r\nExpect: 100-continue\r\nConnection: Close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"},
+          {"starts_with": "HTTP/1.1 200 OK\r\n"}
+        ]}
+      ]
+    },
+    {
+      "name": "expect_continue_waits_for_body_poll",
+      "source": "tests/server.rs:1023",
+      "notes": "http1::Builder::new() defaults (no timer) with a custom service_fn: asserts req.headers()[\"expect\"] == \"100-continue\" (enforced: the service fn runs inside the serve_connection future that the test awaits, so its panic fails the test), drops the request without polling the body, sleeps 50 ms (the test's own TokioTimer.sleep, not a builder timer), responds 400 with an empty body. Mapped to test_service with read_body false, delay_ms 50, status 400. The client thread is joined, so its check is enforced: read_to_string to EOF succeeds (EOF reached, valid UTF-8: the (?su)\\A.*\\z regex) and begins with \"HTTP/1.1 400 Bad Request\\r\\n\" (no 100 Continue first). serve_connection(..).await.expect(..) is Ok: conn_close outcome ok.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"status": 400, "read_body": false, "delay_ms": 50}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST /foo HTTP/1.1\r\nHost: example.domain\r\nExpect: 100-continue\r\nContent-Length: 100\r\nConnection: Close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"},
+          {"starts_with": "HTTP/1.1 400 Bad Request\r\n"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "headers": {"$includes": [["expect", "100-continue"]]}},
+        {"event": "conn_close", "outcome": "ok"}
+      ]
+    },
+    {
+      "name": "pipeline_disabled",
+      "source": "tests/server.rs:1072",
+      "notes": "serve() fixture (pipeline_flush off). Two replies, each content-length: 12 + body \"Hello World!\"; both requests in one write. hyper asserts: the first read (4096-byte buffer, 1 s read timeout) returns Ok(n) with n != 0 (a timeout, RST or EOF fails the test); then 'if let Ok(n) = req.read(&mut buf) { assert_ne!(n, 0) }': the second read passes on data, on a timeout, and on any error (RST included); only Ok(0) (EOF) fails. The test comments say both responses may arrive in one read or in two. Port, one step per hyper read: (1) read_once max 4096 with read_result \"data\" (no allow_reset, no allow_timeout); (2) read_once max 4096 with allow_timeout and allow_reset, and read_result in [data, timeout, reset]. Remaining deviation: a socket error other than timeout/RST fails step 2 in the runner, while hyper accepts any Err. Both read_once captures depend on how the server's two writes reach the socket (one read may hold both responses, then the second read times out), which made reference-vs-reference diffs differ in 8 of 12 runs when an earlier version of this case compared a read_once capture. Both steps therefore set diff_capture false: diff mode compares only whether each step passed or failed (and the events), not the bytes. hyper does not assert the response bytes or that both responses arrive.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "12"]], "body": {"known": "Hello World!"}},
+          {"headers": [["content-length", "12"]], "body": {"known": "Hello World!"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\n\r\nGET / HTTP/1.1\r\nHost: example.domain\r\n\r\n"},
+        {"op": "read_once", "max": 4096, "diff_capture": false, "expect": [{"read_result": "data"}], "comment": "hyper: req.read(..).expect(\"read 1\"); assert_ne!(n, 0)"},
+        {"op": "read_once", "max": 4096, "allow_timeout": true, "allow_reset": true, "diff_capture": false, "expect": [{"read_result": ["data", "timeout", "reset"]}], "comment": "hyper: if let Ok(n) = req.read(..) { assert_ne!(n, 0) }"}
+      ]
+    },
+    {
+      "name": "pipeline_enabled",
+      "source": "tests/server.rs:1116",
+      "notes": "serve_opts().pipeline(true). hyper asserts both responses arrive in the FIRST read (4096-byte buffer), line by line (the two date lines are not compared), and that the second read returns 0. The regex mirrors the line checks; [^\\n]*\\n is the unchecked date line. The final \\n is required because hyper splits the zero-filled 4096-byte buffer on '\\n', so the last segment equals \"Hello World\" only if the body's '\\n' was read.",
+      "server": {
+        "config": {"pipeline_flush": true},
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "12"]], "body": {"known": "Hello World\n"}},
+          {"headers": [["content-length", "12"]], "body": {"known": "Hello World\n"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\n\r\nGET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_once", "max": 4096, "expect": [
+          {"min_len": 1},
+          {"regex": "\\AHTTP/1\\.1 200 OK\r\ncontent-length: 12\r\n[^\n]*\n\r\nHello World\nHTTP/1\\.1 200 OK\r\ncontent-length: 12\r\nconnection: close\r\n[^\n]*\n\r\nHello World\n"}
+        ]},
+        {"op": "read_once", "max": 4096, "expect": [{"len": 0}, {"end": "eof"}]}
+      ]
+    }
+  ]
+}

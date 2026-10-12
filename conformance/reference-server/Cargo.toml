@@ -1,0 +1,17 @@
+[package]
+name = "reference-server"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "hyper v1.12.0 HTTP/1 server reproducing the server setups of hyper's own tests"
+
+[dependencies]
+harness-common = { path = "../common" }
+# "full" = the feature set hyper's own tests/server.rs and tests/integration.rs build with.
+hyper = { workspace = true, features = ["full"] }
+http-body-util.workspace = true
+bytes.workspace = true
+tokio.workspace = true
+pin-project-lite.workspace = true
+serde.workspace = true
+serde_json.workspace = true

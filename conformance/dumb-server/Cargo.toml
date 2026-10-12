@@ -1,0 +1,8 @@
+[package]
+name = "dumb-server"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "Mutation-check server: speaks the SPEC process protocol but answers every request head with a fixed 200 and ignores the config"
+
+[dependencies]

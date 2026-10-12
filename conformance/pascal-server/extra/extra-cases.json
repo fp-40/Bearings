@@ -1,0 +1,1314 @@
+{
+ "description": "S6 extra probes (not hyper tests): SPEC behaviors the 105 cases do not reach. Diff mode only.",
+ "cases": [
+  {
+   "name": "response_version_HTTP_09",
+   "notes": "role.rs panics on these versions: the connection task aborts without conn_close (design 2.8)",
+   "server": {
+    "replies": [
+     {
+      "version": "HTTP/0.9"
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "read_to_eof",
+     "allow_reset": true,
+     "expect": [
+      {
+       "len": 0
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "handler_done",
+     "conn": 1,
+     "status": 200
+    }
+   ],
+   "forbid_events": [
+    {
+     "event": "conn_close"
+    }
+   ]
+  },
+  {
+   "name": "response_version_HTTP_30",
+   "notes": "role.rs panics on these versions: the connection task aborts without conn_close (design 2.8)",
+   "server": {
+    "replies": [
+     {
+      "version": "HTTP/3.0"
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "read_to_eof",
+     "allow_reset": true,
+     "expect": [
+      {
+       "len": 0
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "handler_done",
+     "conn": 1,
+     "status": 200
+    }
+   ],
+   "forbid_events": [
+    {
+     "event": "conn_close"
+    }
+   ]
+  },
+  {
+   "name": "response_version_http2_written_as_11",
+   "notes": "",
+   "server": {
+    "replies": [
+     {
+      "version": "HTTP/2.0",
+      "body": {
+       "known": "x"
+      }
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "read_response",
+     "expect": [
+      {
+       "version": "HTTP/1.1"
+      },
+      {
+       "body": "x"
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "handler_done",
+     "conn": 1
+    }
+   ]
+  },
+  {
+   "name": "response_version_http10",
+   "notes": "",
+   "server": {
+    "replies": [
+     {
+      "version": "HTTP/1.0",
+      "body": {
+       "known": "hi"
+      }
+     },
+     {}
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "read_response",
+     "expect": [
+      {
+       "version": "HTTP/1.0"
+      },
+      {
+       "body": "hi"
+      }
+     ]
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "read_response",
+     "expect": [
+      {
+       "version": "HTTP/1.1"
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "handler_done",
+     "conn": 1,
+     "req": 2
+    }
+   ]
+  },
+  {
+   "name": "stream_delay_then_error",
+   "notes": "",
+   "server": {
+    "replies": [
+     {
+      "body": {
+       "stream": [
+        {
+         "data": "a"
+        },
+        {
+         "data": "bb",
+         "delay_ms": 30,
+         "times": 2
+        },
+        {
+         "error": "boom",
+         "delay_ms": 20
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "read_to_eof",
+     "allow_reset": true,
+     "expect": [
+      {
+       "contains": "transfer-encoding: chunked"
+      },
+      {
+       "ends_with": "1\r\na\r\n2\r\nbb\r\n2\r\nbb\r\n"
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "conn_close",
+     "conn": 1,
+     "outcome": "user"
+    }
+   ]
+  },
+  {
+   "name": "stream_trailers_sent",
+   "notes": "",
+   "server": {
+    "replies": [
+     {
+      "headers": [
+       [
+        "trailer",
+        "x-t"
+       ]
+      ],
+      "body": {
+       "stream": [
+        {
+         "data": "abc"
+        }
+       ],
+       "trailers": [
+        [
+         "x-t",
+         "1"
+        ],
+        [
+         "x-u",
+         "2"
+        ],
+        [
+         "X-T",
+         "3"
+        ]
+       ]
+      }
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\nTE: trailers\r\n\r\n"
+    },
+    {
+     "op": "read_response",
+     "expect": [
+      {
+       "body": "abc"
+      },
+      {
+       "trailer": "x-t",
+       "values": [
+        "3"
+       ]
+      },
+      {
+       "trailer": "x-u",
+       "present": false
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "handler_done",
+     "conn": 1
+    }
+   ]
+  },
+  {
+   "name": "plain_mode_upgrade_manual_error",
+   "notes": "",
+   "server": {
+    "replies": [
+     {
+      "status": 101,
+      "headers": [
+       [
+        "upgrade",
+        "foo"
+       ],
+       [
+        "connection",
+        "upgrade"
+       ]
+      ],
+      "upgrade": {
+       "on_upgrade": true
+      }
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nUpgrade: foo\r\nConnection: upgrade\r\n\r\n"
+    },
+    {
+     "op": "read_to_eof",
+     "allow_reset": true,
+     "expect": [
+      {
+       "starts_with": "HTTP/1.1 101 Switching Protocols\r\n"
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "conn_close",
+     "conn": 1,
+     "outcome": "ok"
+    },
+    {
+     "event": "upgrade_error",
+     "conn": 1
+    }
+   ]
+  },
+  {
+   "name": "with_upgrades_handler_error_no_upgrade_event",
+   "notes": "",
+   "server": {
+    "config": {
+     "conn_mode": "with_upgrades"
+    },
+    "replies": [
+     {
+      "error": "nope",
+      "upgrade": {
+       "on_upgrade": true
+      }
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nUpgrade: foo\r\nConnection: upgrade\r\n\r\n"
+    },
+    {
+     "op": "read_to_eof",
+     "allow_reset": true,
+     "expect": [
+      {
+       "len": 0
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "conn_close",
+     "conn": 1,
+     "outcome": "user"
+    }
+   ],
+   "forbid_events": [
+    {
+     "event": "upgrade_error"
+    },
+    {
+     "event": "upgraded"
+    }
+   ]
+  },
+  {
+   "name": "graceful_shutdown_during_delay",
+   "notes": "",
+   "server": {
+    "replies": [
+     {
+      "delay_ms": 200,
+      "body": {
+       "known": "late"
+      }
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "await_event",
+     "match": {
+      "event": "request",
+      "conn": 1
+     }
+    },
+    {
+     "op": "control",
+     "command": "graceful_shutdown"
+    },
+    {
+     "op": "read_to_eof",
+     "expect": [
+      {
+       "contains": "connection: close\r\n"
+      },
+      {
+       "ends_with": "late"
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "control_ack",
+     "command": "graceful_shutdown"
+    },
+    {
+     "event": "conn_close",
+     "conn": 1,
+     "outcome": "ok"
+    }
+   ]
+  },
+  {
+   "name": "graceful_shutdown_idle_then_new_conn",
+   "notes": "",
+   "server": {},
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "read_response"
+    },
+    {
+     "op": "control",
+     "command": "graceful_shutdown"
+    },
+    {
+     "op": "read_to_eof",
+     "expect": [
+      {
+       "len": 0
+      }
+     ]
+    },
+    {
+     "op": "connect",
+     "conn": "b"
+    },
+    {
+     "op": "write",
+     "conn": "b",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "read_response",
+     "conn": "b",
+     "expect": [
+      {
+       "status": 200
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "conn_close",
+     "conn": 1,
+     "outcome": "ok"
+    },
+    {
+     "event": "handler_done",
+     "conn": 2
+    }
+   ]
+  },
+  {
+   "name": "signal_before_await",
+   "notes": "",
+   "server": {
+    "config": {
+     "conn_mode": "with_upgrades"
+    },
+    "replies": [
+     {
+      "status": 101,
+      "headers": [
+       [
+        "upgrade",
+        "foo"
+       ]
+      ],
+      "upgrade": {
+       "await_signal": "go",
+       "write": "w1",
+       "read_to_eof": false
+      }
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "control",
+     "command": "signal",
+     "name": "go"
+    },
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nUpgrade: foo\r\nConnection: upgrade\r\n\r\n"
+    },
+    {
+     "op": "read_to_eof",
+     "expect": [
+      {
+       "ends_with": "\r\n\r\nw1"
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "upgraded",
+     "conn": 1,
+     "read_buf": ""
+    }
+   ]
+  },
+  {
+   "name": "on_upgrade_without_upgrade_request",
+   "notes": "",
+   "server": {
+    "config": {
+     "conn_mode": "with_upgrades"
+    },
+    "replies": [
+     {
+      "upgrade": {
+       "on_upgrade": true
+      }
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "read_response",
+     "expect": [
+      {
+       "status": 200
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "upgrade_error",
+     "conn": 1
+    }
+   ]
+  },
+  {
+   "name": "disconnect_during_delay",
+   "notes": "The client closes while the handler is in its delay (SPEC 5.5 step 6): the runner waits for request_body (step 4), not only for request, so the close comes after the body read under every executor. Under --executor worker the body is read on a worker after the request event; a close right after request could come before that read (S7 verifier: no request_body in 2 of 9 runs). Changed in the S7 fix (deviation S7-17).",
+   "server": {
+    "replies": [
+     {
+      "delay_ms": 300
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "await_event",
+     "match": {
+      "event": "request_body",
+      "conn": 1
+     }
+    },
+    {
+     "op": "close"
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "handler_dropped",
+     "conn": 1,
+     "req": 1
+    },
+    {
+     "event": "conn_close",
+     "conn": 1,
+     "outcome": "incomplete"
+    }
+   ],
+   "forbid_events": [
+    {
+     "event": "handler_done"
+    }
+   ]
+  },
+  {
+   "name": "bytes_read_pipelined",
+   "notes": "",
+   "server": {
+    "bytes_read_events": true
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "await_event",
+     "match": {
+      "event": "bytes_read",
+      "conn": 1,
+      "total": 54
+     }
+    },
+    {
+     "op": "read_response"
+    },
+    {
+     "op": "read_response"
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "handler_done",
+     "conn": 1,
+     "req": 2
+    }
+   ]
+  },
+  {
+   "name": "reason_insert_grouping_latin1",
+   "notes": "",
+   "server": {
+    "replies": [
+     {
+      "reason": "Fine ÿ",
+      "headers": [
+       [
+        "x-a",
+        "1"
+       ],
+       [
+        "x-b",
+        "2"
+       ],
+       [
+        "X-A",
+        "3"
+       ],
+       [
+        "x-c",
+        "é"
+       ]
+      ]
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET /p?q=1 HTTP/1.1\r\nA: 1\r\nB: 2\r\na: 3\r\nX-L: éÿ\r\n\r\n"
+    },
+    {
+     "op": "read_response",
+     "expect": [
+      {
+       "reason": "Fine ÿ"
+      },
+      {
+       "header": "x-a",
+       "values": [
+        "3"
+       ]
+      },
+      {
+       "header": "x-c",
+       "value": "é"
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "request",
+     "conn": 1,
+     "target": "/p?q=1",
+     "headers": [
+      [
+       "a",
+       "1"
+      ],
+      [
+       "a",
+       "3"
+      ],
+      [
+       "b",
+       "2"
+      ],
+      [
+       "x-l",
+       "éÿ"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "name": "targets_forms",
+   "notes": "",
+   "server": {
+    "replies": [
+     {},
+     {},
+     {}
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET http://h:81/a/b?c=d HTTP/1.1\r\n\r\nOPTIONS * HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "read_response"
+    },
+    {
+     "op": "read_response"
+    },
+    {
+     "op": "connect",
+     "conn": "c"
+    },
+    {
+     "op": "write",
+     "conn": "c",
+     "data": "CONNECT h:443 HTTP/1.1\r\nHost: h:443\r\n\r\n"
+    },
+    {
+     "op": "read_response",
+     "conn": "c"
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "request",
+     "conn": 1,
+     "req": 1,
+     "target": "http://h:81/a/b?c=d"
+    },
+    {
+     "event": "request",
+     "conn": 1,
+     "req": 2,
+     "method": "OPTIONS",
+     "target": "*"
+    },
+    {
+     "event": "request",
+     "conn": 2,
+     "req": 1,
+     "method": "CONNECT",
+     "target": "h:443"
+    }
+   ]
+  },
+  {
+   "name": "without_shutdown_parse_error",
+   "notes": "",
+   "server": {
+    "config": {
+     "conn_mode": "without_shutdown"
+    },
+    "replies": [
+     {
+      "upgrade": {
+       "on_upgrade": false
+      }
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "BAD\r\n\r\n"
+    },
+    {
+     "op": "read_to_eof",
+     "allow_reset": true,
+     "expect": [
+      {
+       "starts_with": "HTTP/1.1 400 Bad Request\r\n"
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "conn_close",
+     "conn": 1,
+     "outcome": "parse"
+    }
+   ],
+   "forbid_events": [
+    {
+     "event": "upgraded"
+    }
+   ]
+  },
+  {
+   "name": "keep_alive_false_pipelined",
+   "notes": "",
+   "server": {
+    "config": {
+     "keep_alive": false
+    }
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "read_to_eof",
+     "allow_reset": true,
+     "expect": [
+      {
+       "contains": "connection: close"
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "conn_close",
+     "conn": 1,
+     "outcome": "ok"
+    }
+   ]
+  },
+  {
+   "name": "chunked_body_trailers_expect",
+   "notes": "",
+   "server": {},
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nTransfer-Encoding: chunked\r\n\r\n"
+    },
+    {
+     "op": "read_response",
+     "expect": [
+      {
+       "status": 100
+      }
+     ]
+    },
+    {
+     "op": "write",
+     "data": "3\r\nabc\r\n0\r\nX-T: 1\r\nx-t: 2\r\n\r\n"
+    },
+    {
+     "op": "read_response",
+     "expect": [
+      {
+       "status": 200
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "request_body",
+     "conn": 1,
+     "body": "abc",
+     "trailers": [
+      [
+       "x-t",
+       "1"
+      ],
+      [
+       "x-t",
+       "2"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "name": "body_error_invalid_size",
+   "notes": "",
+   "server": {},
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n"
+    },
+    {
+     "op": "read_to_eof",
+     "allow_reset": true
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "request_body_error",
+     "conn": 1,
+     "kind": "invalid_input"
+    },
+    {
+     "event": "conn_close",
+     "conn": 1,
+     "outcome": "user"
+    }
+   ]
+  },
+  {
+   "name": "idle_timeout_after_response",
+   "notes": "",
+   "server": {
+    "config": {
+     "timer": true,
+     "header_read_timeout_ms": 300
+    }
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "read_response"
+    },
+    {
+     "op": "read_to_eof",
+     "timeout_ms": 2000,
+     "timing": {
+      "since": "step",
+      "min_ms": 200,
+      "max_ms": 900
+     }
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "conn_close",
+     "conn": 1,
+     "outcome": "timeout"
+    }
+   ]
+  },
+  {
+   "name": "half_close_response_after_fin",
+   "notes": "",
+   "server": {
+    "config": {
+     "half_close": true
+    },
+    "replies": [
+     {
+      "delay_ms": 100,
+      "body": {
+       "known": "z"
+      }
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+    },
+    {
+     "op": "shutdown_write"
+    },
+    {
+     "op": "read_to_eof",
+     "expect": [
+      {
+       "ends_with": "z"
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "handler_done",
+     "conn": 1
+    },
+    {
+     "event": "conn_close",
+     "conn": 1
+    }
+   ]
+  },
+  {
+   "name": "control_error_line",
+   "notes": "",
+   "server": {},
+   "steps": [
+    {
+     "op": "control",
+     "command": "signal",
+     "name": "a"
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "control_ack",
+     "command": "signal",
+     "name": "a"
+    }
+   ]
+  },
+  {
+   "name": "graceful_shutdown_three_open_conns",
+   "notes": "S6 fix (S6 verifier, mutant J): graceful_shutdown reaches every open connection, not only the head of the connection list. a and c have read nothing (closed now, nothing written); b holds a partial head (keep-alive disabled, its request completes with connection: close). Connections 1 and 3 close in either order, so expect_events lists only 1 then 2 (2 closes after the later write); 3 is checked by its read_to_eof (and per connection in diff mode).",
+   "server": {
+    "bytes_read_events": true
+   },
+   "steps": [
+    {
+     "op": "connect",
+     "conn": "a"
+    },
+    {
+     "op": "await_event",
+     "match": {
+      "event": "conn_open",
+      "conn": 1
+     }
+    },
+    {
+     "op": "connect",
+     "conn": "b"
+    },
+    {
+     "op": "await_event",
+     "match": {
+      "event": "conn_open",
+      "conn": 2
+     }
+    },
+    {
+     "op": "write",
+     "conn": "b",
+     "data": "GET / HTTP/1.1\r\n"
+    },
+    {
+     "op": "await_event",
+     "match": {
+      "event": "bytes_read",
+      "conn": 2,
+      "total": 16
+     }
+    },
+    {
+     "op": "connect",
+     "conn": "c"
+    },
+    {
+     "op": "await_event",
+     "match": {
+      "event": "conn_open",
+      "conn": 3
+     }
+    },
+    {
+     "op": "control",
+     "command": "graceful_shutdown"
+    },
+    {
+     "op": "read_to_eof",
+     "conn": "a",
+     "expect": [
+      {
+       "len": 0
+      },
+      {
+       "end": "eof"
+      }
+     ]
+    },
+    {
+     "op": "read_to_eof",
+     "conn": "c",
+     "expect": [
+      {
+       "len": 0
+      },
+      {
+       "end": "eof"
+      }
+     ]
+    },
+    {
+     "op": "write",
+     "conn": "b",
+     "data": "Host: x\r\n\r\n"
+    },
+    {
+     "op": "read_to_eof",
+     "conn": "b",
+     "expect": [
+      {
+       "starts_with": "HTTP/1.1 200 OK\r\n"
+      },
+      {
+       "contains": "connection: close\r\n",
+       "scope": "head"
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "conn_close",
+     "conn": 1,
+     "outcome": "ok"
+    },
+    {
+     "event": "conn_close",
+     "conn": 2,
+     "outcome": "ok"
+    }
+   ]
+  },
+  {
+   "name": "upgrade_write_blocks",
+   "notes": "S6 fix (S6 verifier: no case made an upgraded write wait). The upgrade task writes 16 MiB while the client does not read for 300 ms: the raw writes come back short once the socket buffers are full (strace of wdconf: 16 short write(2) calls), TryWrite then returns EAGAIN with the write bit clear, and each writable edge resumes the write. Then the client reads it all and sends FIN, and the task reads to EOF.",
+   "server": {
+    "config": {
+     "conn_mode": "with_upgrades"
+    },
+    "replies": [
+     {
+      "status": 101,
+      "headers": [
+       [
+        "upgrade",
+        "foo"
+       ],
+       [
+        "connection",
+        "upgrade"
+       ]
+      ],
+      "upgrade": {
+       "on_upgrade": true,
+       "write": [
+        {
+         "repeat": "x",
+         "count": 16777216
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: foo\r\nConnection: upgrade\r\n\r\n"
+    },
+    {
+     "op": "read_response",
+     "expect": [
+      {
+       "status": 101
+      }
+     ]
+    },
+    {
+     "op": "sleep",
+     "ms": 300
+    },
+    {
+     "op": "read_exact",
+     "len": 16777216,
+     "expect": [
+      {
+       "len": 16777216
+      },
+      {
+       "regex": "\\Ax*\\z"
+      }
+     ]
+    },
+    {
+     "op": "shutdown_write"
+    },
+    {
+     "op": "read_to_eof",
+     "expect": [
+      {
+       "len": 0
+      }
+     ]
+    }
+   ],
+   "expect_events": [
+    {
+     "event": "conn_close",
+     "conn": 1,
+     "outcome": "ok"
+    },
+    {
+     "event": "upgraded",
+     "conn": 1,
+     "read_buf": ""
+    },
+    {
+     "event": "upgrade_read",
+     "conn": 1,
+     "data": "",
+     "end": "eof"
+    }
+   ]
+  }
+ ]
+}

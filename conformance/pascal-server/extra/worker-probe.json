@@ -1,0 +1,143 @@
+{
+ "description": "S7 probe: chunk2::pipeline_enabled depends on the second handler answering in its first poll (inline execution). Run in assertion mode against reference-server (expected to fail the same wire assertion) and in diff mode against wdconf --executor worker (expected SAME).",
+ "cases": [
+  {
+   "name": "pipeline_enabled_second_handler_pending_1ms",
+   "source": "probe for S7 (worker executor); derived from chunk2::pipeline_enabled",
+   "notes": "pipeline_enabled with the second reply delayed 1 ms (delay_ms), so the second handler is Pending at its first poll, as every handler is under --executor worker. hyper flushes the first response once the read buffer is empty (io.rs poll_flush with pipeline_flush), so the first read_once gets only the first response and the wire assertions of pipeline_enabled fail for the reference server too. Diff mode: wdconf (inline or worker) must be SAME as the reference.",
+   "server": {
+    "config": {
+     "pipeline_flush": true
+    },
+    "handler": "test_service",
+    "replies": [
+     {
+      "headers": [
+       [
+        "content-length",
+        "12"
+       ]
+      ],
+      "body": {
+       "known": "Hello World\n"
+      }
+     },
+     {
+      "headers": [
+       [
+        "content-length",
+        "12"
+       ]
+      ],
+      "body": {
+       "known": "Hello World\n"
+      },
+      "delay_ms": 1
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: example.domain\r\n\r\nGET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"
+    },
+    {
+     "op": "read_once",
+     "max": 4096,
+     "expect": [
+      {
+       "min_len": 1
+      },
+      {
+       "regex": "\\AHTTP/1\\.1 200 OK\r\ncontent-length: 12\r\n[^\n]*\n\r\nHello World\nHTTP/1\\.1 200 OK\r\ncontent-length: 12\r\nconnection: close\r\n[^\n]*\n\r\nHello World\n"
+      }
+     ]
+    },
+    {
+     "op": "read_once",
+     "max": 4096,
+     "expect": [
+      {
+       "len": 0
+      },
+      {
+       "end": "eof"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "pipeline_enabled_second_handler_pending_50ms",
+   "source": "probe for S7 (worker executor); derived from chunk2::pipeline_enabled",
+   "notes": "pipeline_enabled with the second reply delayed 50 ms (delay_ms), so the second handler is Pending at its first poll, as every handler is under --executor worker. hyper flushes the first response once the read buffer is empty (io.rs poll_flush with pipeline_flush), so the first read_once gets only the first response and the wire assertions of pipeline_enabled fail for the reference server too. Diff mode: wdconf (inline or worker) must be SAME as the reference.",
+   "server": {
+    "config": {
+     "pipeline_flush": true
+    },
+    "handler": "test_service",
+    "replies": [
+     {
+      "headers": [
+       [
+        "content-length",
+        "12"
+       ]
+      ],
+      "body": {
+       "known": "Hello World\n"
+      }
+     },
+     {
+      "headers": [
+       [
+        "content-length",
+        "12"
+       ]
+      ],
+      "body": {
+       "known": "Hello World\n"
+      },
+      "delay_ms": 50
+     }
+    ]
+   },
+   "steps": [
+    {
+     "op": "connect"
+    },
+    {
+     "op": "write",
+     "data": "GET / HTTP/1.1\r\nHost: example.domain\r\n\r\nGET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"
+    },
+    {
+     "op": "read_once",
+     "max": 4096,
+     "expect": [
+      {
+       "min_len": 1
+      },
+      {
+       "regex": "\\AHTTP/1\\.1 200 OK\r\ncontent-length: 12\r\n[^\n]*\n\r\nHello World\nHTTP/1\\.1 200 OK\r\ncontent-length: 12\r\nconnection: close\r\n[^\n]*\n\r\nHello World\n"
+      }
+     ]
+    },
+    {
+     "op": "read_once",
+     "max": 4096,
+     "expect": [
+      {
+       "len": 0
+      },
+      {
+       "end": "eof"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

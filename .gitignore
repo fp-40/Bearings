@@ -1,0 +1,9 @@
+# build output (compiles, benchmarks, test runs, fetched tools)
+/build/
+/conformance/target/
+target/
+__pycache__/
+*.o
+*.ppu
+*.a
+*.compiled

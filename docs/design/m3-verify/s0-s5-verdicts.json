@@ -1,0 +1,643 @@
+{
+  "summary": "Implement M3 design steps S0-S5 sequentially, each gated by an independent verifier (up to 3 fix rounds)",
+  "agentCount": 12,
+  "logs": [
+    "S0 round 1: passed=true, unmet=0, major/blocker defects=0",
+    "S1 round 1: passed=true, unmet=0, major/blocker defects=0",
+    "S2 round 1: passed=true, unmet=0, major/blocker defects=0",
+    "S3 round 1: passed=true, unmet=0, major/blocker defects=0",
+    "S4 round 1: passed=true, unmet=0, major/blocker defects=0",
+    "S5 round 1: passed=true, unmet=0, major/blocker defects=0"
+  ],
+  "result": [
+    {
+      "step": "S0",
+      "ok": true,
+      "unmet": [],
+      "defects": [
+        {
+          "where": "src/http1/bearings.http1.role.pas EncodeHeadHeapFlags",
+          "problem": "This routine still has a dynamic-array local ('Flags: array of Boolean'), and hot-asm.py reports 'frame in ENCODEHEADHEAPFLAGS'. It runs on every response with more than 256 headers. It is not on the S0 list, so the criterion still holds. It is inconsistent with deviation 7, where the implementer removed the same kind of frame from ServerParseHeapSlots.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/http1/bearings.http1.encode.pas TEncoder.TrailerSet / DefaultTrailerFields; src/http1/bearings.http1.decode.pas TDecoder.Scratch / DefaultTrailerScratch",
+          "problem": "Encoders and decoders that are given no scratch share one per-thread default set or buffer, and TrailerSet/Scratch store a pointer to the threadvar inside the record. Three consequences: (1) a copied TEncoder shares its declared-name set with the original, and the next IntoChunkedWith* call (on any encoder on that thread using the default set) clears the names of an earlier encoder that is still live; the decoder header warns about copies, the encoder does not; (2) a record moved to another thread keeps a pointer to the first thread's threadvar; (3) finalization frees only the main thread's default set and buffer, so other threads leak them. The M3 path passes a per-connection TConnScratch, so this affects only the M2-compatible overloads.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/http1/bearings.http1.role.pas SinkReserve / ServerEncode TByteVec overload",
+          "problem": "The head buffer reserves one computed upper bound (Bound), where hyper reserves init_cap = 30 + n*AVERAGE_HEADER_SIZE and then grows through extend calls. TByteVec copies Vec::reserve's growth rule, but because the reserve calls differ, the head buffer's logical capacity can differ from hyper's Vec. Example: cap 8192 holding 8000 buffered bytes plus a 100-byte head: Pascal doubles the buffer to 16384, hyper does not grow it. The wire bytes are unaffected. The difference does change later maybe_unshift decisions, which S3 says follow hyper.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/http1/bearings.http1.conn.pas TConnScratch (TrailerNames, TrailerBytes)",
+          "problem": "The per-connection trailer scratch is plain heap memory (GetMem / TByteVec with Pool = nil). Nothing returns it while the connection is idle, so after one large request trailer a connection keeps up to about 2 x MaxHeaderSize for its whole life. The idle-release rule in 4.3 does not cover this memory. This needs handling in S4, where the idle-connection target is about 0.8 KB.",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/unit/test_headers_validate.pas Library_callers_use_trusted_paths",
+          "problem": "The test feeds only valid bytes to SetContentLengthIfMissing, AddChunked and ParseTrailers, so it also passes if those callers still use the validating mutators. Only code inspection shows they switched to *Trusted; I confirmed it by grep: src/ has no remaining callers of Add, Insert or SetValue.",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/unit/test_role_diff_rs generator (maxh)",
+          "problem": "The role differential only generates MaxHeaders values from 0 to 7, or None. The GetMem heap-slot path changed in S0 (MaxHeaders > 100) is covered only by the single ported hyper max_headers=200 test, not by the differential.",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/unit/test_trailer_diff.pas Replay (ERR branch)",
+          "problem": "For an ERR result, Pascal prints 'ERR <Ord(result)>' and Rust prints 'ERR {:?}' (the error kind), so any case where the encoder returns an error would always be reported as a mismatch. The current generator produces no such case, so this has no effect today.",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/support/bearings.test.loop.pas, conformance/pascal-server/*",
+          "problem": "The 8.1 block lists these units, but S0 did not create skeletons for them (implementer's deviation 11). The design gives no interface for them, and the 8.1 heading says 'Files under src/', so it is unclear whether S0's 'every unit in 8.1' includes them.",
+          "severity": "minor"
+        },
+        {
+          "where": "implementer report, parse benchmark",
+          "problem": "The report says S0 parse (142.5-143.1 ns) is faster than M2 (150-151 ns), but that M2 figure comes from a stripped binary built with unrecorded flags. I built the same design-phase bench_role.pas source with the same flags against both trees, and S0 parse is 146-150 ns against M2's 143-146 ns, about 2-4 % slower. Both are well inside the budget.",
+          "severity": "minor"
+        }
+      ],
+      "design_problems": [
+        "Section 2.10 puts TConnObserver, TConnParts, TConnOutcome and OutcomeOf in bearings.server. But TH1Dispatcher (2.4.1, line 1181) has an 'Observer: TConnObserver' field in bearings.http1.dispatch, and bearings.server's interface uses bearings.http1.dispatch. That is an interface cycle; FPC cannot forward-declare a class across units. The implementer moved the types to bearings.http.exchange and bearings.http.error, and bearings.server re-exports the names.",
+        "Section 8.1 says interface uses 'only point down this list', but the list breaks that rule. bearings.rt.loop uses bearings.http.date, bearings.rt.net uses bearings.http1.encode, and bearings.http.error uses bearings.http1.role/decode, and each of those units is listed below its user. The graph itself is acyclic (unit-graph.py), so only the listing order is wrong. 8.1 also gives no uses for bearings.http1.config, but ApplyH1Config needs bearings.http1.conn.",
+        "Section 5.1 says the *Trusted variants 'Test builds (-Sa) still assert'. The S0 test list asks for '*Trusted do not check', and the M2 tests that store invalid bytes on purpose move to AddTrusted, and all unit tests build with -Sa. An assertion inside AddTrusted would break both requirements. The implementer put the -Sa assertion in ServerEncode and EncodeTrailers only, which matches the other 5.1 sentence. The design needs to pick one of the two rules.",
+        "Sections 5.2 and 9 ask for 'T2 inputs' in the differential test against hyper's encode_trailers. hyper cannot hold a CR/LF/NUL header value (HeaderValue::from_bytes rejects it), so T2 can only be tested as a unit-level assertion (test_headers_validate does this), not differentially.",
+        "The S0 benchmark budget (parse 152 ns, encode 121 ns) has no recorded build flags or binary, so a baseline comparison depends on assumed flags. I used -O3 -CX -XX -Xs for both trees; the same source built against M2 gives parse 143-146 ns and encode 118-121 ns."
+      ],
+      "criteria": [
+        "MET: All tests pass: the 506 M2 tests plus the new S0 tests (run_all.sh, -Sa test flags), with no regressions in the M2 differential suites — OUT_DIR=build/S0-verify1/unit sh tests/unit/run_all.sh -> test_parser N:361 E:0 F:0; test_codec N:77 E:0 F:0; test_role N:68 E:0 F:0; test_headers_validate N:22 E:0 F:0; 'unit tests run: 528'; 'run_all: passed'. 361+77+68 = 506, the M2 count. M2 differential scripts in build/S0-verify1: test_parser_",
+        "MET: Trailer diff identical to hyper's encode_trailers on 10,000 generated inputs — test_trailer_diff.sh 10000 1 -> 'trailers: 10000 cases (3397 with a trailer section, 6603 None), 0 mismatches'. Seed 7: 3447/6553, 0 mismatches. Seed 12345: 3565/6435, 0 mismatches. 100000 cases with seed 99: 34740/65260, 0 mismatches. Both the TByteVec path and the M2 TBytes path are compared. My o",
+        "MET: check-hot-asm.sh passes for ServerParse*, ServerEncode, EncodeHead, MakeEncoder, SetLengthEncoder, SetChunkedEncoder, TEncoder.*, TDecoder.Decode (and TByteVec.*) — Run through run_all.sh (OUT_DIR=build/S0-verify1/unit/check-hot-asm), in both the prod (-O3) and test (-O2 -gl -Cr -Co -Ct -Sa) configurations: ServerParse* 5, ServerEncode 2, EncodeHead 3, MakeEncoder 1, SetLengthEncoder 1, SetChunkedEncoder 1, TEncoder.* 18, TDecoder.Decode 2, TByteVec.* 5 routine",
+        "MET: parse <= 152 ns and encode <= 121 ns, +10 % (<= 167.2 / 133.1 ns) — Pinned with taskset -c 2 (a CPU in configuration B's server set); governor powersave (recorded, not changed); load average 0.20-0.43; nothing else heavy running. All binaries built with -O3 -CX -XX -Xs in build/S0-verify1/bench. New bench/bench_role, two runs: parse median 144.1 / 142.9 ns; encode T",
+        "MET: Every skeleton unit compiles on its own (proves the interface uses graph is acyclic) — sh tools/compile-each-unit.sh build/S0-verify1/each-unit -> 'compiled 26 units on their own, 0 failed'; unit-graph.py -> 'interface uses graph: 26 units, acyclic' with a valid topological order. Every type and function that 8.1 lists for src/ and for tests/support/bearings.test.mocktransport is present (c"
+      ]
+    },
+    {
+      "step": "S1",
+      "ok": true,
+      "unmet": [],
+      "defects": [
+        {
+          "where": "src/rt/bearings.rt.loop.pas TLoop.Create / TLoop.Destroy",
+          "problem": "If the constructor raises before WakeFd/EpFd are assigned (e.g. eventfd2 fails with EMFILE), FPC runs Destroy with the zero-initialised field and `if WakeFd >= 0 then SysClose(WakeFd)` closes fd 0. Reproduced: probe build/S1-verify1/probe/ctorfail under RLIMIT_NOFILE=4 prints 'constructor raised: eventfd2 failed: errno 24 | fd 0 after failure: CLOSED (errno 9)'. Fix: set EpFd := -1; WakeFd := -1 first thing in Create.",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/unit/test_rt_loop.pas Post_race_with_sleeping_loop",
+          "problem": "A lost wakeup is detected only as a hang. The producer's 10 s detector sets PostLost, but the test then calls RequestStop, which posts through the same inbox; the stack is non-empty, so no eventfd write happens and WaitFor blocks forever. With the re-check mutation the test ran past 300 s. run_all.sh has no timeout, so a regression hangs CI instead of failing. Stop the loop through something other than the inbox (e.g. write WakeFd directly or arm a timer) after PostLost.",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/unit/run_all.sh / test_rt_echo.sh",
+          "problem": "Without a valgrind on PATH, run_all runs the echo test natively and still reports 'run_all: passed', so a passing run_all does not show the S1 valgrind criterion. Also undocumented: the locally extracted valgrind needs VALGRIND_LIB.",
+          "severity": "minor"
+        },
+        {
+          "where": "bench/compare.py",
+          "problem": "Runs with wrk CPUs > 90 % busy are flagged CLIENT-BOUND but still included in the median. Design 7.6 says such runs are 'not used for the gate'. This did not matter here (0 flagged runs).",
+          "severity": "minor"
+        },
+        {
+          "where": "bench/bench2.sh header comment",
+          "problem": "Refers to 'bench/compare.sh'; the tool is bench/compare.py.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/rt/bearings.rt.net.pas TListener / bench/rawsrv.pas TRawConn.Create",
+          "problem": "An exception escaping OnAccept aborts the listener task and closes the listening socket for that loop for good (implementer flagged this too). rawsrv's TRawConn.Create raises on an epoll_ctl(ADD) failure (e.g. ENOMEM/ENOSPC), so one failed registration would end accepting on that loop. This needs a decision before S5.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/rt/bearings.rt.loop.pas DrainInbox",
+          "problem": "lmWakeExchange/lmFreeExchange messages are silently dropped while LoopMsgHandlers[...] is nil. That is acceptable in S1, but nothing asserts that the handler is assigned once bearings.http.exchange exists.",
+          "severity": "minor"
+        }
+      ],
+      "design_problems": [
+        "Deviation 1 (rawsrv per-request work): the design says 'static response on TLoop without HTTP state', but the exit criterion compares it to wdproto, which runs the real ServerParse/ServerEncode. Only the implementer's reading (same parse/encode work as wdproto POOL=1, no state machine) makes '+-3 % of wdproto' measure the runtime alone. I agree with that reading. The design text should say so, because a fixed-bytes server would fail the criterion by being faster.",
+        "Design 1.2 asks for both the literal /sys/fs/cgroup/cpu.max and 'same result as num_cpus::get()'. These conflict for a non-root cgroup. The implementation ports num_cpus 1.17.0 linux.rs (checked line by line: Subsys::load_cpu, MountInfo::load_cpu, translate/strip_prefix, ceil, min(quota, logical)). The only differences are that the cgroup path is taken as everything after the second ':' instead of only the third field, and the fallback reads /sys/devices/system/cpu/online instead of sysconf.",
+        "Design 0.4 C-F2 / 1.4 cite tokio scheduled_io.rs:357-361 for 'rdError is never cleared' and include rdError in the read/write masks. In tokio 1.53.2, Direction::Read/Write masks are READABLE|READ_CLOSED and WRITABLE|WRITE_CLOSED (driver.rs:346-351), and clear_readiness excludes only READ_CLOSED and WRITE_CLOSED, so ERROR can be cleared. This is harmless on TCP, where EPOLLERR comes with HUP/RDHUP, but the design's citation is inaccurate. Related: on EAGAIN tokio loops back to poll_ready, while the port returns Pending even when a sticky closed bit is set. That only matters if a read with a closed bit can return EAGAIN.",
+        "Design 1.3 / DV-9: on EMFILE/ENFILE the listener stays registered level-triggered and the batch 'retries on the next readiness'. With connections waiting in the backlog, epoll_wait returns at once on every iteration, so the loop spins at 100 % CPU until fds are freed; logging is limited to once per second but the spinning is not. A backoff (deregister, or skip the listener for N ms through a timer) should be specified.",
+        "The S1 gate margin is thin: rawsrv is 2.2-2.8 % slower than wdproto at depth 16 (0.9783 and 0.9718 in my run; 0.977/0.974 in the implementer's). The criterion is met, but the virtual dispatch (OnIo -> Run, virtual Read/Write) already uses most of the 3 %. This is worth noting for the S4/S5 budget, which is computed from wdproto."
+      ],
+      "criteria": [
+        "MET: S1 tests pass: test_rt_timer (sorted-list reference, tokio rounding table) — OUT_DIR=build/S1-verify1/unit2 sh tests/unit/run_all.sh -> 'test_rt_timer: Time:00.286 N:16 E:0 F:0 I:0 (exit 0)' (includes Tick_rounding_matches_tokio, Level_for_matches_tokio_tests, Random_vs_sorted_reference). Mutation (Arm never refiles an earlier deadline) -> 'Rearm_earlier_refiles Failed' and ",
+        "MET: test_rt_loop: MPSC 8x10^7 — '[mpsc] 8 x 10000000 pushes, 1272176 batches, 3.70 s'; Mpsc_8_producers_10e7_each passes (per-producer FIFO, count, one was-empty push per non-empty batch).",
+        "MET: test_rt_loop: Sleeping/eventfd race — '[post] 1000000 messages, 86810 epoll_waits, 82426 eventfd writes, 1.89 s', 0 lost. Mutation removing the inbox re-check after InterlockedExchange(Sleeping,1) -> the test did not finish in 300 s (detected as a hang, not as an assertion failure).",
+        "MET: test_rt_loop: F10 regression — F10_closed_task_skipped_and_freed_after_batch and F10_closed_task_in_run_queue_freed_after_leaving_it pass; test_rt_loop N:19 E:0 F:0.",
+        "MET: test_rt_loop: exception resume — Exception_aborts_task_and_resumes_batch (asserts Waits = W+1, one abort, aborted task freed) and Exception_in_message_loses_no_message pass.",
+        "MET: test_rt_net: readiness rules incl. data+FIN, short write vs short writev, TCP_NODELAY inheritance read back — test_rt_net N:13 E:0 F:0 (Data_and_FIN_in_one_event, Short_write_clears_rdWrite, Short_writev_keeps_rdWrite, Accepted_socket_inherits_TCP_NODELAY, Listener_without_nodelay_gives_none). Mutation making the short read also clear rdReadClosed -> 'Data_and_FIN_in_one_event Failed: rdReadClosed is sticky",
+        "MET: syscall stubs vs RTL — test_rt_sys: all 21 stubs exercised in *_vs_rtl tests plus Stubs_leave_errno_alone; 'test_rt_sys: N:21 E:0 F:0 I:0'.",
+        "MET: DefaultLoopCount = nproc and under taskset -c 0-3 = 4 — nproc -> 16; ./test_rt_sys --print-loop-count -> 16; taskset -c 0-3 ./test_rt_sys --print-loop-count -> 4; DefaultLoopCount_equals_nproc and DefaultLoopCount_under_taskset_0_3_is_4 pass.",
+        "MET: All earlier tests keep passing (506 M2 + S0 suites) — run_all: test_parser N:361, test_codec N:77, test_role N:68, test_headers_validate N:22, all E:0 F:0; 'unit tests run: 597'; 'run_all: passed' EXIT 0. Diff scripts: 'trailers: 10000 cases ... 0 mismatches', 'differential: 2869420 result lines identical' (parser), 'decode: 100000 cases, 0 mismatches ",
+        "MET: rawsrv within +-3 % of wdproto in all 4 cells of configuration B — Clean -O3 builds in build/S1-verify1/bench, both THREADS=4 taskset -c 0-3, wrk 4-15 x12, bench/compare.py 5x30 s alternating + 10 s warm-up, governor powersave (not changeable). Response bytes identical after date normalisation (1, 16-pipelined, 404, close, 1.0). Medians wdproto/rawsrv: c256 d1 7161",
+        "MET: Echo test moves 1 GB with random split sizes under valgrind without errors — VALGRIND_LIB=.../usr/libexec/valgrind VALGRIND=.../valgrind sh tests/unit/test_rt_echo.sh 1073741824 1 -> 'echo client: sent and verified 1073741824 of 1073741824 bytes', 'Memcheck ... Valgrind-3.26.0', 'definitely lost: 0 bytes', 'ERROR SUMMARY: 0 errors from 0 contexts', 'test_rt_echo: passed'. Wi"
+      ]
+    },
+    {
+      "step": "S2",
+      "ok": true,
+      "unmet": [],
+      "defects": [
+        {
+          "where": "src/rt/bearings.rt.buf.pas TReadBuf.Reserve / SpareData (contract for S3 PollReadFromIo)",
+          "problem": "After ReleaseIdle, Block = nil and SpareData returns nil + Len. A block is taken back only inside Reserve(N) with N > 0. hyper calls `reserve(next)` only when `remaining_mut < next` (io.rs:241), so a literal port of that statement in S3 would write through a nil pointer after an idle release. The implementer documented this (finding 3), and it is not a wrong result in S2. S3 must call Reserve(next) before every write into SpareData (or materialize the block some other way), and that change to the hyper statement should go into the deviation register.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/rt/bearings.rt.buf.pas TReadBuf.SplitTo / SplitOff when Block = nil",
+          "problem": "Calls Materialize(nil), which takes a heap block outside the loop pool. Only N = 0 on a buffer with no block reaches this (with_capacity(0), or idle). hyper's split_to(0) at EOF (io.rs:367) is preceded by a reserve, so the case should not happen in practice; it costs memory only, nothing on the wire.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/rt/bearings.rt.buf.pas TReadBuf.Freeze with an empty remainder",
+          "problem": "Returns a view with no block, whereas Rust's empty Bytes keeps the allocation. This changes memory only (the implementer's finding 4). The table test drops empty frozen parts on both sides, so it cannot observe the difference.",
+          "severity": "minor"
+        }
+      ],
+      "design_problems": [
+        "Design 2.2.1, paragraph 'Consequences that the port keeps', is wrong where it says 'once unique, a reserve that fits sets Cap := Len + Additional, so the next read is at most Additional bytes'. Proof: reserve_inner is entered only when Len + Additional > Cap. reserve, advance, advance_mut, split_to and with_capacity all keep Offset + Cap = VecCap. So NewCap + Off > Cap + Off = VecCap, and the 'v_capacity >= new_cap + offset' branch cannot be taken. In hyper's flow a unique-ARC reserve therefore always reclaims (Cap = VecCap, Off = 0) or grows. Evidence on the real BytesMut (seed-1 table): 263 044 rows from scripts without split_off, 0 rows with off + cap != veccap; 32 787 such rows exist only in scripts that use split_off. The code follows bytes, so only the design text needs correcting.",
+        "Design 2.2.1 maps SpareData to `chunk_mut()` but leaves out chunk_mut's `if capacity == len { reserve(64) }` (bytes_mut.rs:1285-1289). I checked every hyper server caller of poll_read_from_io: io.rs:224 runs after the `curr_len >= max` check, io.rs:366 only with an empty buffer, and conn.rs:465, 497 and 542 also only with an empty buffer. So next >= 1, and after the conditional reserve, cap > len. The branch cannot be reached and nothing on the wire changes, but S3 should note this rather than port SpareData as an exact chunk_mut."
+      ],
+      "criteria": [
+        "MET: S2 exit: the Pascal table equals the Rust (real bytes 1.12.1 BytesMut) table for 10 000 random scripts and the hand-written ones — Command: `OUT_DIR=build/S2-verify1/readbuf sh tests/unit/test_rt_readbuf.sh 10000 1`. Output: ` Time:09.126 N:15 E:0 F:0 I:0`, `scripts: 10035 (35 hand-written), rows: 423669, all equal in 3 modes`, then `test_rt_readbuf: TReadBuf table = BytesMut table, TByteVec table = Vec<u8> table`. I also diffe",
+        "MET: Same result with seeds the implementer did not use, and with a larger script count — Seeds 2, 3, 42, 777, 31337 and 2026 with 10 000 scripts each all give exit 0 and `N:15 E:0 F:0` (420319, 419987, 422427, 425341, 421594 and 424254 rows, all equal in 3 modes). Seed 9 with 40 000 scripts: exit 0, `scripts: 40035 (35 hand-written), rows: 1682847, all equal in 3 modes`.",
+        "MET: Tests named by S2: every reserve_inner branch, split views kept and dropped, idle release and re-acquire — Coverage counts from readbuf_coverage.txt, seed 1 (hand / random): KIND_VEC reuse 2/512; KIND_VEC Vec::reserve 30/20948; ARC unique fit 3/1009; ARC unique reclaim 3/4836; ARC unique grow 3/11777; ARC shared len+additional 13/24298; ARC shared original capacity 3/1151; idle re-acquired 15/7598; promo",
+        "MET: Test named by S2: TByteVec growth vs Vec::reserve — `Bytevec_table_equals_vec` passes on 313 322 rows (4 hand-written + 10 000 random Vec<u8> scripts), with heap blocks and with a pool.",
+        "MET: The tests detect porting mistakes (my own mutation run on copies of bearings.rt.buf.pas, source untouched) — 17 mutants were replayed against the seed-1 tables. 15 are caught (exit 1-3), including: C-F3 (`Cap := VecCap - Off` in the fit branch); dropping the original-capacity rule; `Off > Len`; no minimum of 8; no copy in GrowBlock; a lost IdleOff; a leaked Detached block; a wrong VEC shift condition; a mi",
+        "MET: All earlier tests keep passing (506 M2 tests and the S0/S1 suites), the S1 echo test runs under valgrind, the asm check passes — Command: `OUT_DIR=build/S2-verify1/unit VALGRIND=build/S2-impl/vgwrap.sh sh tests/unit/run_all.sh`. Results: test_parser N:361, test_codec N:77, test_role N:68 (= 506), test_headers_validate 22, test_rt_sys 21, test_rt_timer 16, test_rt_loop 19, test_rt_net 13, test_rt_readbuf 15, all `E:0 F:0`; `un",
+        "MET: The asm check really detects a frame in TReadBuf (negative test) — In a copy of src/ and tools/, I added an AnsiString local to TReadBuf.ReleaseIdle. Output: `FRAME TReadBuf.* 16 routine(s), 1 with a frame / frame in TREADBUF.RELEASEIDLE` in both configurations, then `check-hot-asm: FAILED`.",
+        "MET: Units compile on their own; the interface graph is acyclic — `tools/compile-each-unit.sh` reports `interface uses graph: 26 units, acyclic`.",
+        "MET: No memory errors or leaks in TReadBuf/TBytesView — valgrind memcheck with --leak-check=full on test_rt_readbuf (535 scripts, seed 5): `N:15 E:0 F:0`, `definitely lost: 0`, `ERROR SUMMARY: 0 errors`. A heaptrc (-gh) build on the full seed-1 tables: `N:15 E:0 F:0`, `0 unfreed memory blocks : 0`. Pool mode 2 also checks the block accounting after every"
+      ]
+    },
+    {
+      "step": "S3",
+      "ok": true,
+      "unmet": [],
+      "defects": [
+        {
+          "where": "src/http1/bearings.http1.io.pas:576-598 (TWriteBuf.Buffer, Flatten branch) together with DV-5",
+          "problem": "In Flatten mode a qkFile entry goes into the queue, but a later memory entry is copied into the head cursor. The cursor is flushed before the queue, so those bytes would go out before the file. The only guard is the Assert in HeadersMut, which is compiled out of production builds. Probe build/S3-verify1/probe/probe1.pas: with -Sa it raises `EAssertionFailed: TWriteBuf.HeadersMut: queued buffers remain`; with -O3 it prints `accepted; cursor now holds 5 bytes, queue 1 entries`, so the cursor is written ahead of the file. Correct ordering depends entirely on S4/S8 never buffering body bytes (a chunk end, trailers) after a file entry. A runtime check would close this: in Flatten mode, queue any entry while the queue is non-empty.",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/unit/test_h1_io.pas (no test checks the cursor after a Flatten flush)",
+          "problem": "Mutation m25 (deleting `WriteBuf.Headers.Reset` after a complete write in PollFlushFlattened, io.rs:325 `headers.reset()`) passes all 41 tests. Without the reset, Pos stays at Len after a flush. Heads appended later through HeadersBuf (ServerEncode does not call maybe_unshift) would then grow the Vec on every keep-alive response. No test checks Headers.Len = 0 and Pos = 0 after a Flatten flush.",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/unit/test_h1_io.pas Parse_max_header_size",
+          "problem": "Mutation m07 (`CurLen >= Ctx.MaxHeaderSize` changed to `>`) passes all tests. The test uses 200 bytes against a limit of 100, so the boundary hyper defines with `>=` at io.rs:204 is never tested, although design 2.2.3 names the `>=`. The max_buf_size boundary is tested (m06 was killed).",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/unit/test_h1_io.pas Write_buf_flatten_partially_flushed",
+          "problem": "Mutation m03 (MaybeUnshift `Cap - Len >= Additional` changed to `>`) passes. The case where the spare room exactly equals `additional` (no drain in hyper, io.rs:483) is not tested.",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/unit/test_h1_io.pas:439-465 Test_write_buf_queue",
+          "problem": "Design 7.2 says 'one writev of 4 slices'. The test checks one write call and the concatenated bytes, not the slice count: the vectored mock concatenates the iovecs, and no ChunksVectored count is asserted.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/http1/bearings.http1.io.pas:857-860 PollReadFromIo",
+          "problem": "BytesMut::chunk_mut reserves 64 bytes when capacity = len (bytes_mut.rs:1286), and hyper reads into chunk_mut(). The port does not have this branch: with zero spare capacity it would call Read with length 0, and 0 means EOF. With the current callers this cannot happen (Parse returns TooLarge before Len >= Max, and read_mem, maybe_notify and force_io_read read only with an empty buffer). It is still a missing branch of the port, so nothing records it if S4 adds a caller that reads with a full buffer.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/http1/bearings.http1.io.pas TBufList.Push (queue array)",
+          "problem": "SizeOf(TQueuedBuf) = 200 and SizeOf(TQueuedArray) = 3200 (probe1), so the array takes a pool class-0 block of 8 KiB. Design 4.3 estimates the queue array at about 2 KiB. It is held only while entries are queued in Queue mode, but the 4.3 RSS table is too low by that amount.",
+          "severity": "minor"
+        }
+      ],
+      "design_problems": [
+        "DV-5 (qkFile in Flatten mode) can deadlock with pipeline_flush, which the design makes the production default (0.3 decision 1). io.rs:279 makes PollFlush return Ready without writing while the read buffer holds bytes. CanHeadersBuf is false while the file entry is queued, and hyper's can_write_head (conn.rs:575-584) then keeps the dispatcher from polling the next response (dispatch.rs:360-363). Take a pipelined client with 3 or more requests in the buffer whose first response has a file body. The file is never flushed, the next head can never be buffered, and reading stops in KeepAlive, so nothing wakes the task. Probe build/S3-verify1/probe/probe2.pas (FlushPipeline, response 1 = head + qkFile, request 2 parsed, request 3 still buffered) prints `PollFlush = ipReady writes=0 read buffer=19 buffered=43 CanHeadersBuf=FALSE` three times in a row. hyper's Flatten mode has no queue, so for the same input with a Full body it buffers head 2 and makes progress. Design 2.2.4 argues byte order from CanHeadersBuf but does not cover liveness under pipeline_flush. S4/S8 need a rule for this, for example: flush when a qkFile entry is queued even if the read buffer is non-empty, or copy small files into the cursor in Flatten mode.",
+        "Design 2.2.4 / DV-5 assumes nothing is buffered after a qkFile entry in Flatten mode, but neither the design nor TWriteBuf.Buffer enforces it outside -Sa builds (see the first defect). The design should state that rule for the conn layer (known-length file bodies only: no chunk terminator, no trailers after a file), or the write buffer should keep FIFO order by queueing whenever the queue is non-empty."
+      ],
+      "criteria": [
+        "MET: S3 exit: the 11 io.rs tests (design 7.2) pass — Clean build in /home/jps/Code/wd-40/build/S3-verify1/unit via `OUT_DIR=.../build/S3-verify1/unit VALGRIND=<scratchpad>/valgrind/usr/bin/valgrind VALGRIND_LIB=... sh tests/unit/run_all.sh` -> `test_h1_io: Time:00.009 N:41 E:0 F:0 I:0 (exit 0)`. TTestIoRs has the 11 tests from the 7.2 table (Test_iobu",
+        "MET: S3 exit: the extra io tests pass (pipeline_flush skip, PollShutdown with bytes buffered, partial writev inside prefix/data/suffix, WriteZero, qkFile between memory entries over a socketpair, idle release keeps read sizes) — TTestIoExtra has 30 tests, all inside the N:41 E:0 F:0 above. Each item the design requires has a test: Pipeline_flush_skips_flush_while_read_buffer_not_empty, Poll_shutdown_never_shuts_down_with_bytes_buffered, Partial_writev_inside_prefix_data_suffix (every split 1..33), Write_zero_flatten/Write_z",
+        "MET: S3 exit: check-hot-asm.sh passes for TH1Io.*, TReadBuf.*, TByteVec.* — Same run_all, both configurations: `== prod (-O3) ... ok TByteVec.* 6 routine(s) ... ok TReadBuf.* 16 routine(s) ... ok TH1Io.* 24 routine(s)`, the same for `== test (-O2 -gl -Cr -Co -Ct -Sa)`, then `check-hot-asm: passed`. 24 is every TH1Io method; 16 and 6 are every TReadBuf and TByteVec method. T",
+        "MET: All earlier tests keep passing (506 M2 tests + S0/S1/S2 tests) — run_all.sh: test_parser N:361, test_codec N:77, test_role N:68 (506 M2), test_headers_validate 22, test_rt_sys 21, test_rt_timer 16, test_rt_loop 19, test_rt_net 13, test_rt_readbuf 15 (Rust tables: 35 hand + 10000 random BytesMut scripts, 4 + 10000 Vec scripts), all E:0 F:0; `unit tests run: 653`; ",
+        "MET: Additional checks: memory and the S0 parse bound after the M2 role.pas change — valgrind memcheck on test_h1_io: `ERROR SUMMARY: 0 errors`, 0 bytes definitely/indirectly/possibly lost. heaptrc build: `0 unfreed memory blocks : 0`. bench_role (-O3, taskset -c 2): `parse min 154.8 median 155.6 ns/op` (S0 bound 167.2), `encode (TByteVec, 2 headers) median 79.7-80.1` (bound 133.1).",
+        "MET: Independent mutation run (my own 22 mutants of bearings.http1.io / bearings.rt.buf, build/S3-verify1/mut/mut.log) — 19 of 22 killed. Survivors: m03 (MaybeUnshift `>=` changed to `>`), m07 (Parse max_header_size `>=` changed to `>`), m25 (Headers.Reset removed from PollFlushFlattened). These are test gaps, listed under defects; the code itself matches hyper at all three places."
+      ]
+    },
+    {
+      "step": "S4",
+      "ok": true,
+      "unmet": [],
+      "defects": [
+        {
+          "where": "tests/unit/test_h1_conn.pas, test_body_chan.pas (test strength)",
+          "problem": "Four of my 28 hand-made mutants survive all three S4 suites (the implementer reported 24/24 killed with a different set). (1) Removing Io.ConsumeLeadingLines from TH1Conn.OnReadHeadError: no test sends leading CRLF then EOF while idle. hyper returns Ready(None) with outcome ok; without the call the result is Err(Incomplete). (2) Removing TryKeepAlive at the end of PollReadBody (conn.rs:426-428): no test ends the request body after the response has already reached KeepAlive. (3) PollReadBody returning poSome with an empty frame instead of poNone at body EOF: no test sends a chunked terminator in its own read. (4) TBodyChan.PollNext waking the sender unconditionally on the pending-error branch. A probe program (build/S4-verify1/probe) shows the current code is correct in cases 1-3: 'crlf+eof: None', 'after body end: idle=TRUE reading=0', 'body3: None len=0 reading=3'. Only the tests are missing.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/http1/bearings.http1.conn.pas TConnState.PrepareUpgrade / TH1Conn.Done vs src/http/bearings.http.exchange.pas TExchange.ReleaseRequest",
+          "problem": "The connection side frees the TUpgradeSlot (Slot.Free) while the exchange still holds it in FUpgrade. Probe build/S4-verify1/probe2: after Conn.Done, Ex.UpgradeSlot is still non-nil and is the same freed object. If the exchange is then recycled or destroyed with its request not yet released, Recycle calls ReleaseRequest, which reads FUpgrade.Handler and writes FUpgrade.RxAlive on freed memory. No S4 path reaches this, because CompleteCall and Cancel release the request first. It becomes a use-after-free if S5's Finish calls Conn.Done before Cancel or Recycle of the exchange. hyper has no such issue: Pending and OnUpgrade are separate halves of an Arc oneshot.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/http/bearings.http.exchange.pas TExchange.Cancel",
+          "problem": "Deviates from design 3.2.3 rule 6. Cancel does not call TServiceCall.Drop(Ex, False) and does not release the transport reference. The implementer moved Drop to the S5 dispatcher. The S4 tests call C.Drop by hand after FEx.Cancel, so 'Drop exactly once on cancel' is enforced by the test scaffolding, not by the code under test.",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/unit/test_body_chan.pas Channel_abort, Size_hint",
+          "problem": "Weaker than the hyper tests they port. Channel_abort asserts only brError; incoming.rs asserts err.is_body_write_aborted(). Size_hint checks the ContentLength mapping in FillHead, not a body-channel size hint. hyper's Incoming content_length.sub_if and size_hint are not ported, and the design does not define an equivalent API.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/http1/bearings.http1.conn.pas TConnState.PrepareUpgrade",
+          "problem": "Creates a new TUpgradeSlot for every upgrade or CONNECT request; design 2.7 says the slots are pooled. Also, no S4 code frees a slot once it is fulfilled (that delivery is S6). This is an allocation per upgrade request, not on the plaintext path.",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/unit/test_h1_conn.pas comments on the TTestConnRs tests",
+          "problem": "The conn.rs line references in the test comments are off by about 26 lines. Example: conn_reads_request_head is at conn.rs:1316, but the comment says 1342-1355; conn_writes_chunked_body is at 1444, the comment says 1466. The references in src/http1/bearings.http1.conn.pas are correct (spot-checked: close 1077, try_keep_alive 1100, idle 1132, prepare_upgrade 1176, maybe_notify 523, end_body 801).",
+          "severity": "minor"
+        },
+        {
+          "where": "environment",
+          "problem": "valgrind is not installed and perf is blocked (perf_event_paranoid=4). The S1 1 GiB echo inside run_all ran natively and passed. That S1 criterion needs valgrind and stays unverified; it is not an S4 criterion.",
+          "severity": "minor"
+        }
+      ],
+      "design_problems": [
+        "0.4 P-P1 and risk R1 say the 420 ns budget is 'checked at S4 (dispatcher micro-benchmark over mock IO)', but S4's exit criteria in section 9 do not include it, and the dispatcher, with its micro-benchmark gate, is S5. The design contradicts itself. Evidence for the part that can be measured now: I rebuilt bench/bench_conn.pas at -O3 and pinned it with taskset -c 2 (governor powersave). Five runs at depth 16 gave 458.3, 461.1, 459.4, 459.2 and 458.7 ns per request; depth 1 gave 505.2 ns. bench_role on the same CPU gives encode (TByteVec, 2 headers) 79.3-80.0 ns and Clear + 2 x AddTrusted 31.2-31.5 ns, which matches the implementer's numbers. The connection layer alone therefore adds about 190 ns over parse, encode and the header list: about 45 % of the 420 ns (0.80 x) budget, and already above the 90 ns (1.00 x) budget, before the dispatcher, exchange and service call exist. This should be watched as R1 at S5. I could not profile it because perf is blocked.",
+        "3.2.3 rule 6 puts TServiceCall.Drop(Ex, False) inside TExchange.Cancel, but the TExchange interface in 3.2.2 has no reference to its call object, so Cancel cannot do this as specified. The implementation moves Drop to the dispatcher's Finish. The design text should say which component owns the call and calls Drop.",
+        "The 2.4.5 wake-source table lists only the sender-side wake for the body channel. chan.rs also wakes the receiver's registered waker on try_send_data, send_error and Sender drop, and the implementation (correctly, as tokio does) re-queues the connection task in those cases. The table is incomplete.",
+        "3.4 says BodyCopy copies 'into the exchange's buffer', and 4.2 says it lives until 'the frame is written, kept alive by the exchange'. Under pipelining the exchange is reused for the next request while the earlier response's queued body is still unflushed (rule 3.2.3.4: released when 'the response body is finished'), so a per-exchange buffer could be overwritten. The implementer's pool block owned by the TBodyData fixes this; the design text should be updated.",
+        "2.7 describes TUpgradeSlot as 'pooled; shared by the connection and the exchange' but gives no ownership or lifetime rule. As implemented, the connection frees the slot while the exchange may still reference it (see defects). S5 and S6 need an explicit rule, either a reference count or 'the exchange's reference is cleared before the connection frees the slot'."
+      ],
+      "criteria": [
+        "MET: S4 exit 1: all tests pass (S4 suites plus all earlier suites: the 506 M2 tests and the S0-S3 tests) — Clean dir: OUT_DIR=/home/jps/Code/wd-40/build/S4-verify1/unit sh tests/unit/run_all.sh -> test_parser N:361, test_codec N:77, test_role N:68 (=506 M2), test_headers_validate 22, test_rt_sys 21, test_rt_timer 16, test_rt_loop 19, test_rt_net 13, test_rt_readbuf 15, test_h1_io 41, test_h1_conn 64, tes",
+        "MET: S4 exit 2: heaptrc clean — run_all heaptrc stage (-gh, HEAPTRC=log=...): test_h1_conn.heap '19856 memory blocks allocated ... 0 unfreed memory blocks : 0'; test_body_chan.heap '799 ... 0 unfreed'; test_exchange.heap '1049 ... 0 unfreed'. I also built and ran test_h1_io, test_rt_timer, test_rt_net, test_headers_validate, test_",
+        "MET: S4 exit 3: check-hot-asm.sh passes for TH1Conn.*, TBodyChan.*, TExchange.{Respond,TryRead,ReleaseRequest} — run_all -> check-hot-asm --s4, both configurations: 'ok TH1Conn.* 52 routine(s)' (52 = every declared method), 'ok TConnState.* 12', 'ok TBodyChan.* 11', 'ok TExchange.Respond/TryRead/ReleaseRequest 1 each', 'check-hot-asm: passed'. My negative control on a copy of src/ injected a string local into "
+      ]
+    },
+    {
+      "step": "S5",
+      "ok": true,
+      "unmet": [],
+      "defects": [
+        {
+          "where": "tests/unit/test_h1_dispatch.pas Unbuffered_stream (and tests/support/bearings.test.scriptio.pas TScriptIo.Accept)",
+          "problem": "The hot-polling check cannot fail. The test asserts that 'write pending' never appears twice in a row, but the script alternates WriteLimit/WritePending, and TScriptIo does not flag a write made while WriteBlocked is still set. A hot re-poll therefore consumes the next WriteLimit entry and succeeds. hyper's unbuffered_stream.rs fails after more than 4 write polls while the sleep is pending, so the port is weaker than the original. Ready_on_poll_stream asserts only that the response completes. Indirect cover: conn-diff compares write-call counts with hyper.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/server/bearings.server.pas TServer.GracefulShutdownConnections / TServer.Stop",
+          "problem": "From code reading, not run. GracefulShutdownConnections posts FGsMsg to every loop and then calls RTLEventWaitFor with no timeout. If any loop thread has already left Run (after Stop or StopNow), the message is never processed and the caller blocks forever. Separately, Stop tests and sets the plain Boolean FStopRequested, so two threads calling Stop at the same time can both post the same intrusive TLoopMsg (FStopMsg) and corrupt the loop's MPSC stack. The design says Stop may be called from any thread. S8 owns the full Stop, but GracefulShutdownConnections is S5 API.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/server/bearings.server.pas TServerLoop.OnAccept exception path",
+          "problem": "From code reading. If an exception is raised after NewTcpTransport and before D.Setup (for example from Observer.OnAccept or WrapTransport), D.Abort finds Conn.Io.Io = nil and never frees the TTcpTransport object. The fd is still closed by TIoTask.Destroy. This is a small leak on an exception-only path. OnAccept also uses one try/except per accepted connection; that cost is per connection, not per request.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/http/bearings.http.exchange.pas TExchangePool",
+          "problem": "The free list has no cap and no Trim. After a peak of N concurrent in-flight requests, a loop keeps N exchanges (each about 3 KB plus its header arenas) for the life of the process. Design 4.3 caps and trims only the block pool, so this does not violate the design, but it is unbounded retention that matters for S9's 'RSS flat after warm-up' soak criterion.",
+          "severity": "minor"
+        },
+        {
+          "where": "tests/unit/run_all.sh echo step",
+          "problem": "valgrind is not on PATH on this machine; it exists only at scratchpad/valgrind. Without VALGRIND set, run_all prints 'running natively (the S1 criterion needs valgrind)' and still reports 'run_all: passed' with exit 0. A default run therefore does not check the S1 valgrind criterion it claims to cover. I re-ran it under the scratchpad valgrind: 0 errors.",
+          "severity": "minor"
+        },
+        {
+          "where": "S5-3 quirk (parse error while the previous body is queued); conformance/conn-diff/scripts/mkhand.py, tests/unit/test_h1_dispatch.pas",
+          "problem": "Risk R5 says each kept hyper quirk has a named test. S5-3 has no hand script and no unit test. It appears only in generated scripts: the seed-1 hyper transcript contains 'content-length: 5\\r\\n\\r\\nHTTP/1.1 400 Bad Request\\r\\nconnection: close\\r\\ncontent-length: 0\\r\\n\\r\\nhello', and the Pascal side matches it. Design 7.5 builds S9's split fuzz with -Sa, so that fuzz will stop at the EncodeHead assertion on such inputs unless the user decides the question first.",
+          "severity": "minor"
+        },
+        {
+          "where": "build/S5-impl/gate/run_gate.sh",
+          "problem": "Design 7.6 says response bytes are checked with cmp before every gate run; the gate script does not do this. I ran the check separately and all three routes were identical. The implementer's compare.txt also prints the summary rows twice.",
+          "severity": "minor"
+        },
+        {
+          "where": "src/rt/bearings.rt.stream.pas TUpgraded.CreateFrom (latent, S6)",
+          "problem": "The readiness source and fd move to the TUpgraded only when the transport is itself the TTcpTransport that reads FromSrc. When an observer-wrapped transport is used (S6's TCountingTransport), nothing moves: the dispatcher keeps Src.Fd, and TIoTask.Destroy closes the fd that the upgraded stream still uses. S5 has no wrapping observer, so this cannot happen yet; S6 must handle it.",
+          "severity": "minor"
+        }
+      ],
+      "design_problems": [
+        "Sections 8.1 and 2.10 put TConnObserver, TConnParts and TConnOutcome in bearings.server. Section 2.4.1 has bearings.http1.dispatch hold an Observer: TConnObserver, and bearings.server uses bearings.http1.dispatch, so the design as written forms a cycle. The implementation declares them in bearings.http.exchange and bearings.http.error and re-exports them from bearings.server. This move is not entered in the Deviations log.",
+        "Section 7.6 and the S5 exit criterion name a micro-benchmark budget of 'prototype cost + 420 ns' but do not define the prototype-cost program. S5-11 defines it as rawsrv's per-request work over the same in-memory transport. That definition is reasonable and consistent with the end-to-end numbers: gate c256 d16 is 636 799 req/CPU-s against the prototype's 834 796 from section 0.2, about +370 ns per request. Still, the baseline was chosen by the implementer, not by the design.",
+        "Assumption 0.3.2 ('faithful' means hyper's bytes) requires reproducing a hyper 1.12.0 release-build bug that corrupts responses (S5-3). I confirmed it in hyper's own conn-diff transcripts: a 400 head written between a queued response's head and its body. hyper's only guards are debug_assert!s, in WriteBuf::headers_mut (io.rs:596) and Conn::encode_head (conn.rs:619). The Pascal -Sa builds assert at the same point. Whether to keep it or deliberately differ from hyper is a user decision; the implementer kept it faithful and flagged it correctly. It is reachable only with pipelining, a blocked socket write and a malformed next request, and the connection closes right after. If it is fixed, the conn-diff harness needs a documented exception."
+      ],
+      "criteria": [
+        "MET: Tests pass: full unit target (all M2 tests plus every suite from S0-S5), heaptrc clean, hot-asm check, echo test under valgrind — OUT_DIR=build/S5-verify1/unit sh tests/unit/run_all.sh -> test_parser N:361, test_codec N:77, test_role N:68 (506 M2), test_headers_validate 22, test_rt_sys 21, test_rt_timer 16, test_rt_loop 19, test_rt_net 13, test_rt_readbuf 15, test_h1_io 41, test_h1_conn 64, test_body_chan 18, test_exchange 19,",
+        "MET: Earlier differential suites and S0 bounds still hold after S5's edits to headers/io/buf/exchange — test_trailer_diff.sh: '10000 cases ... 0 mismatches'; test_role_diff.sh: '100000 parse + 100000 encode + 100000 uri cases, 0 mismatches' (plain and guard page); test_codec_diff.sh: 'decode: 100000 cases, 0 mismatches', 'headers: 20000 cases, 0 mismatches'; test_parser_diff.sh: '2869420 result lines ",
+        "MET: Every unit compiles on its own; uses graph acyclic — tools/compile-each-unit.sh -> 'compiled 27 units on their own, 0 failed', 'interface uses graph: 27 units, acyclic'.",
+        "MET: Dispatcher tests include h1_flush_before_yield, h1_shutdown_while_buffered, body_empty_chunks_ignored, pipelining 16/32, wake-source assertion on in all tests — test_h1_dispatch built with -dWD_DEBUG -Sa (run_all.sh), N:34 E:0 F:0; TearDown asserts WakeAssertFailures delta = 0. Mutation runs (build/S5-verify1/mut/mut.sh on a source copy): removing the flush-before-yield fails H1_flush_before_yield ('ends with the terminating chunk' assertion) and 8 hand / 4",
+        "MET: conn-diff harness: identical output on every hand-written script and on 10 000 generated scripts — run_all (seed 1): 'conn-diff hand: scripts=116 same=116 different=0 missing=0', 'conn-diff gen: scripts=10000 same=10000 different=0 missing=0', wake-source assertion failures 0. Extra seeds 2, 3, 7 (10 000 each): all 'same=10000 different=0'. Harness checked: hyper side is hyper 1.12.0 (Cargo.lock ",
+        "MET: Perf gate, configuration B: every cell >= 0.80 x hyper — Own build (build/S5-verify1/bench, current source), run_gate.sh = bench/compare.py, servers taskset 0-3 THREADS=4, wrk 4-15 x12, 10 s warm-up, 5 alternating 30 s runs, median: c256 d1 581808/608591 = 0.9560; c256 d16 2535734/2919050 = 0.8687; c1024 d1 547514/566033 = 0.9673; c1024 d16 2477085/280310",
+        "MET: Idle RSS <= 2 KB per connection (10 000 keep-alive connections) — idle.sh with bench/idle.py, 4 loops each: 'wd40: ready 10000; RSS before 2472 KB, with 10000 idle connections 14256 KB: 1206 bytes per connection'; 'hyper: ... 10702 bytes per connection'. (A first attempt was invalid because a stray plaintext process shared the SO_REUSEPORT port; it was killed and ",
+        "MET: RSS under load <= hyper's — End of gate run: 'VmHWM hyper 22428 KB, wd40 4868 KB'; per-second VmRSS samples max hyper 22728 KB, wd40 4868 KB.",
+        "MET: Dispatcher micro-benchmark within prototype + 420 ns per request at depth 16 — bench_dispatch (-O3, taskset -c 2): 'median depth 16: proto 407.0 ns/req, dispatch 642.7 ns/req, difference 235.7 ns/req', 'gate (depth 16): dispatch 642.7 <= proto 407.0 + 420 = 827.0 ns/req: PASS', exit 0; with MT=1: 639.8 vs 404.7 (+235.2), PASS. Depth 1 difference 351.4 ns (not gated). Baseline ",
+        "MET: No implicit exception frames on per-request paths beyond the 4.4 list — check-hot-asm.sh 'TH1Dispatcher.*' 'TOutBody.*' 'TExchange.*' 'TExchangePool.*' TeIsTrailers THttpHeaders.AddTrusted THttpHeaders.Clear BodyEmpty BodyStatic 'TLoopTask.*' 'TIoTask.*' 'TBlockPool.*': frames only in TH1DISPATCHER.CREATE, TH1DISPATCHER.FINISH, TIOTASK.CREATE, TEXCHANGE.CREATE (per conn"
+      ]
+    }
+  ],
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "S0"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "S1"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 3,
+      "title": "S2"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 4,
+      "title": "S3"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 5,
+      "title": "S4"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 6,
+      "title": "S5"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "S0:implement",
+      "phaseIndex": 1,
+      "phaseTitle": "S0",
+      "agentId": "a8afc49a10514a647",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791365020091,
+      "queuedAt": 1791365020089,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "cd /home/jps/Code/wd-40 && find src tests tools bench -newe…",
+      "promptPreview": "Project wd-40 (root /home/jps/Code/wd-40): FreePascal web framework + our own hyper-equivalent HTTP transport. Compiler FPC 3.2.2 (no closures). The approved M3 design is /home/jps/Code/wd-40/docs/design/m3-transport.md — it is the specification; read section 0 (decisions), the section 9 entry for your step, and every section that entry references. hyper source (read-only reference): /tmp/claude-1…",
+      "promptFramed": true,
+      "lastProgressAt": 1791366736118,
+      "tokens": 417009,
+      "toolCalls": 126,
+      "durationMs": 1716027,
+      "resultPreview": "# S0 report: M2 changes and interface skeletons\n\nS0 is done and every exit criterion passes. I ran each test and measurement myself, and re-ran all of them after the last source edit. Build output is under `/home/jps/Code/wd-40/build/s0-impl/`.\n\n## Exit criteria\n\n| Criterion | Result |\n|---|---|\n| All tests pass | `tests/unit/run_all.sh`: test_parser N:361, test_codec N:77, test_role N:68, test_he…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "S0:verify1",
+      "phaseIndex": 1,
+      "phaseTitle": "S0",
+      "agentId": "ae0d4b2031ffcf406",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791366739473,
+      "queuedAt": 1791366739458,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "Project wd-40 (root /home/jps/Code/wd-40): FreePascal web framework + our own hyper-equivalent HTTP transport. Compiler FPC 3.2.2 (no closures). The approved M3 design is /home/jps/Code/wd-40/docs/design/m3-transport.md — it is the specification; read section 0 (decisions), the section 9 entry for your step, and every section that entry references. hyper source (read-only reference): /tmp/claude-1…",
+      "promptFramed": true,
+      "lastProgressAt": 1791367278037,
+      "tokens": 196285,
+      "toolCalls": 59,
+      "durationMs": 538564,
+      "resultPreview": "{\"passed\":true,\"criteria\":[{\"criterion\":\"All tests pass: the 506 M2 tests plus the new S0 tests (run_all.sh, -Sa test flags), with no regressions in the M2 differential suites\",\"met\":true,\"evidence\":\"OUT_DIR=build/S0-verify1/unit sh tests/unit/run_all.sh -> test_parser N:361 E:0 F:0; test_codec N:77 E:0 F:0; test_role N:68 E:0 F:0; test_headers_validate N:22 E:0 F:0; 'unit tests run: 528'; 'run_al…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "S1:implement",
+      "phaseIndex": 2,
+      "phaseTitle": "S1",
+      "agentId": "ae086df7378308b5b",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791367280901,
+      "queuedAt": 1791367280899,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "cd /home/jps/Code/wd-40 && kill $(cat build/S1-impl/bench/w…",
+      "promptPreview": "Project wd-40 (root /home/jps/Code/wd-40): FreePascal web framework + our own hyper-equivalent HTTP transport. Compiler FPC 3.2.2 (no closures). The approved M3 design is /home/jps/Code/wd-40/docs/design/m3-transport.md — it is the specification; read section 0 (decisions), the section 9 entry for your step, and every section that entry references. hyper source (read-only reference): /tmp/claude-1…",
+      "promptFramed": true,
+      "lastProgressAt": 1791371564720,
+      "tokens": 379871,
+      "toolCalls": 124,
+      "durationMs": 4283818,
+      "resultPreview": "S1 is implemented and every S1 exit criterion passes, but I measured all of it with my own reading of how `rawsrv` should work (deviation 1 below). rawsrv comes out 1.5–2.6 % slower than wdproto in every cell, so the slowdown is consistent and not noise. Valgrind is not installed on this machine, so the 1 GiB echo run used a valgrind I extracted locally from the Ubuntu package, without installing …"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "S1:verify1",
+      "phaseIndex": 2,
+      "phaseTitle": "S1",
+      "agentId": "a311596a46298c31b",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791371568108,
+      "queuedAt": 1791371568105,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "Project wd-40 (root /home/jps/Code/wd-40): FreePascal web framework + our own hyper-equivalent HTTP transport. Compiler FPC 3.2.2 (no closures). The approved M3 design is /home/jps/Code/wd-40/docs/design/m3-transport.md — it is the specification; read section 0 (decisions), the section 9 entry for your step, and every section that entry references. hyper source (read-only reference): /tmp/claude-1…",
+      "promptFramed": true,
+      "lastProgressAt": 1791373842424,
+      "tokens": 249584,
+      "toolCalls": 76,
+      "durationMs": 2274316,
+      "resultPreview": "{\"passed\":true,\"criteria\":[{\"criterion\":\"S1 tests pass: test_rt_timer (sorted-list reference, tokio rounding table)\",\"met\":true,\"evidence\":\"OUT_DIR=build/S1-verify1/unit2 sh tests/unit/run_all.sh -> 'test_rt_timer: Time:00.286 N:16 E:0 F:0 I:0 (exit 0)' (includes Tick_rounding_matches_tokio, Level_for_matches_tokio_tests, Random_vs_sorted_reference). Mutation (Arm never refiles an earlier deadline…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "S2:implement",
+      "phaseIndex": 3,
+      "phaseTitle": "S2",
+      "agentId": "ab3e43d42a7242407",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791373844627,
+      "queuedAt": 1791373844624,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "until grep -q '^EXIT' /home/jps/Code/wd-40/build/S2-impl/ru…",
+      "promptPreview": "Project wd-40 (root /home/jps/Code/wd-40): FreePascal web framework + our own hyper-equivalent HTTP transport. Compiler FPC 3.2.2 (no closures). The approved M3 design is /home/jps/Code/wd-40/docs/design/m3-transport.md — it is the specification; read section 0 (decisions), the section 9 entry for your step, and every section that entry references. hyper source (read-only reference): /tmp/claude-1…",
+      "promptFramed": true,
+      "lastProgressAt": 1791375502806,
+      "tokens": 240587,
+      "toolCalls": 61,
+      "durationMs": 1658179,
+      "resultPreview": "S2 is complete and its exit criterion holds: the Pascal table equals the real BytesMut table for the 35 hand-written scripts and 10,000 random ones, and the TByteVec table equals the `Vec<u8>` table. The full test target `tests/unit/run_all.sh` passes. The design states one wrong consequence (finding 1 below) that does not affect the code.\n\n**Files**\n- Changed `/home/jps/Code/wd-40/src/rt/bearings.rt.bu…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "S2:verify1",
+      "phaseIndex": 3,
+      "phaseTitle": "S2",
+      "agentId": "a0297ac1e0a5a7bc4",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791375505248,
+      "queuedAt": 1791375505246,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "Project wd-40 (root /home/jps/Code/wd-40): FreePascal web framework + our own hyper-equivalent HTTP transport. Compiler FPC 3.2.2 (no closures). The approved M3 design is /home/jps/Code/wd-40/docs/design/m3-transport.md — it is the specification; read section 0 (decisions), the section 9 entry for your step, and every section that entry references. hyper source (read-only reference): /tmp/claude-1…",
+      "promptFramed": true,
+      "lastProgressAt": 1791376033689,
+      "tokens": 147914,
+      "toolCalls": 33,
+      "durationMs": 528441,
+      "resultPreview": "{\"passed\":true,\"criteria\":[{\"criterion\":\"S2 exit: the Pascal table equals the Rust (real bytes 1.12.1 BytesMut) table for 10 000 random scripts and the hand-written ones\",\"met\":true,\"evidence\":\"Command: `OUT_DIR=build/S2-verify1/readbuf sh tests/unit/test_rt_readbuf.sh 10000 1`. Output: ` Time:09.126 N:15 E:0 F:0 I:0`, `scripts: 10035 (35 hand-written), rows: 423669, all equal in 3 modes`, then `t…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 7,
+      "label": "S3:implement",
+      "phaseIndex": 4,
+      "phaseTitle": "S3",
+      "agentId": "a387d0afed7857343",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791376036803,
+      "queuedAt": 1791376036801,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "N=/tmp/claude-1000/-home-jps-Code-wd-40/62837eb9-c099-4368-…",
+      "promptPreview": "Project wd-40 (root /home/jps/Code/wd-40): FreePascal web framework + our own hyper-equivalent HTTP transport. Compiler FPC 3.2.2 (no closures). The approved M3 design is /home/jps/Code/wd-40/docs/design/m3-transport.md — it is the specification; read section 0 (decisions), the section 9 entry for your step, and every section that entry references. hyper source (read-only reference): /tmp/claude-1…",
+      "promptFramed": true,
+      "lastProgressAt": 1791377527104,
+      "tokens": 307789,
+      "toolCalls": 82,
+      "durationMs": 1490301,
+      "resultPreview": "S3 (`bearings.http1.io`) is implemented and both exit criteria pass: every test passes, and `check-hot-asm.sh --s3` finds no implicit exception frame in `TH1Io.*`, `TReadBuf.*` or `TByteVec.*`.\n\n## Exit criteria\n\n| Criterion | Result |\n|---|---|\n| The 11 io.rs tests (design 7.2) pass | Yes. `TTestIoRs` (in `test_h1_io`): N:11 E:0 F:0 |\n| The extra io tests pass | Yes. `TTestIoExtra`: N:30 E:0 F:0. `test…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 8,
+      "label": "S3:verify1",
+      "phaseIndex": 4,
+      "phaseTitle": "S3",
+      "agentId": "afad4e7f7811acd94",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791377529681,
+      "queuedAt": 1791377529679,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "Project wd-40 (root /home/jps/Code/wd-40): FreePascal web framework + our own hyper-equivalent HTTP transport. Compiler FPC 3.2.2 (no closures). The approved M3 design is /home/jps/Code/wd-40/docs/design/m3-transport.md — it is the specification; read section 0 (decisions), the section 9 entry for your step, and every section that entry references. hyper source (read-only reference): /tmp/claude-1…",
+      "promptFramed": true,
+      "lastProgressAt": 1791378073553,
+      "tokens": 218636,
+      "toolCalls": 43,
+      "durationMs": 543871,
+      "resultPreview": "{\"passed\":true,\"criteria\":[{\"criterion\":\"S3 exit: the 11 io.rs tests (design 7.2) pass\",\"met\":true,\"evidence\":\"Clean build in /home/jps/Code/wd-40/build/S3-verify1/unit via `OUT_DIR=.../build/S3-verify1/unit VALGRIND=<scratchpad>/valgrind/usr/bin/valgrind VALGRIND_LIB=... sh tests/unit/run_all.sh` -> `test_h1_io: Time:00.009 N:41 E:0 F:0 I:0 (exit 0)`. TTestIoRs has the 11 tests from the 7.2 table…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 9,
+      "label": "S4:implement",
+      "phaseIndex": 5,
+      "phaseTitle": "S4",
+      "agentId": "ac2a41268e70f52b0",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791378075977,
+      "queuedAt": 1791378075975,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "cd /home/jps/Code/wd-40 && OUT_DIR=/home/jps/Code/wd-40/bui…",
+      "promptPreview": "Project wd-40 (root /home/jps/Code/wd-40): FreePascal web framework + our own hyper-equivalent HTTP transport. Compiler FPC 3.2.2 (no closures). The approved M3 design is /home/jps/Code/wd-40/docs/design/m3-transport.md — it is the specification; read section 0 (decisions), the section 9 entry for your step, and every section that entry references. hyper source (read-only reference): /tmp/claude-1…",
+      "promptFramed": true,
+      "lastProgressAt": 1791379988907,
+      "tokens": 455021,
+      "toolCalls": 113,
+      "durationMs": 1912930,
+      "resultPreview": "S4 is implemented and all three exit criteria pass. The full suite runs 754 tests with 0 errors and 0 failures: the 506 M2 tests, the S0–S3 suites and 101 new S4 tests. One thing is unfinished: the 420 ns budget check that design 0.4 places at S4 needs the dispatcher, which is S5, so I measured only the connection part (numbers at the end).\n\n**Files written** (all under `/home/jps/Code/wd-40`)\n- `…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 10,
+      "label": "S4:verify1",
+      "phaseIndex": 5,
+      "phaseTitle": "S4",
+      "agentId": "adb02fcd9c72259ab",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791379992091,
+      "queuedAt": 1791379992088,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "Project wd-40 (root /home/jps/Code/wd-40): FreePascal web framework + our own hyper-equivalent HTTP transport. Compiler FPC 3.2.2 (no closures). The approved M3 design is /home/jps/Code/wd-40/docs/design/m3-transport.md — it is the specification; read section 0 (decisions), the section 9 entry for your step, and every section that entry references. hyper source (read-only reference): /tmp/claude-1…",
+      "promptFramed": true,
+      "lastProgressAt": 1791380633661,
+      "tokens": 276358,
+      "toolCalls": 55,
+      "durationMs": 641570,
+      "resultPreview": "{\"passed\":true,\"criteria\":[{\"criterion\":\"S4 exit 1: all tests pass (S4 suites plus all earlier suites: the 506 M2 tests and the S0-S3 tests)\",\"met\":true,\"evidence\":\"Clean dir: OUT_DIR=/home/jps/Code/wd-40/build/S4-verify1/unit sh tests/unit/run_all.sh -> test_parser N:361, test_codec N:77, test_role N:68 (=506 M2), test_headers_validate 22, test_rt_sys 21, test_rt_timer 16, test_rt_loop 19, test_r…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 11,
+      "label": "S5:implement",
+      "phaseIndex": 6,
+      "phaseTitle": "S5",
+      "agentId": "aabb7f62705610079",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791380636060,
+      "queuedAt": 1791380636058,
+      "attempt": 1,
+      "lastToolName": "Bash",
+      "lastToolSummary": "cd /home/jps/Code/wd-40 && uptime; fpc -Mobjfpc -Sh -O3 -CX…",
+      "promptPreview": "Project wd-40 (root /home/jps/Code/wd-40): FreePascal web framework + our own hyper-equivalent HTTP transport. Compiler FPC 3.2.2 (no closures). The approved M3 design is /home/jps/Code/wd-40/docs/design/m3-transport.md — it is the specification; read section 0 (decisions), the section 9 entry for your step, and every section that entry references. hyper source (read-only reference): /tmp/claude-1…",
+      "promptFramed": true,
+      "lastProgressAt": 1791385976018,
+      "tokens": 613263,
+      "toolCalls": 197,
+      "durationMs": 5339958,
+      "resultPreview": "S5 is done and every exit criterion was met by a real run. The performance gate in configuration B passes in all four cells, the conn-diff harness matches hyper on all 116 hand-written and 10,000 generated scripts, and the full test target passes (788 tests).\n\nGetting there needed two changes outside S5's own files:\n- **Request-body channel (S4 code).** The new conn-diff harness found a real porti…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 12,
+      "label": "S5:verify1",
+      "phaseIndex": 6,
+      "phaseTitle": "S5",
+      "agentId": "a42423ed09ba307a1",
+      "model": "claude-opus-5-5",
+      "state": "done",
+      "startedAt": 1791385979762,
+      "queuedAt": 1791385979760,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "promptPreview": "Project wd-40 (root /home/jps/Code/wd-40): FreePascal web framework + our own hyper-equivalent HTTP transport. Compiler FPC 3.2.2 (no closures). The approved M3 design is /home/jps/Code/wd-40/docs/design/m3-transport.md — it is the specification; read section 0 (decisions), the section 9 entry for your step, and every section that entry references. hyper source (read-only reference): /tmp/claude-1…",
+      "promptFramed": true,
+      "lastProgressAt": 1791387976974,
+      "tokens": 275995,
+      "toolCalls": 108,
+      "durationMs": 1997211,
+      "resultPreview": "{\"passed\":true,\"criteria\":[{\"criterion\":\"Tests pass: full unit target (all M2 tests plus every suite from S0-S5), heaptrc clean, hot-asm check, echo test under valgrind\",\"met\":true,\"evidence\":\"OUT_DIR=build/S5-verify1/unit sh tests/unit/run_all.sh -> test_parser N:361, test_codec N:77, test_role N:68 (506 M2), test_headers_validate 22, test_rt_sys 21, test_rt_timer 16, test_rt_loop 19, test_rt_net…"
+    }
+  ],
+  "totalTokens": 3778312,
+  "totalToolCalls": 1077
+}

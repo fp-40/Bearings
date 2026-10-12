@@ -1,0 +1,142 @@
+# valgrind --tool=drd suppressions for the S7 worker stress tests
+# (tests/unit/test_workers.pas, built with -dWD_DRD; design m3-transport.md
+# 7.5, 9 S7). Each entry names why the reported access is not a data race.
+#
+# 1. Accesses to synchronization words. drd does not treat lock-prefixed
+#    instructions or futex calls as synchronization; it reports the atomic
+#    read-modify-writes and the deliberate plain word reads of these words.
+#    In -dWD_DRD builds every such access is in one of these routines (not
+#    inlined there, bearings.rt.sync); the happens-before edges they make are
+#    given to drd with ANNOTATE_HAPPENS_BEFORE / AFTER client requests.
+{
+   wd-atomic-interlocked
+   drd:ConflictingAccess
+   fun:SYSTEM_$$_INTERLOCKED*
+}
+{
+   wd-atomic-load-store
+   drd:ConflictingAccess
+   fun:BEARINGS.RT.SYNC_$$_ATOMIC*
+}
+{
+   wd-spinlock
+   drd:ConflictingAccess
+   fun:BEARINGS.RT.SYNC$_$TSPINLOCK_$__$$_*
+}
+{
+   wd-parker
+   drd:ConflictingAccess
+   fun:BEARINGS.RT.SYNC$_$TPARKER_$__$$_*
+}
+{
+   wd-event-count
+   drd:ConflictingAccess
+   fun:BEARINGS.RT.SYNC$_$TEVENTCOUNT_$__$$_*
+}
+{
+   wd-mpsc-stack
+   drd:ConflictingAccess
+   fun:BEARINGS.RT.SYNC$_$TMPSCSTACK_$__$$_*
+}
+#    S7 fix round 6 (deviation S7-41): TLoop.Post has no entry of its own
+#    any more. FPC inlines the Interlocked* calls, so drd attributed Post's
+#    exchange of Sleeping to Post itself, and round 5 suppressed every
+#    conflict whose top frame was Post (also a plain access racing with
+#    Post). Post's atomic accesses now go through bearings.rt.sync's AtomicXchg /
+#    AtomicInc / AtomicDec / AtomicInc64 (wd-atomic-load-store above).
+#    Limit of this file (not of Post): a conflict is reported at its second
+#    access; when that access is one of the suppressed atomic routines, a
+#    plain access racing with it is not reported.
+{
+   wd-futex-syscall
+   drd:ConflictingAccess
+   fun:BEARINGS.RT.SYS_$$_SYSFUTEX*
+}
+# 2. FPC RTL internals (FPC 3.2.2).
+#    AnsiString and interface reference counts are changed with
+#    lock-prefixed instructions (IsMultiThread).
+{
+   fpc-ansistr-refcount
+   drd:ConflictingAccess
+   fun:fpc_ansistr_incr_ref
+}
+{
+   fpc-ansistr-refcount-decr
+   drd:ConflictingAccess
+   fun:fpc_ansistr_decr_ref
+}
+{
+   fpc-inclocked
+   drd:ConflictingAccess
+   fun:SYSTEM_$$_INCLOCKED*
+}
+{
+   fpc-declocked
+   drd:ConflictingAccess
+   fun:SYSTEM_$$_DECLOCKED*
+}
+#    The heap manager (rtl/inc/heap.inc): a block freed by another thread
+#    goes on its owner's wait-free list (atomic exchange), which the owner
+#    drains in try_finish_waitfixedlist / try_finish_waitvarlist; OS chunks
+#    are handed between threads' free lists with the heap lock.
+{
+   fpc-heap-waitfixed
+   drd:ConflictingAccess
+   fun:SYSTEM_$$_TRY_FINISH_WAIT*
+}
+{
+   fpc-heap-oschunk
+   drd:ConflictingAccess
+   fun:SYSTEM_$$_ALLOC_OSCHUNK*
+}
+{
+   fpc-heap-waitfree
+   drd:ConflictingAccess
+   fun:SYSTEM_$$_WAITFREE_*
+}
+#    cthreads CDoneCriticalSection unlocks the mutex until unlocking fails
+#    (rtl/unix/cthreads.pp: "unlock as long as unlocking works ... some
+#    Delphi code might call this function with a locked mutex").
+{
+   fpc-donecriticalsection-unlock
+   drd:MutexErr
+   ...
+   fun:CTHREADS_$$_CDONECRITICALSECTION*
+}
+#    A new thread's InitHeapThread (rtl/inc/heap.inc) reads heap_lock_use
+#    without the heap lock ("if heap_lock_use > 0"); an ending thread's
+#    FinalizeHeap changes it under the lock. The count is > 0 from the
+#    main thread's RelocateHeap (before any other thread) until the last
+#    thread ends, so the unlocked test always sees > 0. Reported in the
+#    -dWD_DRD build with cmem (test_workers, S7 fix), where it is the
+#    InitHeapThread side that drd sees second.
+{
+   fpc-initheapthread
+   drd:ConflictingAccess
+   fun:SYSTEM_$$_INITHEAPTHREAD
+}
+#    The heap's finalization at process exit reads the shared heap state
+#    after the other threads were joined by the RTL, not through a mutex.
+{
+   fpc-finalizeheap
+   drd:ConflictingAccess
+   fun:SYSTEM_$$_FINALIZEHEAP*
+}
+#    S7 fix round 5 (the end-to-end stress, tools/s7-stress.sh, deviation
+#    S7-34). fpc_popobjectstack (rtl/inc/except.inc) ends with
+#    "erroraddr:=nil": System.ErrorAddr is a plain global (not a threadvar),
+#    written by every thread that leaves an except block. bearings never reads
+#    it.
+{
+   fpc-popobjectstack-erroraddr
+   drd:ConflictingAccess
+   fun:fpc_popobjectstack
+}
+#    cthreads CBeginThread sets the global IsMultiThread := True on every
+#    BeginThread (the stress program's client threads start while the
+#    server's threads run); it is True from the first BeginThread on.
+{
+   fpc-beginthread-ismultithread
+   drd:ConflictingAccess
+   fun:CTHREADS_$$_CBEGINTHREAD*
+}

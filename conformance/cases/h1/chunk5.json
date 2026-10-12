@@ -1,0 +1,786 @@
+{
+  "description": "hyper v1.12.0 tests/integration.rs t! runs over HTTP/1 (direct) and src/proto/h1/conn.rs head/body/EOF unit tests, ported to the wire. t! macro (tests/support/mod.rs:96-161, 299-469): every server handler asserts path, method, version HTTP/1.1, the listed request headers and the collected body (default: GET, '/', no header checks, empty body); a failed server assertion panics the connection task, so the client's send_request().unwrap() fails and the test fails. Every client assertion checks status (default 200), version HTTP/1.1, the listed response headers (HeaderMap::get, first value) and the collected body (default empty). The t! server builds Response::builder().status(..).body(Full::new(body)) and replaces the HeaderMap; an empty Full body is the same as an absent body here (SPEC 5.4). Each client message uses a new TCP connection (support/mod.rs:431, 479-484). The hyper h1 client writes the absolute-form URI, no Host header, content-length only for a non-empty known body, chunked when the user set transfer-encoding: chunked (role.rs:1215-1260, 1343-1430). The serve_connection(..).expect(\"server error\") and client conn-task panics run in spawned tasks and are not enforced, so the integration cases assert no conn_close outcome. Each '[run3 h1 via proxy]' run is the same case with \"via_proxy\": \"h1\" (SPEC 8): the upstream server receives the same request bytes as in the direct run, and in addition hyper's own h1 client in the proxy must accept the server's response.",
+  "cases": [
+    {
+      "name": "get_1 [run1 h1 direct]",
+      "source": "tests/integration.rs:6",
+      "notes": "Client request uri '/'. Client asserts status 200, version HTTP/1.1, headers[date] => SOME (present), empty body. Server asserts path '/', GET, HTTP/1.1, empty body. hyper checks only that date is present, not its format.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"header": "date", "present": true},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_1 [run3 h1 via proxy]",
+      "source": "tests/integration.rs:6",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. The client's date check passes on the upstream's forwarded date. If the upstream sent none, the proxy's hyper server would add its own, so this check does not isolate the server under test. Direct-run notes: Client request uri '/'. Client asserts status 200, version HTTP/1.1, headers[date] => SOME (present), empty body. Server asserts path '/', GET, HTTP/1.1, empty body. hyper checks only that date is present, not its format.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"header": "date", "present": true},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_implicit_path [run1 h1 direct]",
+      "source": "tests/integration.rs:26",
+      "notes": "Client request uri '' gives http://127.0.0.1:PORT; the client writes the URI with Display, and http::Uri::path() returns '/' for an empty path (http-1.5.0 uri/mod.rs:1024-1041, uri/path.rs:218-230), so the wire bytes equal get_1's. The tested logic (empty path becomes '/') is in the client. Client asserts status 200, version HTTP/1.1, empty body. Server asserts path '/', GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_implicit_path [run3 h1 via proxy]",
+      "source": "tests/integration.rs:26",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. Client uri '' is written as http://127.0.0.1:<proxy_port>/ (same bytes as get_1); the proxy forwards path '/'. Direct-run notes: Client request uri '' gives http://127.0.0.1:PORT; the client writes the URI with Display, and http::Uri::path() returns '/' for an empty path (http-1.5.0 uri/mod.rs:1024-1041, uri/path.rs:218-230), so the wire bytes equal get_1's. The tested logic (empty path becomes '/') is in the client. Client asserts status 200, version HTTP/1.1, empty body. Server asserts path '/', GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "date_isnt_overwritten [run1 h1 direct]",
+      "source": "tests/integration.rs:43",
+      "notes": "Server handler sets date: let me through. Client asserts status 200, version HTTP/1.1, headers[date] == 'let me through' (HeaderMap::get, the first date field), empty body. hyper does not check that there is only one date field; the 'value' assertion is the same first-field check. Server asserts path '/', GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["date", "let me through"]]}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"header": "date", "value": "let me through"},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "date_isnt_overwritten [run3 h1 via proxy]",
+      "source": "tests/integration.rs:43",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. The proxy's hyper server keeps the forwarded date field, so the client sees the upstream's value: an upstream that overwrote 'let me through' fails here. Direct-run notes: Server handler sets date: let me through. Client asserts status 200, version HTTP/1.1, headers[date] == 'let me through' (HeaderMap::get, the first date field), empty body. hyper does not check that there is only one date field; the 'value' assertion is the same first-field check. Server asserts path '/', GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["date", "let me through"]]}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"header": "date", "value": "let me through"},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_body [run1 h1 direct]",
+      "source": "tests/integration.rs:64",
+      "notes": "t! macro: tests/support/mod.rs:129-137. t! server: the handler asserts path '/', method GET, version HTTP/1.1 and an empty body, then replies with the HeaderMap {content-length: 11} and Full body 'hello world'. The hyper h1 client sends the absolute-form URI and no Host header. Client asserts status 200, version HTTP/1.1, content-length == '11' and the body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "11"]], "body": {"known": "hello world"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"header": "content-length", "value": "11"},
+          {"body": "hello world"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_body [run3 h1 via proxy]",
+      "source": "tests/integration.rs:64",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. The proxy forwards content-length: 11 and the exact-length body. Direct-run notes: t! macro: tests/support/mod.rs:129-137. t! server: the handler asserts path '/', method GET, version HTTP/1.1 and an empty body, then replies with the HeaderMap {content-length: 11} and Full body 'hello world'. The hyper h1 client sends the absolute-form URI and no Host header. Client asserts status 200, version HTTP/1.1, content-length == '11' and the body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "11"]], "body": {"known": "hello world"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"header": "content-length", "value": "11"},
+          {"body": "hello world"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_body_2_keeps_alive [run1 h1 direct]",
+      "source": "tests/integration.rs:89",
+      "notes": "Two client messages, run one after the other, each on its own new TCP connection (support/mod.rs:431, 479-484): despite the name, connection reuse is not exercised. The first connection is closed before the second is opened (in hyper the dropped sender makes the client conn task close it; the timing is not asserted). Each: client asserts status 200, version HTTP/1.1, content-length == '11', body 'hello world'; server asserts path '/', GET, HTTP/1.1, empty body. The reply queue is shared by both connections, as hyper's serve_handles is.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "11"]], "body": {"known": "hello world"}},
+          {"headers": [["content-length", "11"]], "body": {"known": "hello world"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect", "conn": "c1"},
+        {"op": "write", "conn": "c1", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "conn": "c1", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"header": "content-length", "value": "11"},
+          {"body": "hello world"}
+        ]},
+        {"op": "close", "conn": "c1"},
+        {"op": "connect", "conn": "c2"},
+        {"op": "write", "conn": "c2", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "conn": "c2", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"header": "content-length", "value": "11"},
+          {"body": "hello world"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""},
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_body_2_keeps_alive [run3 h1 via proxy]",
+      "source": "tests/integration.rs:89",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. Two client connections, each proxied on its own upstream connection. The proxy serves one client connection at a time, so c1 must be closed before c2 is opened. Direct-run notes: Two client messages, run one after the other, each on its own new TCP connection (support/mod.rs:431, 479-484): despite the name, connection reuse is not exercised. The first connection is closed before the second is opened (in hyper the dropped sender makes the client conn task close it; the timing is not asserted). Each: client asserts status 200, version HTTP/1.1, content-length == '11', body 'hello world'; server asserts path '/', GET, HTTP/1.1, empty body. The reply queue is shared by both connections, as hyper's serve_handles is.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "11"]], "body": {"known": "hello world"}},
+          {"headers": [["content-length", "11"]], "body": {"known": "hello world"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect", "conn": "c1"},
+        {"op": "write", "conn": "c1", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "conn": "c1", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"header": "content-length", "value": "11"},
+          {"body": "hello world"}
+        ]},
+        {"op": "close", "conn": "c1"},
+        {"op": "connect", "conn": "c2"},
+        {"op": "write", "conn": "c2", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "conn": "c2", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"header": "content-length", "value": "11"},
+          {"body": "hello world"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""},
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_strip_connection_header [run1 h1 direct]",
+      "source": "tests/integration.rs:133",
+      "notes": "Server handler sets connection: close with Full body 'hello world'. On HTTP/1 the field is not stripped (only h2 strips it), and hyper closes the connection after the response; the test does not assert either. Client asserts status 200, version HTTP/1.1, body 'hello world' (its header list is empty). Server asserts path '/', GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["connection", "close"]], "body": {"known": "hello world"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": "hello world"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_strip_connection_header [run3 h1 via proxy]",
+      "source": "tests/integration.rs:133",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. The upstream sends connection: close and closes; the proxy's client must read that response, and the proxy removes the Connection field before the client sees it (not asserted by hyper). Direct-run notes: Server handler sets connection: close with Full body 'hello world'. On HTTP/1 the field is not stripped (only h2 strips it), and hyper closes the connection after the response; the test does not assert either. Client asserts status 200, version HTTP/1.1, body 'hello world' (its header list is empty). Server asserts path '/', GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["connection", "close"]], "body": {"known": "hello world"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": "hello world"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_strip_keep_alive_header [run1 h1 direct]",
+      "source": "tests/integration.rs:159",
+      "notes": "Server handler sets keep-alive: timeout=5, max=1000 with Full body 'hello world'. On HTTP/1 the field passes through (only h2 strips it); the test does not assert it. Client asserts status 200, version HTTP/1.1, body 'hello world'. Server asserts path '/', GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["keep-alive", "timeout=5, max=1000"]], "body": {"known": "hello world"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": "hello world"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_strip_keep_alive_header [run3 h1 via proxy]",
+      "source": "tests/integration.rs:159",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. keep-alive passes through the proxy (only Connection is removed); not asserted by hyper. Direct-run notes: Server handler sets keep-alive: timeout=5, max=1000 with Full body 'hello world'. On HTTP/1 the field passes through (only h2 strips it); the test does not assert it. Client asserts status 200, version HTTP/1.1, body 'hello world'. Server asserts path '/', GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["keep-alive", "timeout=5, max=1000"]], "body": {"known": "hello world"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": "hello world"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_strip_upgrade_header [run1 h1 direct]",
+      "source": "tests/integration.rs:185",
+      "notes": "Server handler sets upgrade: h2c on a 200 with Full body 'hello world'. On HTTP/1 the field passes through and no upgrade happens; the test does not assert the field. Client asserts status 200, version HTTP/1.1, body 'hello world'. Server asserts path '/', GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["upgrade", "h2c"]], "body": {"known": "hello world"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": "hello world"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_strip_upgrade_header [run3 h1 via proxy]",
+      "source": "tests/integration.rs:185",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. upgrade passes through the proxy; not asserted by hyper. Direct-run notes: Server handler sets upgrade: h2c on a 200 with Full body 'hello world'. On HTTP/1 the field passes through and no upgrade happens; the test does not assert the field. Client asserts status 200, version HTTP/1.1, body 'hello world'. Server asserts path '/', GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["upgrade", "h2c"]], "body": {"known": "hello world"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": "hello world"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_allow_te_trailers_header [run1 h1 direct]",
+      "source": "tests/integration.rs:211",
+      "notes": "Client sends te: trailers (the HeaderMap replaces the request headers; the h1 client writes it as is). Server asserts path '/', GET, HTTP/1.1, headers[te] == 'trailers' (HeaderMap::get; only one te field is sent, so $includes is equivalent), empty body. Client asserts status 200, version HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\nte: trailers\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1",
+         "headers": {"$includes": [["te", "trailers"]]}},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_allow_te_trailers_header [run3 h1 via proxy]",
+      "source": "tests/integration.rs:211",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. The proxy forwards te: trailers upstream; the server-side te check is on the upstream request event. Direct-run notes: Client sends te: trailers (the HeaderMap replaces the request headers; the h1 client writes it as is). Server asserts path '/', GET, HTTP/1.1, headers[te] == 'trailers' (HeaderMap::get; only one te field is sent, so $includes is equivalent), empty body. Client asserts status 200, version HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\nte: trailers\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1",
+         "headers": {"$includes": [["te", "trailers"]]}},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_body_chunked [run1 h1 direct]",
+      "source": "tests/integration.rs:235",
+      "notes": "Server handler sets transfer-encoding: chunked with a known-length Full body 'hello world'; hyper honours the user's TE and adds no content-length. The test does not assert the framing. Client asserts status 200, version HTTP/1.1, decoded body 'hello world'. Server asserts path '/', GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["transfer-encoding", "chunked"]], "body": {"known": "hello world"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": "hello world"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_body_chunked [run3 h1 via proxy]",
+      "source": "tests/integration.rs:235",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. The proxy forwards transfer-encoding: chunked and re-chunks the body for the client; only the decoded body is asserted, not chunk boundaries. Direct-run notes: Server handler sets transfer-encoding: chunked with a known-length Full body 'hello world'; hyper honours the user's TE and adds no content-length. The test does not assert the framing. Client asserts status 200, version HTTP/1.1, decoded body 'hello world'. Server asserts path '/', GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["transfer-encoding", "chunked"]], "body": {"known": "hello world"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": "hello world"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "post_outgoing_length [run1 h1 direct]",
+      "source": "tests/integration.rs:261",
+      "notes": "Client sends POST /hello with Full body 'hello, world!'; the hyper h1 client adds content-length: 13 from the known body length (role.rs set_length / set_content_length). That client half is fixed in these bytes. Server asserts POST, path /hello, HTTP/1.1, headers[content-length] == '13', body 'hello, world!'. Client asserts status 200 (default), version HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST http://127.0.0.1:${port}/hello HTTP/1.1\r\ncontent-length: 13\r\n\r\nhello, world!"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "POST", "target": "http://127.0.0.1:${server_port}/hello", "version": "HTTP/1.1",
+         "headers": {"$includes": [["content-length", "13"]]}},
+        {"event": "request_body", "body": "hello, world!"}
+      ]
+    },
+    {
+      "name": "post_outgoing_length [run3 h1 via proxy]",
+      "source": "tests/integration.rs:261",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. The proxy forwards content-length: 13 with the exact-length body. A capture server behind the proxy received exactly 'POST http://127.0.0.1:<server_port>/hello HTTP/1.1\\r\\ncontent-length: 13\\r\\n\\r\\nhello, world!'. Direct-run notes: Client sends POST /hello with Full body 'hello, world!'; the hyper h1 client adds content-length: 13 from the known body length (role.rs set_length / set_content_length). That client half is fixed in these bytes. Server asserts POST, path /hello, HTTP/1.1, headers[content-length] == '13', body 'hello, world!'. Client asserts status 200 (default), version HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST http://127.0.0.1:${port}/hello HTTP/1.1\r\ncontent-length: 13\r\n\r\nhello, world!"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "POST", "target": "http://127.0.0.1:${server_port}/hello", "version": "HTTP/1.1",
+         "headers": {"$includes": [["content-length", "13"]]}},
+        {"event": "request_body", "body": "hello, world!"}
+      ]
+    },
+    {
+      "name": "post_chunked [run1 h1 direct]",
+      "source": "tests/integration.rs:284",
+      "notes": "Client sets transfer-encoding: chunked with a known Full body 'hello world'; the hyper h1 client honours the user TE (role.rs:1382-1389) and writes one chunk with an uppercase hex size, then the last chunk. Server asserts POST, path /post_chunked, HTTP/1.1, decoded body 'hello world' (no header checks). Client asserts status 200 (default), version HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST http://127.0.0.1:${port}/post_chunked HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\nB\r\nhello world\r\n0\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "POST", "target": "http://127.0.0.1:${server_port}/post_chunked", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": "hello world"}
+      ]
+    },
+    {
+      "name": "post_chunked [run3 h1 via proxy]",
+      "source": "tests/integration.rs:284",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. The proxy forwards transfer-encoding: chunked with an unknown-length body, so chunk boundaries may differ from the direct run (one chunk 'B' was observed). Only the decoded body is asserted. Direct-run notes: Client sets transfer-encoding: chunked with a known Full body 'hello world'; the hyper h1 client honours the user TE (role.rs:1382-1389) and writes one chunk with an uppercase hex size, then the last chunk. Server asserts POST, path /post_chunked, HTTP/1.1, decoded body 'hello world' (no header checks). Client asserts status 200 (default), version HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST http://127.0.0.1:${port}/post_chunked HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\nB\r\nhello world\r\n0\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "POST", "target": "http://127.0.0.1:${server_port}/post_chunked", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": "hello world"}
+      ]
+    },
+    {
+      "name": "get_2 [run1 h1 direct]",
+      "source": "tests/integration.rs:308",
+      "notes": "Two client messages, one after the other, each on its own new TCP connection (support/mod.rs:431, 479-484): GET /1 then GET /2. The first connection is closed before the second is opened. Each: client asserts status 200, version HTTP/1.1, empty body; server asserts the path (/1, then /2, in queue order), GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}, {}]
+      },
+      "steps": [
+        {"op": "connect", "conn": "c1"},
+        {"op": "write", "conn": "c1", "data": "GET http://127.0.0.1:${port}/1 HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "conn": "c1", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": ""}
+        ]},
+        {"op": "close", "conn": "c1"},
+        {"op": "connect", "conn": "c2"},
+        {"op": "write", "conn": "c2", "data": "GET http://127.0.0.1:${port}/2 HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "conn": "c2", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/1", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""},
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/2", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "get_2 [run3 h1 via proxy]",
+      "source": "tests/integration.rs:308",
+      "via_proxy": "h1",
+      "notes": "Run 3 of the t! macro (client_version 1, proxy true, support/mod.rs:149-157): client -> runner proxy (equivalent to support/mod.rs:497-593 naive_proxy, h1 branch) -> server. The client writes the absolute-form URI with the proxy's address (${port}). The proxy rewrites it to http://127.0.0.1:<server_port><path>, sends it upstream with hyper's h1 client on a new connection per request, removes Connection from the response and streams the body back. hyper's assertions are the same as in the direct run: the server-side ones are checked on the upstream request events, the client-side ones on the response the proxy returns. This run adds one check the direct run does not have: hyper's own h1 client (inside the proxy) must accept the server's response. Two client connections (/1 then /2), each proxied on its own upstream connection. The proxy serves one client connection at a time, so c1 must be closed before c2 is opened. Direct-run notes: Two client messages, one after the other, each on its own new TCP connection (support/mod.rs:431, 479-484): GET /1 then GET /2. The first connection is closed before the second is opened. Each: client asserts status 200, version HTTP/1.1, empty body; server asserts the path (/1, then /2, in queue order), GET, HTTP/1.1, empty body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}, {}]
+      },
+      "steps": [
+        {"op": "connect", "conn": "c1"},
+        {"op": "write", "conn": "c1", "data": "GET http://127.0.0.1:${port}/1 HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "conn": "c1", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": ""}
+        ]},
+        {"op": "close", "conn": "c1"},
+        {"op": "connect", "conn": "c2"},
+        {"op": "write", "conn": "c2", "data": "GET http://127.0.0.1:${port}/2 HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "conn": "c2", "expect": [
+          {"status": 200},
+          {"version": "HTTP/1.1"},
+          {"body": ""}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/1", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""},
+        {"event": "request", "method": "GET", "target": "http://127.0.0.1:${server_port}/2", "version": "HTTP/1.1"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "conn_reads_request_head",
+      "source": "src/proto/h1/conn.rs:1316",
+      "notes": "Unit test: mock IO delivers 'GET / HTTP/1.1\\r\\n\\r\\n'; poll_read_head returns a valid head with RequestLine(GET, '/') and body length DecodedLength::ZERO. No Host header is required (hyper's Server::parse has no Host check; RFC 9112 3.2 asks for 400, hyper does not). Wire port: the handler is called with GET '/' (request event), the body is empty and complete without the client closing (request_body ''), and the server answers normally. The 200 response is a port decision: it shows the request was accepted, not rejected; the unit test itself checks no response.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "/"},
+        {"event": "request_body", "body": ""}
+      ]
+    },
+    {
+      "name": "conn_reads_partial_request_head",
+      "source": "src/proto/h1/conn.rs:1331",
+      "notes": "Unit test: after 'GET / HTTP' poll_read_head is Pending; after '/1.1\\r\\nHost: foo.bar\\r\\n\\r\\n' it is Ready. Wire port: write the first fragment, then for 200 ms the server must write nothing and keep the connection open (Pending: no error, no response); then write the rest and the handler must get the complete head (GET '/', HTTP/1.1, host foo.bar) and answer. The 200 ms window, the head fields checked and the 200 response are port decisions; the unit test checks only Pending, then Ready.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect", "nodelay": true},
+        {"op": "write", "data": "GET / HTTP"},
+        {"op": "expect_open", "for_ms": 200, "expect": [{"len": 0}]},
+        {"op": "write", "data": "/1.1\r\nHost: foo.bar\r\n\r\n"},
+        {"op": "read_response", "expect": [
+          {"status": 200}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "request", "method": "GET", "target": "/", "version": "HTTP/1.1", "headers": [["host", "foo.bar"]]}
+      ]
+    },
+    {
+      "name": "conn_accepts_eof_when_idle",
+      "source": "src/proto/h1/conn.rs:1344",
+      "notes": "Unit test: a server Conn put in the idle state gets EOF with nothing buffered; poll_read_head returns Ready(None), a graceful close (on_read_head_error: no bytes buffered and servers never error on EOF, proto/h1/mod.rs:48-50). Wire port, two connections: (1) a fresh connection that sends nothing and shuts down its write side, and (2) a connection that is idle after one complete request/response and then shuts down its write side. In both, the server writes no (further) bytes, closes the connection, and the connection outcome is ok (no error). The unit test forces idle on a fresh Conn; the fresh connection (Reading::Init, no bytes) and the post-response keep-alive idle state (KA::Idle) are the two wire states it stands for. The runner waits for conn 1's conn_close event before opening the second connection (SPEC 7 orders events only within a connection), so their conn numbers are 1 and 2 and the expect_events order holds for any server.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect", "conn": "fresh"},
+        {"op": "shutdown_write", "conn": "fresh"},
+        {"op": "read_to_eof", "conn": "fresh", "expect": [{"len": 0}, {"end": "eof"}]},
+        {"op": "await_event", "match": {"event": "conn_close", "conn": 1, "outcome": "ok"}, "comment": "SPEC 7 does not order events across connections; wait for conn 1 to finish before opening conn 2 so the expect_events order is deterministic"},
+        {"op": "connect", "conn": "idle"},
+        {"op": "write", "conn": "idle", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "conn": "idle", "expect": [{"status": 200}]},
+        {"op": "shutdown_write", "conn": "idle"},
+        {"op": "read_to_eof", "conn": "idle", "expect": [{"len": 0}, {"end": "eof"}]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "conn": 1, "outcome": "ok"},
+        {"event": "request", "conn": 2, "req": 1},
+        {"event": "conn_close", "conn": 2, "outcome": "ok"}
+      ],
+      "forbid_events": [
+        {"event": "request", "conn": 1}
+      ]
+    },
+    {
+      "name": "conn_rejects_eof_during_partial_head",
+      "source": "src/proto/h1/conn.rs:1353",
+      "notes": "Unit test: mock IO delivers 'GET / HTTP/1.1' (no line end) and then EOF; poll_read_head returns an error with is_incomplete_message(). Wire port: send the partial head, shut down the write side; the server must close without writing anything (an incomplete message is not a parse error, so no 400 is written: role.rs on_error returns None) and the connection outcome is incomplete. The handler is never called.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1"},
+        {"op": "shutdown_write"},
+        {"op": "read_to_eof", "expect": [{"len": 0}, {"end": "eof"}]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "conn": 1, "outcome": "incomplete"}
+      ],
+      "forbid_events": [
+        {"event": "request"}
+      ]
+    },
+    {
+      "name": "conn_reads_body_and_reports_end",
+      "source": "src/proto/h1/conn.rs:1404",
+      "notes": "Unit test: mock IO delivers 'POST / HTTP/1.1\\r\\nContent-Length: 5\\r\\n\\r\\n12345' and then stays pending for 1 s (no EOF). poll_read_head gives body length 5; one poll_read_body returns the data frame '12345' without more IO, and then can_read_body() is false: the connection is back to reading heads. Wire port: the client keeps the socket open; the handler sees POST '/' with content-length 5 and reads the body '12345' to its end (request_body) while the connection is still open, and the response arrives before the client sends anything else. Then a second request on the same socket is parsed as a new head and served (req 2 on conn 1): that is the wire meaning of 'back to head-reading state'. The 200 responses and the second request are port decisions.",
+      "server": {
+        "handler": "test_service",
+        "replies": [{}, {}]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\n12345"},
+        {"op": "read_response", "expect": [{"status": 200}]},
+        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "read_response", "expect": [{"status": 200}]}
+      ],
+      "expect_events": [
+        {"event": "request", "conn": 1, "req": 1, "method": "POST", "target": "/",
+         "headers": {"$includes": [["content-length", "5"]]}},
+        {"event": "request_body", "conn": 1, "req": 1, "body": "12345"},
+        {"event": "request", "conn": 1, "req": 2, "method": "GET", "target": "/"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+# Conformance harness for the bearings HTTP transport.
+# Test tooling only: nothing in this workspace is shipped with bearings.
+[workspace]
+members = ["common", "reference-server", "runner", "dumb-server", "fuzz-diff"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+publish = false
+
+[workspace.dependencies]
+# hyper pinned to v1.12.0 (the commit the ported tests come from).
+hyper = { git = "https://github.com/hyperium/hyper", rev = "7f67699ce32d717081deb7018b4da7d679277ac0" }
+http-body-util = "0.1"
+bytes = "1"
+tokio = { version = "1", features = ["rt", "net", "time", "io-util", "io-std", "macros", "sync"] }
+pin-project-lite = "0.2.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+regex = "1"
+httparse = "1.9"
+
+# No crate in this workspace pulls hyper from crates.io (http-body-util depends
+# only on http/http-body), so no [patch.crates-io] entry is needed. If one is
+# ever added, patch it to the same git rev:
+# [patch.crates-io]
+# hyper = { git = "https://github.com/hyperium/hyper", rev = "7f67699ce32d717081deb7018b4da7d679277ac0" }
+
+[profile.release]
+debug = false

@@ -1,0 +1,12 @@
+# Test tooling only (never shipped): runs the real httparse 1.10.1 over a
+# corpus so its results can be compared with bearings.http1.parser.
+[package]
+name = "test_parser_diff_rs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+httparse = "=1.10.1"
+
+[workspace]

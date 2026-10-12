@@ -1,0 +1,9 @@
+# Worker-executor exceptions (design m3-transport.md 7.4, S7 decision 14,
+# deviation S7-1). gate_worker.sh lets a case listed here fail in assertion
+# mode under `wdconf --executor worker`, and says so whenever it does. A
+# case is listed only when its wire assertion needs a handler that answers in
+# its first poll and reference-server (hyper) fails the same assertion when
+# its handler is Pending at the first poll (extra/worker-probe.json, checked
+# by gate_worker.sh in every run). Every addition is reviewed.
+# Format: <case id> | <reason>
+chunk2::pipeline_enabled | with pipeline_flush the second response goes out with the first only when the second handler answers in its first poll; under the worker executor every handler is Pending at its first poll, so the first response is flushed alone and read_once at step 2 gets only the first response. reference-server shows the same bytes when its second handler is Pending at the first poll (extra/worker-probe.json fails the same assertion on it)

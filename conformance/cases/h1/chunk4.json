@@ -1,0 +1,372 @@
+{
+  "description": "hyper v1.12.0 tests/server.rs (chunk4): max_buf_size / max_header_size limits, graceful shutdown before the first request, streamed bodies, HTTP/2 preface on an HTTP/1-only server, 304 and HEAD framing, response trailers and TE: trailers, request trailers with keep-alive.",
+  "cases": [
+    {
+      "name": "max_buf_size",
+      "source": "tests/server.rs:2730",
+      "notes": "http1::Builder::max_buf_size(16000), HelloWorld. Client writes 'POST /' and then 16000 'a' (two writes, 16006 bytes, no CRLF: the request line never completes). Enforced upstream: serve_connection returns Err ('should TooLarge error'; expect_err only checks Err, the case checks the TooLarge class, outcome parse_too_large). Client checks (one read into a 256-byte buffer, first 13 bytes == 'HTTP/1.1 431 ') run in an unjoined thread in hyper; encoded as intended and confirmed against the reference server. The server closes with about 6 bytes unread, so the read allows RST (data received before the RST is still read first).",
+      "server": {
+        "config": {"max_buf_size": 16000},
+        "handler": "hello_world"
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST /"},
+        {"op": "write", "data": [{"repeat": "a", "count": 16000}]},
+        {"op": "read_once", "max": 256, "allow_reset": true, "expect": [
+          {"starts_with": "HTTP/1.1 431 "}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "parse_too_large"}
+      ]
+    },
+    {
+      "name": "max_buf_size_split_header_boundary",
+      "source": "tests/server.rs:2757",
+      "notes": "http1::Builder::max_buf_size(8192), HelloWorld. Client writes the 47-byte head prefix 'GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\nX: ', then 7000 'a' (7047 bytes, under the limit), sleeps 100 ms, then writes 5000 'a' and CRLFCRLF: the head crosses the limit in a second read. Enforced upstream: serve_connection returns Err (case checks outcome parse_too_large). Client checks (read_to_string to EOF, starts with 'HTTP/1.1 431 ') run in an unjoined thread; encoded as intended and confirmed against the reference server. The server closes with unread bytes, so read_to_eof allows RST (upstream read_to_string would return ECONNRESET in that case; the prefix check is what the test intends). Write 4 (CRLFCRLF) has may_fail: hyper reads at most 8192 bytes (io.rs:230-239), so it closes with up to 3859 bytes of write 3 unread and the RST can reach the client before write 4; measured against the reference server under CPU load, write 4 failed with EPIPE in 2 of 320 runs. Upstream's expect('write 4') is in the unjoined thread. The 100 ms sleep is an expect_open of 100 ms (port decision): with write 4 allowed to fail, it keeps the check that the server does not reject the 7047-byte partial head before write 3 (a correct server waits; no timer is configured). Write 3 stays strict: the server holds 7047 < 8192 bytes when it is issued.",
+      "server": {
+        "config": {"max_buf_size": 8192},
+        "handler": "hello_world"
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nX: "},
+        {"op": "write", "data": [{"repeat": "a", "count": 7000}]},
+        {"op": "expect_open", "for_ms": 100, "comment": "upstream thread::sleep(100 ms); also checks the server does not reject the 7047-byte partial head"},
+        {"op": "write", "data": [{"repeat": "a", "count": 5000}]},
+        {"op": "write", "data": "\r\n\r\n", "may_fail": true, "comment": "can race with the server's RST (hyper closes with unread bytes after 8192); upstream expect('write 4') runs in an unjoined thread"},
+        {"op": "read_to_eof", "allow_reset": true, "expect": [
+          {"starts_with": "HTTP/1.1 431 "}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "parse_too_large"}
+      ]
+    },
+    {
+      "name": "max_header_size_exceeded",
+      "source": "tests/server.rs:2789",
+      "notes": "http1::Builder::max_header_size(512) (request line + header fields), default max_buf_size, HelloWorld. Client writes 'GET / HTTP/1.1\\r\\nHost: x\\r\\nX-Long: ', 1000 'a', CRLFCRLF (three writes, 1037-byte head). Enforced upstream: serve_connection returns Err (case checks outcome parse_too_large). Client checks (one 256-byte read, first 13 bytes == 'HTTP/1.1 431 ') run in an unjoined thread; encoded as intended and confirmed against the reference server. The server may close before the last write is read, so the read allows RST.",
+      "server": {
+        "config": {"max_header_size": 512},
+        "handler": "hello_world"
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: x\r\nX-Long: "},
+        {"op": "write", "data": [{"repeat": "a", "count": 1000}]},
+        {"op": "write", "data": "\r\n\r\n"},
+        {"op": "read_once", "max": 256, "allow_reset": true, "expect": [
+          {"starts_with": "HTTP/1.1 431 "}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "parse_too_large"}
+      ]
+    },
+    {
+      "name": "max_header_size_accepted",
+      "source": "tests/server.rs:2818",
+      "notes": "http1::Builder::max_header_size(512), HelloWorld. Client writes a 46-byte head with Connection: close and reads to EOF. Enforced upstream: serve_connection returns Ok ('should succeed'), outcome ok. Client check (response starts with 'HTTP/1.1 200 ') runs in an unjoined thread; encoded as intended and confirmed against the reference server.",
+      "server": {
+        "config": {"max_header_size": 512},
+        "handler": "hello_world"
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"starts_with": "HTTP/1.1 200 "}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "ok"}
+      ]
+    },
+    {
+      "name": "max_header_size_with_large_max_buf_size",
+      "source": "tests/server.rs:2845",
+      "notes": "http1::Builder::max_buf_size(65536).max_header_size(512), HelloWorld. Same three writes as max_header_size_exceeded (1037-byte head). Shows max_header_size applies even when the read buffer could hold the head. Enforced upstream: serve_connection returns Err (case checks outcome parse_too_large). Client checks (one 256-byte read, first 13 bytes == 'HTTP/1.1 431 ') run in an unjoined thread; encoded as intended and confirmed against the reference server. The read allows RST.",
+      "server": {
+        "config": {"max_buf_size": 65536, "max_header_size": 512},
+        "handler": "hello_world"
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: x\r\nX-Long: "},
+        {"op": "write", "data": [{"repeat": "a", "count": 1000}]},
+        {"op": "write", "data": "\r\n\r\n"},
+        {"op": "read_once", "max": 256, "allow_reset": true, "expect": [
+          {"starts_with": "HTTP/1.1 431 "}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "parse_too_large"}
+      ]
+    },
+    {
+      "name": "graceful_shutdown_before_first_request_no_block",
+      "source": "tests/server.rs:2876",
+      "notes": "http1::Builder with HelloWorld; graceful_shutdown() is called before the connection future is first polled (graceful_shutdown_on_accept). Enforced upstream: the client sends nothing and read_to_end must finish without error (EOF, not RST) within 5 s (tokio timeout, no per-read timeout, hence timeout_ms 5000 and deadline_ms 5000). The received bytes are not asserted upstream. The server-side future.await.unwrap() runs in a spawned task whose JoinHandle is dropped (not enforced); encoded as intended (outcome ok) and confirmed against the reference server.",
+      "server": {
+        "config": {"graceful_shutdown_on_accept": true},
+        "handler": "hello_world"
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "read_to_eof", "timeout_ms": 5000, "deadline_ms": 5000, "expect": [
+          {"end": "eof"}
+        ]}
+      ],
+      "expect_events": [
+        {"event": "conn_close", "outcome": "ok"}
+      ]
+    },
+    {
+      "name": "streaming_body",
+      "source": "tests/server.rs:2901",
+      "notes": "serve_opts().keep_alive(false). Reply body: a stream of 100 data frames of 1000 'x' each, no size hint (sent chunked, one chunk per frame). Request 'GET / HTTP/1.1\\r\\n\\r\\n' has no Host header (hyper accepts it). Enforced upstream: read_to_end (1 s per-read timeout) starts with 'HTTP/1.1 200 OK\\r\\n' and is exactly 100808 bytes: head 103 (status line, connection: close, transfer-encoding: chunked, date) + 100 x ('3E8\\r\\n' + 1000 x + '\\r\\n') + '0\\r\\n\\r\\n'. Date normalization keeps the length.",
+      "server": {
+        "config": {"keep_alive": false},
+        "handler": "test_service",
+        "replies": [
+          {"body": {"stream": [{"data": [{"repeat": "x", "count": 1000}], "times": 100}]}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"starts_with": "HTTP/1.1 200 OK\r\n"},
+          {"len": 100808}
+        ]}
+      ]
+    },
+    {
+      "name": "http1_only",
+      "source": "tests/server.rs:2943",
+      "notes": "serve_opts() (HTTP/1 only) fixture. Upstream a hyper HTTP/2 prior-knowledge client (hyper::client::conn::http2) sends GET and the test asserts only that the request fails (unwrap_err). The case sends, in one write, the 24-byte preface and the SETTINGS and WINDOW_UPDATE frames that hyper's h2 client sends by default (ENABLE_PUSH=0, INITIAL_WINDOW_SIZE=2 MiB, MAX_FRAME_SIZE=16384, MAX_HEADER_LIST_SIZE=16384; connection window +5177345); the HEADERS frame is omitted. Encoded upstream assertion: the server does not answer with an HTTP/2 SETTINGS frame (frame type 0x04 at byte 3) and the connection ends (FIN or RST). From source, hyper writes zero bytes and the connection ends with VersionH2 (outcome parse_version_h2, conn.rs:211-214, 836-839); the reference server shows exactly that, but upstream does not assert it (a 400 would also make the h2 client fail), so the byte count and outcome are left to diff mode.",
+      "server": {
+        "handler": "test_service"
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": [
+          "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n",
+          {"hex": "000018 04 00 00000000  0002 00000000  0004 00200000  0005 00004000  0006 00004000"},
+          {"hex": "000004 08 00 00000000  004F0001"}
+        ]},
+        {"op": "read_to_eof", "allow_reset": true, "expect": [
+          {"not_regex": "(?s)\\A.{3}\\x04"},
+          {"end": "closed"}
+        ]}
+      ]
+    },
+    {
+      "name": "skips_content_length_for_304_responses",
+      "source": "tests/server.rs:3019",
+      "notes": "serve() fixture. Reply: status 304 with a Full body 'foo'. Request with Connection: close, read_to_string to EOF. Upstream asserts the whole response does not contain 'content-length:' (case-sensitive); the case adds ci: true per the catalog port note so that 'Content-Length:' cannot pass by accident.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"status": 304, "body": {"known": "foo"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"not_contains": "content-length:", "ci": true}
+        ]}
+      ]
+    },
+    {
+      "name": "skips_content_length_and_body_for_304_responses",
+      "source": "tests/server.rs:3042",
+      "notes": "serve() fixture. Reply: status 304 with a Full body 'foo'. Request with Connection: close, read_to_string to EOF. Upstream asserts: no 'content-length:' (made ci: true per the catalog port note); first line == 'HTTP/1.1 304 Not Modified' (str::lines, encoded with its CRLF terminator); skip_while(non-empty) then next == Some(\"\") and then None, i.e. the capture contains the blank line ending the head and nothing follows it (ends_with CRLFCRLF + after_head len 0).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"status": 304, "body": {"known": "foo"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"not_contains": "content-length:", "ci": true},
+          {"starts_with": "HTTP/1.1 304 Not Modified\r\n"},
+          {"ends_with": "\r\n\r\n"},
+          {"scope": "after_head", "len": 0}
+        ]}
+      ]
+    },
+    {
+      "name": "no_implicit_zero_content_length_for_head_responses",
+      "source": "tests/server.rs:3071",
+      "notes": "serve() fixture. Reply: status 200 with an empty Full body (.body([])). Request HEAD with Connection: close, read_to_string to EOF. Upstream asserts the response does not contain 'content-length:' (case-sensitive); the case adds ci: true per the catalog port note.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"status": 200, "body": {"known": ""}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "HEAD / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_to_eof", "expect": [
+          {"not_contains": "content-length:", "ci": true}
+        ]}
+      ]
+    },
+    {
+      "name": "http1_trailer_send_fields",
+      "source": "tests/server.rs:3293",
+      "notes": "serve() fixture. Reply headers transfer-encoding: chunked, trailer: chunky-trailer; body = one data frame 'hello' then trailers {chunky-trailer: header data, Host: www.example.com (forbidden trailer field), foo: bar (not declared in Trailer)}. Request has TE: trailers. read_until (8192-byte buffer) ends with '\\r\\nchunky-trailer: header data\\r\\n\\r\\n'. Upstream asserts the exact prefix 'HTTP/1.1 200 OK\\r\\ntransfer-encoding: chunked\\r\\ntrailer: chunky-trailer\\r\\n' and that the bytes after the first 'GMT\\r\\n\\r\\n' are exactly '5\\r\\nhello\\r\\n0\\r\\nchunky-trailer: header data\\r\\n\\r\\n'. The GMT search is encoded as: head ends with 'GMT' (date is the last header) and after_head equals the expected body.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {
+            "headers": [["transfer-encoding", "chunked"], ["trailer", "chunky-trailer"]],
+            "body": {
+              "stream": [{"data": "hello"}],
+              "trailers": [["chunky-trailer", "header data"], ["Host", "www.example.com"], ["foo", "bar"]]
+            }
+          }
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: keep-alive\r\nTE: trailers\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "\r\nchunky-trailer: header data\r\n\r\n"}, "expect": [
+          {"starts_with": "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\ntrailer: chunky-trailer\r\n"},
+          {"scope": "head", "ends_with": "GMT"},
+          {"scope": "after_head", "equals": "5\r\nhello\r\n0\r\nchunky-trailer: header data\r\n\r\n"}
+        ]}
+      ]
+    },
+    {
+      "name": "http1_trailer_send_fields_titlecase",
+      "source": "tests/server.rs:3338",
+      "notes": "Same as http1_trailer_send_fields except the response header is trailer: Chunky-Trailer. The trailer name is matched case-insensitively against the Trailer list and written lowercase. Upstream asserts the prefix 'HTTP/1.1 200 OK\\r\\ntransfer-encoding: chunked\\r\\ntrailer: Chunky-Trailer\\r\\n' and the bytes after the first 'GMT\\r\\n\\r\\n' == '5\\r\\nhello\\r\\n0\\r\\nchunky-trailer: header data\\r\\n\\r\\n' (encoded as head ends with 'GMT' + after_head equals).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {
+            "headers": [["transfer-encoding", "chunked"], ["trailer", "Chunky-Trailer"]],
+            "body": {
+              "stream": [{"data": "hello"}],
+              "trailers": [["chunky-trailer", "header data"], ["Host", "www.example.com"], ["foo", "bar"]]
+            }
+          }
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: keep-alive\r\nTE: trailers\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "\r\nchunky-trailer: header data\r\n\r\n"}, "expect": [
+          {"starts_with": "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\ntrailer: Chunky-Trailer\r\n"},
+          {"scope": "head", "ends_with": "GMT"},
+          {"scope": "after_head", "equals": "5\r\nhello\r\n0\r\nchunky-trailer: header data\r\n\r\n"}
+        ]}
+      ]
+    },
+    {
+      "name": "http1_trailer_fields_not_allowed",
+      "source": "tests/server.rs:3383",
+      "notes": "serve() fixture. Reply headers transfer-encoding: chunked, trailer: chunky-trailer; body 'hello' then trailers {chunky-trailer: header data}. The request has no TE header, so no trailer fields are sent. read_until ends with '\\r\\n0\\r\\n\\r\\n'. Upstream asserts the prefix 'HTTP/1.1 200 OK\\r\\ntransfer-encoding: chunked\\r\\ntrailer: chunky-trailer\\r\\n' and the bytes after the first 'GMT\\r\\n\\r\\n' == '5\\r\\nhello\\r\\n0\\r\\n\\r\\n' (encoded as head ends with 'GMT' + after_head equals).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {
+            "headers": [["transfer-encoding", "chunked"], ["trailer", "chunky-trailer"]],
+            "body": {
+              "stream": [{"data": "hello"}],
+              "trailers": [["chunky-trailer", "header data"]]
+            }
+          }
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: keep-alive\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "\r\n0\r\n\r\n"}, "expect": [
+          {"starts_with": "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\ntrailer: chunky-trailer\r\n"},
+          {"scope": "head", "ends_with": "GMT"},
+          {"scope": "after_head", "equals": "5\r\nhello\r\n0\r\n\r\n"}
+        ]}
+      ]
+    },
+    {
+      "name": "http1_trailer_fields_allowed_with_comma_separated_te",
+      "source": "tests/server.rs:3426",
+      "notes": "Reply as in http1_trailer_fields_not_allowed. Request has 'TE: gzip, Trailers' (comma list, mixed case). read_until ends with '\\r\\nchunky-trailer: header data\\r\\n\\r\\n'. Upstream asserts only the bytes after the first 'GMT\\r\\n\\r\\n' == '5\\r\\nhello\\r\\n0\\r\\nchunky-trailer: header data\\r\\n\\r\\n' (encoded as head ends with 'GMT' + after_head equals); the head is not checked.",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {
+            "headers": [["transfer-encoding", "chunked"], ["trailer", "chunky-trailer"]],
+            "body": {
+              "stream": [{"data": "hello"}],
+              "trailers": [["chunky-trailer", "header data"]]
+            }
+          }
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: keep-alive\r\nTE: gzip, Trailers\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "\r\nchunky-trailer: header data\r\n\r\n"}, "expect": [
+          {"scope": "head", "ends_with": "GMT"},
+          {"scope": "after_head", "equals": "5\r\nhello\r\n0\r\nchunky-trailer: header data\r\n\r\n"}
+        ]}
+      ]
+    },
+    {
+      "name": "http1_trailer_fields_allowed_with_multiple_te_headers",
+      "source": "tests/server.rs:3462",
+      "notes": "Reply as in http1_trailer_fields_not_allowed. Request has two TE lines, 'TE: gzip' and 'TE: trailers'; all TE values must be scanned. read_until ends with '\\r\\nchunky-trailer: header data\\r\\n\\r\\n'. Upstream asserts only the bytes after the first 'GMT\\r\\n\\r\\n' == '5\\r\\nhello\\r\\n0\\r\\nchunky-trailer: header data\\r\\n\\r\\n' (encoded as head ends with 'GMT' + after_head equals).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {
+            "headers": [["transfer-encoding", "chunked"], ["trailer", "chunky-trailer"]],
+            "body": {
+              "stream": [{"data": "hello"}],
+              "trailers": [["chunky-trailer", "header data"]]
+            }
+          }
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: keep-alive\r\nTE: gzip\r\nTE: trailers\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "\r\nchunky-trailer: header data\r\n\r\n"}, "expect": [
+          {"scope": "head", "ends_with": "GMT"},
+          {"scope": "after_head", "equals": "5\r\nhello\r\n0\r\nchunky-trailer: header data\r\n\r\n"}
+        ]}
+      ]
+    },
+    {
+      "name": "http1_trailer_recv_keep_alive",
+      "source": "tests/server.rs:3528",
+      "notes": "serve() fixture. Request 1: chunked POST '5\\r\\nhello\\r\\n0\\r\\n' with trailer section 'chunky-trailer: header data'. Upstream asserts server.body() == 'hello' and server.trailers().get('chunky-trailer') == 'header data' before reading the response (encoded as an await_event step; $includes mirrors HeaderMap::get), then read_until ends with 'ok' (reply content-length: 2, body 'ok'). Request 2 on the same connection: GET /quux with Connection: close; read_until ends with 'zar quux' (reply content-length: 8). Upstream queues reply 2 after response 1 is read; the shared queue gives the same result (SPEC 5.2).",
+      "server": {
+        "handler": "test_service",
+        "replies": [
+          {"headers": [["content-length", "2"]], "body": {"known": "ok"}},
+          {"headers": [["content-length", "8"]], "body": {"known": "zar quux"}}
+        ]
+      },
+      "steps": [
+        {"op": "connect"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\ntrailer: chunky-trailer\r\nhost: example.domain\r\ntransfer-encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nchunky-trailer: header data\r\n\r\n"},
+        {"op": "await_event", "match": {"event": "request_body", "req": 1, "body": "hello", "trailers": {"$includes": [["chunky-trailer", "header data"]]}}},
+        {"op": "read_until", "until": {"ends_with": "ok"}},
+        {"op": "write", "data": "GET /quux HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
+        {"op": "read_until", "until": {"ends_with": "zar quux"}}
+      ]
+    }
+  ]
+}
