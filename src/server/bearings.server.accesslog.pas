@@ -160,6 +160,8 @@ type
     procedure Dec_(N: QWord);
     procedure Dec2(N: Integer);      { two digits, zero-padded }
     procedure DecN(N: QWord; Digits: Integer);
+    procedure Peer(A: PSockAddrStorage);            { the address text: IPv4 directly, IPv6 through SockAddrToStr }
+    procedure Version(V: THttpVersion);
     procedure JsonStr(S: PByte; N: SizeInt);        { with the quotes }
     procedure Escaped(S: PByte; N: SizeInt);        { Combined format escapes, no quotes }
     procedure QuotedStr(S: PByte; N: SizeInt);      { Combined format, with the quotes }
@@ -233,6 +235,40 @@ begin
   Bytes(@Buf[0], Digits);
 end;
 
+procedure TLineWriter.Peer(A: PSockAddrStorage);
+var
+  B: PByte;
+  S: RawByteString;
+begin
+  if A = nil then
+    Exit;
+  if A^.Family = AF_UNIX then
+    Str('unix')
+  else if A^.Family = AF_INET then
+  begin
+    { sockaddr_in: the address is at offset 4 }
+    B := @A^.Data[2];
+    Dec_(B[0]);  Byte_(Ord('.'));  Dec_(B[1]);  Byte_(Ord('.'));  Dec_(B[2]);  Byte_(Ord('.'));  Dec_(B[3]);
+  end
+  else
+  begin
+    S := SockAddrToStr(A^);          { IPv6: the cold path, with a string }
+    Str(S);
+  end;
+end;
+
+procedure TLineWriter.Version(V: THttpVersion);
+begin
+  case V of
+    hv09: Str('0.9');
+    hv10: Str('1.0');
+    hv2: Str('2');
+    hv3: Str('3');
+  else
+    Str('1.1');
+  end;
+end;
+
 { the length of the valid UTF-8 sequence starting at S[0] (2..4), or 0 }
 function Utf8SeqLen(S: PByte; N: SizeInt): Integer;
 var
@@ -290,6 +326,16 @@ begin
   I := 0;
   while I < N do
   begin
+    { a run of bytes that need no escape is copied in one move }
+    L := I;
+    while (L < N) and (S[L] >= $20) and (S[L] < $80) and (S[L] <> Ord('"')) and (S[L] <> Ord('\')) do
+      Inc(L);
+    if L > I then
+    begin
+      Bytes(S + I, L - I);
+      I := L;
+      Continue;
+    end;
     B := S[I];
     if B = Ord('"') then
       Str('\"')
@@ -303,8 +349,6 @@ begin
       Str('\t')
     else if B < $20 then
       U(B)
-    else if B < $80 then
-      Byte_(B)
     else
     begin
       L := Utf8SeqLen(S + I, N - I);
@@ -391,19 +435,6 @@ begin
   S := Integer(Rem mod 60);
 end;
 
-{ "1.1", "1.0", "0.9", "2", "3" }
-function VersionText(V: THttpVersion): RawByteString;
-begin
-  case V of
-    hv09: Result := '0.9';
-    hv10: Result := '1.0';
-    hv2: Result := '2';
-    hv3: Result := '3';
-  else
-    Result := '1.1';
-  end;
-end;
-
 function FormatAccessLine(const R: TAccessRecord; Format: TAccessLogFormat; UserAgent: Boolean;
   Dst: PByte; Cap: SizeInt): SizeInt;
 var
@@ -411,7 +442,6 @@ var
   Y: Int64;
   Mo, D, H, Mi, S, Ms: Integer;
   Q: SizeInt;
-  Peer: RawByteString;
   Ns: QWord;
 begin
   W.P := Dst;
@@ -419,12 +449,6 @@ begin
   W.Cap := Cap;
   W.Overflow := False;
   SplitTime(R.TimeUs, Y, Mo, D, H, Mi, S, Ms);
-  if (R.Peer <> nil) and (R.Peer^.Family = AF_UNIX) then
-    Peer := 'unix'
-  else if R.Peer <> nil then
-    Peer := SockAddrToStr(R.Peer^)
-  else
-    Peer := '';
   if R.DurationNs > 0 then
     Ns := QWord(R.DurationNs)
   else
@@ -439,9 +463,9 @@ begin
         W.Str('{"time":"');
         W.DecN(QWord(Y), 4);  W.Byte_(Ord('-'));  W.Dec2(Mo);  W.Byte_(Ord('-'));  W.Dec2(D);
         W.Byte_(Ord('T'));  W.Dec2(H);  W.Byte_(Ord(':'));  W.Dec2(Mi);  W.Byte_(Ord(':'));  W.Dec2(S);
-        W.Byte_(Ord('.'));  W.DecN(QWord(Ms), 3);  W.Str('Z","client.address":');
-        W.JsonStr(PByte(PAnsiChar(Peer)), Length(Peer));
-        W.Str(',"http.request.method":');
+        W.Byte_(Ord('.'));  W.DecN(QWord(Ms), 3);  W.Str('Z","client.address":"');
+        W.Peer(R.Peer);                { digits, dots, hex and colons: nothing to escape }
+        W.Str('","http.request.method":');
         W.JsonStr(R.Method, R.MethodLen);
         W.Str(',"url.path":');
         W.JsonStr(R.Target, Q);
@@ -451,7 +475,7 @@ begin
           W.JsonStr(R.Target + Q + 1, R.TargetLen - Q - 1);
         end;
         W.Str(',"network.protocol.version":"');
-        W.Str(VersionText(R.Version));
+        W.Version(R.Version);
         W.Str('","http.response.status_code":');
         W.Dec_(R.Status);
         W.Str(',"http.response.body.size":');
@@ -469,10 +493,10 @@ begin
       end;
     alfCombined:
       begin
-        if Peer = '' then
+        if R.Peer = nil then
           W.Byte_(Ord('-'))
         else
-          W.Str(Peer);
+          W.Peer(R.Peer);
         W.Str(' - - [');
         W.Dec2(D);  W.Byte_(Ord('/'));  W.Str(MONTHS[Mo]);  W.Byte_(Ord('/'));  W.DecN(QWord(Y), 4);
         W.Byte_(Ord(':'));  W.Dec2(H);  W.Byte_(Ord(':'));  W.Dec2(Mi);  W.Byte_(Ord(':'));  W.Dec2(S);
@@ -482,7 +506,7 @@ begin
         W.Byte_(Ord(' '));
         W.Escaped(R.Target, R.TargetLen);
         W.Str(' HTTP/');
-        W.Str(VersionText(R.Version));
+        W.Version(R.Version);
         W.Str('" ');
         W.Dec_(R.Status);
         W.Byte_(Ord(' '));
