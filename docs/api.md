@@ -7,10 +7,11 @@ here was taken from the code and the header comments of the units under
 `src/`; where a detail matters, the unit is named so you can read the
 header comment, which is written for the same audience as this guide.
 
-Four example programs under `examples/` accompany it: `hello.pas`
+Five example programs under `examples/` accompany it: `hello.pas`
 (inline answer, static body), `worker.pas` (every request on a worker,
 request body read with `ReadAll`, echoed back), `stream.pas` (a streamed
-response and a file response), and `ws_echo.pas` (a WebSocket echo server)
+response and a file response), `ws_echo.pas` (a WebSocket echo server)
+and `ws_chat.pas` (a chat with rooms on the pub/sub topics).
 You can find the build command for them in `examples/README.md`.
 
 Contents:
@@ -1016,6 +1017,60 @@ out; no further message is delivered to it. `examples/ws_echo.pas` with
 the argument `worker` is the echo on the pool;
 `tests/unit/test_ws_echo.pas` (`TTestWsWorker`) covers it, also under drd.
 
+Pub/sub topics (unit `bearings.ws.topics`). For a message that goes to
+every connection interested in something (a chat room, a sensor), the
+application keeps no list of connections: it creates one `TWsTopics` for
+the server, subscribes connections to topics and publishes to a topic.
+
+```pascal
+Topics := TWsTopics.Create;                           { one per server; freed after it }
+Topics.Subscribe(WS, 'chat/room1');                   { loop thread of WS, or a worker handler }
+Topics.Unsubscribe(WS, 'chat/room1');
+Topics.Publish('chat/room1', 'hola');                 { text (UTF-8); any thread }
+Topics.PublishBinary('sensors/x/temp', Data);
+Topics.PublishFrame('chat/room1', F);                 { a prepared WsTextFrame / WsBinaryFrame }
+Topics.Publish('chat/room1', 'hola', WS);             { everyone but WS (the sender) }
+Topics.CloseOnBackpressure := True;                   { a subscriber that cannot take a message is aborted }
+```
+
+The rules:
+
+- Topics are `/`-separated levels. A subscription may use the MQTT
+  wildcards: `+` matches one level, `#` matches the rest of the levels,
+  including none (`chat/#` matches `chat/room1`, `chat/a/b` and `chat`;
+  `sensors/+/temp` matches `sensors/x/temp`). Each wildcard must be a
+  whole level and `#` the last one. A publish names a concrete topic, with
+  no `+` or `#` in it. `EArgumentException` otherwise (`WsPatternValid`
+  and `WsTopicValid` check without raising).
+- A publish encodes the message once and posts one message per loop; each
+  loop sends the frame to its subscribers with `SendFrame`. Messages
+  published by one thread reach each subscriber in that order; between
+  publishers on different threads there is no order. A connection
+  subscribed to two patterns that both match gets the message once.
+- `Subscribe` and `Unsubscribe` on the connection's loop thread (`OnOpen`,
+  `OnText`) take effect at once. From a `TWsWorkerHandler` method they are
+  posted to the loop and take effect shortly after: a publish in between
+  may miss the new subscriber (the same as uWebSockets).
+- A connection's subscriptions are removed when it ends; `OnClose` has
+  nothing to do. A connection that is `Closing` cannot subscribe.
+- A slow subscriber (its output queue is at `SendHighWater`, so
+  `SendFrame` would return `wsFull`) does not get the message: it is
+  dropped for that connection and counted in `TWebSocket.DroppedMessages`
+  (loop thread). With `CloseOnBackpressure` the connection is aborted
+  instead (no close frame: the client is not reading). Nothing is queued
+  without a bound.
+- Excluding the sender is the explicit `Exclude` parameter, never the
+  default. The caller must hold the connection (its loop thread or a
+  reference); the publish takes a reference and releases it when done.
+- Nothing is retained: a subscriber gets what is published after it
+  subscribed.
+- `Publish` needs the loops alive: not after the server stopped. The
+  registry is freed after the server, when every connection has ended.
+
+`examples/ws_chat.pas` is a chat with rooms on it;
+`tests/unit/test_ws_echo.pas` (`TTestWsTopics`) covers it, also under drd.
+`docs/design.md` 6.10 has the per-loop table and the publish object.
+
 Server shutdown: `TServer.Stop` calls `Shutdown` on every upgraded
 connection (each loop keeps them in a list from the hand-off on). A
 `TWebSocket` answers with `CloseWith(1001, 'server shutdown')`, and the loop
@@ -1335,7 +1390,13 @@ Member | Description | Thread
 `TWebSocketHandler.OnOpen`, `OnText`, `OnBinary`, `OnPong`, `OnWritable`, `OnError`, `OnClose` | the application's callbacks | loop
 `TWebSocket.SendText`, `SendBinary`, `SendFrame`, `Ping`, `CloseWith`, `Abort`, `Queued`, `Closing`, `User` | sending and state | loop
 `TWebSocket.PostText`, `PostBinary`, `PostFrame`, `AddRef`, `Release` | sending from another thread | any (`AddRef`: loop, or a holder)
+`TWebSocket.DroppedMessages`, `Hook`, `HookData` | published messages missed; the hook of `bearings.ws.topics` | loop
 `TWsFrame`, `WsTextFrame`, `WsBinaryFrame`, `WsMakeFrame`, `WsFrameValid` | prepared frames for broadcast | any
+`TWsTopics.Create`, `Destroy` | the pub/sub registry (unit `bearings.ws.topics`), one per server | any (`Destroy`: after the server)
+`TWsTopics.Subscribe(WS, Pattern)`, `Unsubscribe(WS, Pattern)` | topics with `+` and `#` wildcards | loop of WS, or a holder (posted)
+`TWsTopics.Publish(Topic, Text, Exclude)`, `PublishBinary`, `PublishFrame` | one frame to every subscriber on every loop | any
+`TWsTopics.CloseOnBackpressure` | abort a subscriber whose queue is at the mark, instead of dropping the message | set before the first publish
+`WsPatternValid`, `WsTopicValid`, `SplitLevels` | the topic syntax | any
 `TWebSocket.Create(Handler, Cfg, OwnsHandler)`, `Start(U)`, `TWsUpgradeHandler` | for an application with its own `TUpgradeHandler` | loop
 `TWsConfig`, `DefaultWsConfig` | limits and timeouts | any
 `TWsReader`, `WsEncodeHeader`, `TUtf8Check`, `WS_OP_*`, `WS_CLOSE_*` | the frame layer | any (one reader per connection)

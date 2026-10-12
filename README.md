@@ -236,6 +236,29 @@ to many connections, encode it once with `WsTextFrame` and call
 `SendFrame` on each: the connections share the frame's bytes instead of
 copying them.
 
+Pub/sub (unit `bearings.ws.topics`): a `TWsTopics` registry, one per
+server, in which connections subscribe to topics and any thread publishes
+to one. The message is encoded once and sent to every subscriber on every
+loop; the application keeps no list of connections, and a connection's
+subscriptions go away with it. Topics are `/`-separated levels; a
+subscription may use the MQTT wildcards `+` (one level) and `#` (the rest).
+
+```pascal
+Topics := TWsTopics.Create;                    { the application creates and frees it }
+Topics.Subscribe(WS, 'chat/room1');            { in OnOpen or OnText; from a worker handler too }
+Topics.Subscribe(WS, 'sensors/+/temp');
+Topics.Publish('chat/room1', 'hola');          { any thread }
+Topics.Publish('chat/room1', 'hola', WS);      { everyone but WS }
+Topics.PublishBinary('sensors/x/temp', Data);
+Topics.Unsubscribe(WS, 'chat/room1');
+```
+
+A subscriber whose output queue is full misses the message (counted in
+`TWebSocket.DroppedMessages`); with `Topics.CloseOnBackpressure := True`
+it is disconnected instead. Nothing is queued without a bound and nothing
+is retained for late subscribers. `examples/ws_chat.pas` is a chat with
+rooms on it.
+
 A handler that blocks (a database query per message, for example) derives
 from `TWsWorkerHandler` and is accepted with the server's pool:
 
@@ -352,9 +375,9 @@ keep-alive connection, as nginx's `keepalive_requests` and
   (configure, answer inline or on a worker, read request bodies, stream
   responses, upgrades, shutdown), with a reference table of every public
   type and routine and its threading rule.
-- `examples/`: four complete programs (`hello.pas`, `worker.pas`,
-  `stream.pas`, `ws_echo.pas`) and the command that builds them
-  (`examples/README.md`).
+- `examples/`: five complete programs (`hello.pas`, `worker.pas`,
+  `stream.pas`, `ws_echo.pas`, `ws_chat.pas`) and the command that builds
+  them (`examples/README.md`).
 - The header comment of every unit under `src/` explains what the unit does.
 - `docs/design.md`: the design: the decisions and their reasons, the
   invariants a contributor must respect, and the deviations from what an
@@ -377,14 +400,14 @@ them. `src/ws` uses `src/rt`, `src/http1` and `src/http`; nothing uses
 | `src/http1`   | `bearings.http1.*`, `bearings.http.date`, `bearings.http.headers`, `bearings.http.uri` | HTTP/1.1: request parser, response encoder, body decoder, connection state machine, dispatcher. `bearings.http.date` keeps each loop's Date header through the loop's tick hook (`LoopTickProc`, `TLoop.Ext`). |
 | `src/http`    | `bearings.http.exchange`, `bearings.http.error` | The request/response exchange that a service (application) handles, inline on the loop or on a worker thread. |
 | `src/server`  | `bearings.server`, `bearings.server.accesslog`, `bearings.server.metrics` | `TServer`: listeners, loops, workers, signals, graceful stop, the connection limit; the access log and the metrics. |
-| `src/ws`      | `bearings.ws.handshake`, `bearings.ws.frame`, `bearings.ws.conn` | WebSocket (RFC 6455): the opening handshake, the frame reader and encoder, the connection on the event loop. |
+| `src/ws`      | `bearings.ws.handshake`, `bearings.ws.frame`, `bearings.ws.conn`, `bearings.ws.topics` | WebSocket (RFC 6455): the opening handshake, the frame reader and encoder, the connection on the event loop, pub/sub topics. |
 
 An application puts all five directories on its unit path (`-Fu`). The
 units a program normally uses directly are `bearings.server`,
 `bearings.http.exchange`, `bearings.rt.buf` (the body constructors),
 `bearings.http.headers`, `bearings.http1.config`, `bearings.rt.loop`,
 `bearings.rt.workers`, for upgrades `bearings.rt.stream`, for WebSocket
-`bearings.ws.handshake` and `bearings.ws.conn`, and under systemd
+`bearings.ws.handshake`, `bearings.ws.conn` and `bearings.ws.topics`, and under systemd
 `bearings.rt.sd` (through `ApplySdListenFds` in `bearings.server`).
 
 ## Building and testing

@@ -89,6 +89,11 @@
   thread. A broadcast from another thread is best done with one message per
   loop (TLoop.Post) whose handler calls SendFrame for that loop's
   connections, rather than one PostFrame per connection.
+  bearings.ws.topics does that for the topics a connection subscribes to;
+  it keeps its per-connection record in Hook / HookData, is told when the
+  connection ends (TWsConnHook.Finished, at the start of Finish), and
+  counts in DroppedMessages the published messages a connection missed
+  because its queue was at the mark.
 
   Sending from another thread. SendText and friends run on the loop thread
   only. Another thread uses PostText / PostBinary: the message is copied
@@ -142,7 +147,8 @@
 
   Threading: everything runs on the loop thread of the TUpgraded, except
   PostText, PostBinary, PostFrame, PostClose, AddRef and Release (any
-  thread), and the methods of a TWsWorkerHandler (a worker thread). }
+  thread), and the methods of a TWsWorkerHandler (a worker thread). Hook,
+  HookData and DroppedMessages: loop thread. }
 unit bearings.ws.conn;
 
 {$mode objfpc}{$H+}
@@ -199,6 +205,15 @@ type
     procedure OnWritable(WS: TWebSocket); virtual;
     procedure OnError(WS: TWebSocket; Code: Word; const Msg: string); virtual;
     procedure OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString); virtual;
+  end;
+
+  { A library-level hook on the end of a connection (bearings.ws.topics
+    removes the connection's subscriptions with it). Finished runs on the
+    loop thread at the start of Finish, before OnClose; the connection is
+    still alive but Closing. One hook per connection (TWebSocket.Hook). }
+  TWsConnHook = class
+  public
+    procedure Finished(WS: TWebSocket); virtual; abstract;
   end;
 
   TWsEventKind = (weOpen, weText, weBinary, wePong, weWritable, weError, weClose);
@@ -262,6 +277,9 @@ type
     FPeerCode: Word;                 { the client's close code; 1005 none; 1006 no close frame }
     FPeerReason: RawByteString;
     FUser: TObject;
+    FHook: TWsConnHook;
+    FHookData: Pointer;
+    FDropped: QWord;
     FRefs: LongInt;
     { cross-thread sends }
     FPostLock: TSpinLock;
@@ -356,6 +374,13 @@ type
     property WorkerHandler: TWsWorkerHandler read FWorker;     { nil for a loop handler }
     property Config: TWsConfig read FCfg;
     property User: TObject read FUser write FUser;   { application data; not freed here }
+    { the hook called when the connection ends, and its data (the
+      per-connection record of bearings.ws.topics); not freed here }
+    property Hook: TWsConnHook read FHook write FHook;
+    property HookData: Pointer read FHookData write FHookData;
+    { published messages (bearings.ws.topics) this connection did not get
+      because its output queue was at the mark }
+    property DroppedMessages: QWord read FDropped write FDropped;
 
     { ---- any thread ---- }
     function PostText(const S: RawByteString): TWsSendResult;
@@ -1476,6 +1501,8 @@ var
   H: TWebSocketHandler;
 begin
   FFinished := True;
+  if FHook <> nil then
+    FHook.Finished(Self);            { the topic subscriptions go first }
   FLoop.Timers.Remove(@FIdleTimer);
   FLoop.Timers.Remove(@FPingTimer);
   FLoop.Timers.Remove(@FCloseTimer);

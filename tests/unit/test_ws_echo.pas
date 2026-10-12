@@ -12,7 +12,14 @@
   (TWsWorkerHandler, path /worker): echo in order from a worker thread,
   the receive mark (reading pauses and resumes), an exception (1011),
   PostClose, 16 clients on 2 loops, and a server stop while a handler is
-  busy. tests/unit/run_all.sh also runs TTestWsWorker under valgrind drd.
+  busy. TTestWsTopics covers the pub/sub topics (bearings.ws.topics, paths
+  /topics and /topics-worker, driven by text commands: sub, unsub, pub,
+  pubx, pubbig): fan-out on two loops in order, the wildcards, the
+  exclusion of the sender, unsubscribe and the removal at close, subscribe
+  and publish from a worker handler, a subscriber that does not read
+  (DroppedMessages, CloseOnBackpressure), and a publish from a plain
+  thread. tests/unit/run_all.sh also runs TTestWsWorker and TTestWsTopics
+  under valgrind drd.
   Run: test_ws_echo --all --format=plain
        test_ws_echo --suite=TTestWsWorker --format=plain }
 program test_ws_echo;
@@ -21,10 +28,11 @@ program test_ws_echo;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
+  {$IFDEF WD_DRD}cmem,{$ENDIF}            { the C heap: drd sees the blocks (as test_workers) }
   Classes, SysUtils, StrUtils, BaseUnix, Sockets, ctypes, fpcunit, testregistry, consoletestrunner,
   bearings.rt.loop, bearings.rt.sync, bearings.rt.workers, bearings.rt.buf, bearings.http.headers,
   bearings.http.exchange, bearings.http1.config, bearings.server,
-  bearings.ws.frame, bearings.ws.handshake, bearings.ws.conn, bearings.test.ws;
+  bearings.ws.frame, bearings.ws.handshake, bearings.ws.conn, bearings.ws.topics, bearings.test.ws;
 
 type
   TEchoHandler = class(TWebSocketHandler)
@@ -71,6 +79,32 @@ type
     procedure OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString); override;
   end;
 
+  { /topics: the topic registry driven by text commands (TopicCommand);
+    the answer, if any, comes back as text. OnClose records the dropped
+    messages and the aborts. }
+  TTopicHandler = class(TWebSocketHandler)
+  public
+    procedure OnText(WS: TWebSocket; P: PByte; Len: SizeInt); override;
+    procedure OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString); override;
+  end;
+
+  { /topics-worker: the same commands from a worker thread (Subscribe is
+    posted to the loop; the answer with PostText) }
+  TTopicWorker = class(TWsWorkerHandler)
+  public
+    procedure OnText(WS: TWebSocket; const Msg: RawByteString); override;
+    procedure OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString); override;
+  end;
+
+  { publishes N messages to a topic from a thread that is neither a loop
+    nor a worker }
+  TPublisherThread = class(TThread)
+  public
+    Topic: RawByteString;
+    N: Integer;
+    procedure Execute; override;
+  end;
+
   TEchoCall = class(TServiceCall)
   public
     function Poll(Ex: TExchange): TCallPoll; override;
@@ -89,7 +123,9 @@ type
   public
     Fd: cint;
     Buf: RawByteString;
-    constructor Connect(Port: Word);
+    { RcvBuf > 0: SO_RCVBUF set before the connect (no autotuning: a
+      small, fixed receive window for a client that does not read) }
+    constructor Connect(Port: Word; RcvBuf: Integer = 0);
     destructor Destroy; override;
     procedure SendAll(const S: RawByteString);
     function Recv(Wait: Boolean = True): Boolean;     { False: EOF, error or timeout }
@@ -152,6 +188,26 @@ type
     procedure Server_stop_while_a_handler_is_busy;
   end;
 
+  TTestWsTopics = class(TTestWsBase)
+  private
+    function Join(Port: Word; const Path: RawByteString = '/topics'; RcvBuf: Integer = 0): TClient;
+    procedure Sub(C: TClient; const Pattern: RawByteString);
+    procedure Expect(C: TClient; const Text, Msg: string);
+    procedure NoFrame(C: TClient; const Msg: string);
+    procedure CloseAll(const C: array of TClient);
+    procedure Slow_subscriber(CloseIt: Boolean);
+  published
+    procedure Fan_out_on_two_loops_in_order;
+    procedure Wildcards;
+    procedure Exclude_the_sender;
+    procedure Unsubscribe_and_removal_at_close;
+    procedure Subscribe_and_publish_from_a_worker_handler;
+    procedure Slow_subscriber_drops_messages;
+    procedure Slow_subscriber_aborted_with_CloseOnBackpressure;
+    procedure Publish_from_a_plain_thread;
+    procedure Invalid_patterns_and_topics;
+  end;
+
 const
   CRLF = #13#10;
   KEY = 'dGhlIHNhbXBsZSBub25jZQ==';
@@ -168,14 +224,112 @@ var
   WorkerOpens, WorkerCloses: LongInt;
   WorkerCloseCode, WorkerErrCode: LongInt;
   WorkerCloseThread: TThreadID;
+  Topics: TWsTopics;                 { created by SetUp, freed after the server by TearDown }
+  TopicCloses: LongInt;              { OnClose of the topic handlers }
+  TopicDrops: LongInt;               { DroppedMessages of the last closed connection that had any }
+  TopicAborts: LongInt;              { OnClose with 1006 }
 
-{ ---- TWorkerEcho ---- }
+{ ---- the topic handlers ---- }
 
 procedure NoteThread(WS: TWebSocket);
 begin
   if GetCurrentThreadId = AtomicLoadThreadId(WS.Loop.ThreadId) then
     AtomicInc(WorkerOnLoop);
 end;
+
+{ 'sub P', 'unsub P', 'pub T text', 'pubx T text' (everyone but the
+  sender), 'pubbig T N' (N bytes, binary), 'pubframe T text'; the answer
+  or '' }
+function TopicCommand(WS: TWebSocket; const Msg: RawByteString): RawByteString;
+var
+  Cmd, A, B: RawByteString;
+  P: Integer;
+begin
+  P := Pos(' ', Msg);
+  if P = 0 then
+    Exit('unknown');
+  Cmd := Copy(Msg, 1, P - 1);
+  B := Copy(Msg, P + 1, MaxInt);
+  P := Pos(' ', B);
+  if P = 0 then
+    A := B
+  else
+  begin
+    A := Copy(B, 1, P - 1);
+    B := Copy(B, P + 1, MaxInt);
+  end;
+  Result := '';
+  if Cmd = 'sub' then
+  begin
+    Topics.Subscribe(WS, A);
+    Result := 'subscribed ' + A;
+  end
+  else if Cmd = 'unsub' then
+  begin
+    Topics.Unsubscribe(WS, A);
+    Result := 'unsubscribed ' + A;
+  end
+  else if Cmd = 'pub' then
+    Topics.Publish(A, B)
+  else if Cmd = 'pubx' then
+    Topics.Publish(A, B, WS)
+  else if Cmd = 'pubbig' then
+    Topics.PublishBinary(A, StringOfChar('x', StrToInt(B)))
+  else if Cmd = 'pubframe' then
+    Topics.PublishFrame(A, WsTextFrame(B))
+  else
+    Result := 'unknown';
+end;
+
+procedure TopicClosed(WS: TWebSocket; Code: Word);
+begin
+  if WS.DroppedMessages > 0 then
+    AtomicStore(TopicDrops, LongInt(WS.DroppedMessages));
+  if Code = WS_CLOSE_ABNORMAL then
+    AtomicInc(TopicAborts);
+  HappensBefore(@TopicCloses);       { the test reads the counters after WaitFreed }
+  AtomicInc(TopicCloses);
+end;
+
+procedure TTopicHandler.OnText(WS: TWebSocket; P: PByte; Len: SizeInt);
+var
+  Msg, R: RawByteString;
+begin
+  SetString(Msg, PAnsiChar(P), Len);
+  R := TopicCommand(WS, Msg);
+  if R <> '' then
+    WS.SendText(R);
+end;
+
+procedure TTopicHandler.OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString);
+begin
+  TopicClosed(WS, Code);
+end;
+
+procedure TTopicWorker.OnText(WS: TWebSocket; const Msg: RawByteString);
+var
+  R: RawByteString;
+begin
+  NoteThread(WS);
+  R := TopicCommand(WS, Msg);
+  if R <> '' then
+    WS.PostText(R);
+end;
+
+procedure TTopicWorker.OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString);
+begin
+  TopicClosed(WS, Code);
+end;
+
+procedure TPublisherThread.Execute;
+var
+  I: Integer;
+begin
+  for I := 1 to N do
+    Topics.Publish(Topic, 'tick ' + IntToStr(I));
+end;
+
+{ ---- TWorkerEcho ---- }
 
 procedure TWorkerEcho.OnOpen(WS: TWebSocket);
 begin
@@ -369,6 +523,10 @@ begin
       AcceptWebSocket(Ex, R, TRoomHandler.Create, WsCfg)
     else if R.Ok and PathIs(Ex, '/worker') then
       AcceptWebSocket(Ex, R, TWorkerEcho.Create, ServerForPool.Workers, WsCfg)
+    else if R.Ok and PathIs(Ex, '/topics') then
+      AcceptWebSocket(Ex, R, TTopicHandler.Create, WsCfg)
+    else if R.Ok and PathIs(Ex, '/topics-worker') then
+      AcceptWebSocket(Ex, R, TTopicWorker.Create, ServerForPool.Workers, WsCfg)
     else if R.Ok then
       AcceptWebSocket(Ex, R, TEchoHandler.Create, WsCfg)
     else
@@ -404,13 +562,15 @@ end;
 
 { ---- the client ---- }
 
-constructor TClient.Connect(Port: Word);
+constructor TClient.Connect(Port: Word; RcvBuf: Integer);
 var
   A: TInetSockAddr;
   TV: TTimeVal;
 begin
   inherited Create;
   Fd := fpSocket(AF_INET, SOCK_STREAM, 0);
+  if RcvBuf > 0 then
+    fpSetSockOpt(Fd, SOL_SOCKET, SO_RCVBUF, @RcvBuf, SizeOf(RcvBuf));
   A.sin_family := AF_INET;
   A.sin_port := htons(Port);
   A.sin_addr.s_addr := htonl($7F000001);
@@ -549,6 +709,10 @@ begin
   WorkerCloseCode := 0;
   WorkerErrCode := 0;
   WorkerCloseThread := 0;
+  TopicCloses := 0;
+  TopicDrops := 0;
+  TopicAborts := 0;
+  Topics := TWsTopics.Create;
 end;
 
 procedure TTestWsBase.TearDown;
@@ -561,6 +725,7 @@ begin
     Srv.Wait;
     FreeAndNil(Srv);
   end;
+  FreeAndNil(Topics);                { after the server: every connection has ended }
   ServerForPool := nil;
   for I := 0 to High(RoomLoops) do
     RoomLoops[I] := nil;
@@ -594,6 +759,7 @@ begin
   end;
   AssertEquals('every TWebSocket freed', Live0, AtomicLoad(WebSocketsLive));
   HappensAfter(@WorkerCloses);       { the worker handler's counters are read after this }
+  HappensAfter(@TopicCloses);
 end;
 
 function HeadHas(const Head, Line: RawByteString): Boolean;
@@ -1151,6 +1317,400 @@ begin
   AssertEquals(1001, WorkerCloseCode);
 end;
 
+{ ---- the topics ---- }
+
+function TTestWsTopics.Join(Port: Word; const Path: RawByteString; RcvBuf: Integer): TClient;
+begin
+  Result := TClient.Connect(Port, RcvBuf);
+  AssertTrue('101 on ' + Path, AnsiStartsStr('HTTP/1.1 101', Result.Handshake('', '', Path)));
+end;
+
+procedure TTestWsTopics.Sub(C: TClient; const Pattern: RawByteString);
+begin
+  C.SendAll(CFrame(WS_OP_TEXT, 'sub ' + Pattern));
+  Expect(C, 'subscribed ' + Pattern, 'sub ' + Pattern);
+end;
+
+procedure TTestWsTopics.Expect(C: TClient; const Text, Msg: string);
+var
+  F: TServerFrame;
+begin
+  AssertTrue(Msg + ': a frame', C.Frame(F));
+  AssertEquals(Msg + ': opcode', WS_OP_TEXT, F.Opcode);
+  AssertEquals(Msg, Text, F.Payload);
+end;
+
+{ nothing arrives for C within 100 ms }
+procedure TTestWsTopics.NoFrame(C: TClient; const Msg: string);
+var
+  F: TServerFrame;
+begin
+  Sleep(100);
+  while C.Recv(False) do ;
+  if TakeServerFrame(C.Buf, F) then
+    Fail(Msg + ': got a frame: ' + FrameText(F));
+end;
+
+procedure TTestWsTopics.CloseAll(const C: array of TClient);
+var
+  I: Integer;
+  F: TServerFrame;
+begin
+  for I := 0 to High(C) do
+    if C[I] <> nil then
+    begin
+      C[I].SendAll(CFrame(WS_OP_CLOSE, #3#232));
+      AssertTrue('close frame ' + IntToStr(I), C[I].Frame(F));
+      AssertEquals(WS_OP_CLOSE, F.Opcode);
+      AssertTrue('end of stream ' + IntToStr(I), C[I].AtEof);
+    end;
+end;
+
+procedure TTestWsTopics.Fan_out_on_two_loops_in_order;
+const
+  NC = 8;
+  NM = 40;
+var
+  C: array[0..NC - 1] of TClient;
+  I, K, M: Integer;
+  F: TServerFrame;
+  LastOf: array[0..NC - 1] of Integer;
+  Seen: array[0..NM] of Boolean;
+begin
+  FillChar(Seen, SizeOf(Seen), 0);
+  StartServer(2);
+  for I := 0 to NC - 1 do
+    C[I] := nil;
+  try
+    for I := 0 to NC - 1 do
+    begin
+      C[I] := Join(Srv.Port);
+      Sub(C[I], 'chat/room1');
+    end;
+    { two publishes from one loop handler: everyone, once, in order }
+    C[0].SendAll(CFrame(WS_OP_TEXT, 'pub chat/room1 one') + CFrame(WS_OP_TEXT, 'pub chat/room1 two'));
+    for I := 0 to NC - 1 do
+    begin
+      Expect(C[I], 'one', 'client ' + IntToStr(I) + ' first');
+      Expect(C[I], 'two', 'client ' + IntToStr(I) + ' second');
+    end;
+    { more, from every sender at once: each client gets all of them, and
+      the messages of one sender in that sender's order (senders on
+      different loops have no order between them) }
+    for K := 1 to NM do
+      C[K mod NC].SendAll(CFrame(WS_OP_TEXT, 'pub chat/room1 m' + IntToStr(K)));
+    for I := 0 to NC - 1 do
+    begin
+      for K := 0 to NC - 1 do
+        LastOf[K] := 0;
+      for K := 1 to NM do
+      begin
+        AssertTrue('client ' + IntToStr(I) + ' message ' + IntToStr(K), C[I].Frame(F));
+        AssertEquals(WS_OP_TEXT, F.Opcode);
+        M := StrToInt(Copy(F.Payload, 2, MaxInt));
+        AssertTrue('m' + IntToStr(M) + ' after m' + IntToStr(LastOf[M mod NC]) + ' of the same sender',
+          M > LastOf[M mod NC]);
+        LastOf[M mod NC] := M;
+        Seen[M] := True;
+      end;
+      for K := 1 to NM do
+        AssertTrue('client ' + IntToStr(I) + ' got m' + IntToStr(K), Seen[K]);
+      FillChar(Seen, SizeOf(Seen), 0);
+    end;
+    { a prepared frame too }
+    C[1].SendAll(CFrame(WS_OP_TEXT, 'pubframe chat/room1 prepared'));
+    for I := 0 to NC - 1 do
+      Expect(C[I], 'prepared', 'client ' + IntToStr(I) + ' prepared');
+    for I := 0 to NC - 1 do
+      NoFrame(C[I], 'client ' + IntToStr(I) + ' once only');
+    CloseAll(C);
+  finally
+    for I := 0 to NC - 1 do
+      C[I].Free;
+  end;
+  WaitFreed;
+  AssertEquals('OnClose for each', NC, TopicCloses);
+  AssertEquals('no drops', 0, TopicDrops);
+end;
+
+procedure TTestWsTopics.Wildcards;
+var
+  A, B, C, D: TClient;
+begin
+  StartServer(2);
+  A := nil; B := nil; C := nil; D := nil;
+  try
+    A := Join(Srv.Port);
+    B := Join(Srv.Port);
+    C := Join(Srv.Port);
+    D := Join(Srv.Port);
+    Sub(A, 'chat/#');
+    Sub(A, 'chat/room1');            { both match chat/room1: once }
+    Sub(B, 'chat/+');
+    Sub(C, 'sensors/+/temp');
+    Sub(D, '#');
+    D.SendAll(CFrame(WS_OP_TEXT, 'pub chat/room1 m1'));
+    Expect(A, 'm1', 'A m1');
+    Expect(B, 'm1', 'B m1');
+    Expect(D, 'm1', 'D m1');
+    D.SendAll(CFrame(WS_OP_TEXT, 'pub chat/room1/sub m2'));
+    Expect(A, 'm2', 'A m2');         { chat/# : any depth }
+    Expect(D, 'm2', 'D m2');
+    D.SendAll(CFrame(WS_OP_TEXT, 'pub chat m3'));
+    Expect(A, 'm3', 'A m3');         { chat/# matches the parent too }
+    Expect(D, 'm3', 'D m3');
+    D.SendAll(CFrame(WS_OP_TEXT, 'pub sensors/x/temp m4'));
+    Expect(C, 'm4', 'C m4');
+    Expect(D, 'm4', 'D m4');
+    D.SendAll(CFrame(WS_OP_TEXT, 'pub sensors/x/hum m5'));
+    Expect(D, 'm5', 'D m5');
+    D.SendAll(CFrame(WS_OP_TEXT, 'pub other m6'));
+    Expect(D, 'm6', 'D m6');
+    NoFrame(A, 'A');
+    NoFrame(B, 'B');
+    NoFrame(C, 'C');
+    NoFrame(D, 'D');
+    CloseAll([A, B, C, D]);
+  finally
+    A.Free; B.Free; C.Free; D.Free;
+  end;
+  WaitFreed;
+  AssertEquals(4, TopicCloses);
+end;
+
+procedure TTestWsTopics.Exclude_the_sender;
+var
+  A, B: TClient;
+begin
+  StartServer(1);
+  A := nil; B := nil;
+  try
+    A := Join(Srv.Port);
+    B := Join(Srv.Port);
+    Sub(A, 't');
+    Sub(B, 't');
+    A.SendAll(CFrame(WS_OP_TEXT, 'pubx t hi'));
+    Expect(B, 'hi', 'B');
+    NoFrame(A, 'A, the sender');
+    A.SendAll(CFrame(WS_OP_TEXT, 'pub t all'));
+    Expect(A, 'all', 'A');
+    Expect(B, 'all', 'B');
+    CloseAll([A, B]);
+  finally
+    A.Free; B.Free;
+  end;
+  WaitFreed;
+end;
+
+procedure TTestWsTopics.Unsubscribe_and_removal_at_close;
+var
+  A, B: TClient;
+  F: TServerFrame;
+  K: Integer;
+begin
+  StartServer(1);
+  A := nil; B := nil;
+  try
+    A := Join(Srv.Port);
+    B := Join(Srv.Port);
+    Sub(A, 't');
+    Sub(A, 'u/#');
+    Sub(B, 't');
+    A.SendAll(CFrame(WS_OP_TEXT, 'unsub t'));
+    Expect(A, 'unsubscribed t', 'A');
+    B.SendAll(CFrame(WS_OP_TEXT, 'pub t m1') + CFrame(WS_OP_TEXT, 'pub u/x m2'));
+    Expect(B, 'm1', 'B m1');
+    Expect(A, 'm2', 'A still has u/#');
+    NoFrame(A, 'A after unsub');
+    { A closes while subscribed to u/#: the registry forgets it }
+    A.SendAll(CFrame(WS_OP_CLOSE, #3#232));
+    AssertTrue(A.Frame(F));
+    AssertEquals(WS_OP_CLOSE, F.Opcode);
+    AssertTrue(A.AtEof);
+    FreeAndNil(A);
+    for K := 1 to 400 do
+      if AtomicLoad(WebSocketsLive) = Live0 + 1 then Break else Sleep(5);
+    AssertEquals('A freed', Live0 + 1, AtomicLoad(WebSocketsLive));
+    B.SendAll(CFrame(WS_OP_TEXT, 'pub u/x m3') + CFrame(WS_OP_TEXT, 'pub t m4'));
+    Expect(B, 'm4', 'B m4');
+    { B leaves its subscription too, then unsubscribes what it never had }
+    B.SendAll(CFrame(WS_OP_TEXT, 'unsub t') + CFrame(WS_OP_TEXT, 'unsub never'));
+    Expect(B, 'unsubscribed t', 'B');
+    Expect(B, 'unsubscribed never', 'B');
+    B.SendAll(CFrame(WS_OP_TEXT, 'pub t m5'));
+    NoFrame(B, 'B after unsub');
+    Sub(B, 't');
+    B.SendAll(CFrame(WS_OP_TEXT, 'pub t m6'));
+    Expect(B, 'm6', 'B again');
+    CloseAll([B]);
+  finally
+    A.Free; B.Free;
+  end;
+  WaitFreed;
+  AssertEquals(2, TopicCloses);
+end;
+
+procedure TTestWsTopics.Subscribe_and_publish_from_a_worker_handler;
+var
+  A, B, L: TClient;
+  I: Integer;
+begin
+  StartServer(2, 2);
+  A := nil; B := nil; L := nil;
+  try
+    A := Join(Srv.Port, '/topics-worker');
+    B := Join(Srv.Port, '/topics-worker');
+    L := Join(Srv.Port);             { a loop handler in the same topic }
+    Sub(A, 'w/+');
+    Sub(B, 'w/x');
+    Sub(L, 'w/#');
+    { a publish from the worker, after its own subscribe: both posted to
+      the loop in that order }
+    for I := 1 to 20 do
+      A.SendAll(CFrame(WS_OP_TEXT, 'pub w/x m' + IntToStr(I)));
+    for I := 1 to 20 do
+    begin
+      Expect(A, 'm' + IntToStr(I), 'A');
+      Expect(B, 'm' + IntToStr(I), 'B');
+      Expect(L, 'm' + IntToStr(I), 'L');
+    end;
+    B.SendAll(CFrame(WS_OP_TEXT, 'pubx w/x fromB'));
+    Expect(A, 'fromB', 'A');
+    Expect(L, 'fromB', 'L');
+    NoFrame(B, 'B, the sender');
+    B.SendAll(CFrame(WS_OP_TEXT, 'unsub w/x'));
+    Expect(B, 'unsubscribed w/x', 'B');
+    L.SendAll(CFrame(WS_OP_TEXT, 'pub w/x last'));
+    Expect(A, 'last', 'A');
+    Expect(L, 'last', 'L');
+    NoFrame(B, 'B after unsub');
+    CloseAll([A, B, L]);
+  finally
+    A.Free; B.Free; L.Free;
+  end;
+  WaitFreed;
+  AssertEquals(3, TopicCloses);
+  AssertEquals('no worker event on the loop thread', 0, WorkerOnLoop);
+end;
+
+{ A does not read (a 64 KiB receive window), B reads, C publishes 12 MiB
+  in 64 KiB messages: B gets everything; A's queue reaches the mark }
+procedure TTestWsTopics.Slow_subscriber(CloseIt: Boolean);
+const
+  N = 192;
+  Size = 65536;
+var
+  A, B, C: TClient;
+  F: TServerFrame;
+  I: Integer;
+begin
+  Topics.CloseOnBackpressure := CloseIt;
+  StartServer(1);
+  A := nil; B := nil; C := nil;
+  try
+    A := Join(Srv.Port, '/topics', 65536);
+    B := Join(Srv.Port);
+    C := Join(Srv.Port);
+    Sub(A, 'big');
+    Sub(B, 'big');
+    for I := 1 to N do
+    begin
+      C.SendAll(CFrame(WS_OP_TEXT, 'pubbig big ' + IntToStr(Size)));
+      AssertTrue('B message ' + IntToStr(I), B.Frame(F));
+      AssertEquals(WS_OP_BINARY, F.Opcode);
+      AssertEquals(Size, Length(F.Payload));
+    end;
+    NoFrame(B, 'B');
+    if CloseIt then
+    begin
+      { A was aborted: its socket is closed under the unread bytes }
+      while A.Recv do ;
+      FreeAndNil(A);
+    end;
+    CloseAll([B, C]);
+  finally
+    A.Free; B.Free; C.Free;          { A, if alive: closed under its unread bytes }
+  end;
+  WaitFreed;
+  AssertEquals(3, TopicCloses);
+  if CloseIt then
+    AssertEquals('A aborted with 1006', 1, TopicAborts)
+  else
+  begin
+    AssertTrue('A dropped messages', TopicDrops > 0);
+    AssertTrue('but got some', TopicDrops < N);
+  end;
+end;
+
+procedure TTestWsTopics.Slow_subscriber_drops_messages;
+begin
+  Slow_subscriber(False);
+end;
+
+procedure TTestWsTopics.Slow_subscriber_aborted_with_CloseOnBackpressure;
+begin
+  Slow_subscriber(True);
+end;
+
+procedure TTestWsTopics.Publish_from_a_plain_thread;
+var
+  A, B: TClient;
+  T: TPublisherThread;
+  I, N: Integer;
+begin
+  N := 500 * IterPct div 100;
+  StartServer(2);
+  A := nil; B := nil;
+  try
+    A := Join(Srv.Port);
+    B := Join(Srv.Port);
+    Sub(A, 'clock');
+    Sub(B, 'clock/#');
+    T := TPublisherThread.Create(True);
+    T.Topic := 'clock';
+    T.N := N;
+    T.Start;
+    for I := 1 to N do
+    begin
+      Expect(A, 'tick ' + IntToStr(I), 'A');
+      Expect(B, 'tick ' + IntToStr(I), 'B');
+    end;
+    T.WaitFor;
+    T.Free;
+    NoFrame(A, 'A');
+    CloseAll([A, B]);
+  finally
+    A.Free; B.Free;
+  end;
+  WaitFreed;
+  AssertEquals(0, TopicDrops);
+end;
+
+procedure TTestWsTopics.Invalid_patterns_and_topics;
+begin
+  AssertTrue(WsPatternValid('a/b/c'));
+  AssertTrue(WsPatternValid('a/+/c'));
+  AssertTrue(WsPatternValid('a/#'));
+  AssertTrue(WsPatternValid('#'));
+  AssertTrue(WsPatternValid('+'));
+  AssertTrue(WsPatternValid(''));
+  AssertTrue(WsPatternValid('/a//b'));
+  AssertFalse(WsPatternValid('a/#/b'));
+  AssertFalse(WsPatternValid('a#'));
+  AssertFalse(WsPatternValid('a+/b'));
+  AssertFalse(WsPatternValid('a/+b'));
+  AssertTrue(WsTopicValid('a/b'));
+  AssertTrue(WsTopicValid(''));
+  AssertFalse(WsTopicValid('a/+'));
+  AssertFalse(WsTopicValid('a#b'));
+  try
+    Topics.Publish('a/+', 'x');
+    Fail('a wildcard in a publish topic');
+  except
+    on EArgumentException do ;
+  end;
+end;
+
 var
   RI: Integer;
 begin
@@ -1158,6 +1718,7 @@ begin
     Rooms[RI] := TList.Create;
   RegisterTest(TTestWsEcho);
   RegisterTest(TTestWsWorker);
+  RegisterTest(TTestWsTopics);
   with TTestRunner.Create(nil) do
   try
     Initialize;

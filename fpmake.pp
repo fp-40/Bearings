@@ -73,6 +73,7 @@ begin
     P.Targets.AddUnit('bearings.ws.frame.pas');
     P.Targets.AddUnit('bearings.ws.handshake.pas');
     P.Targets.AddUnit('bearings.ws.conn.pas');
+    P.Targets.AddUnit('bearings.ws.topics.pas');
     { server }
     P.Targets.AddUnit('bearings.server.accesslog.pas');
     P.Targets.AddUnit('bearings.server.metrics.pas');

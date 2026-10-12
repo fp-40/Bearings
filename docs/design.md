@@ -65,7 +65,7 @@ guarantee (section 11). Programs are compiled with
 Layers: `src/rt` (runtime, knows nothing about HTTP), `src/http1` (the
 HTTP/1.1 engine), `src/http` (the exchange and the error type), `src/server`
 (`TServer`, the access log, the metrics), `src/ws` (WebSocket: the frame
-codec, the opening handshake and the connection; it uses `src/rt`, the
+codec, the opening handshake, the connection and the pub/sub topics; it uses `src/rt`, the
 exchange and the header list, and nothing else uses it). `src/rt` uses nothing from the other directories. The README has
 the table of units.
 
@@ -912,8 +912,9 @@ return flow-control credit when the handler takes a chunk, and poll a
 
 ### 6.10 WebSocket
 
-Three units in `src/ws`, on top of the upgrade hand-off (6.7); nothing in
-`src/rt`, `src/http1` or `src/server` refers to them.
+Four units in `src/ws`, on top of the upgrade hand-off (6.7); nothing in
+`src/rt`, `src/http1` or `src/server` refers to them, and inside `src/ws`
+`bearings.ws.conn` does not use `bearings.ws.topics` (the hook below).
 
 **The handshake** (`bearings.ws.handshake`). `CheckRequest(Ex, Protocols)`
 runs in the service call on the loop thread and checks RFC 6455 section 4.2:
@@ -1019,6 +1020,64 @@ where the loop handler is OK: a valid message followed by a protocol error
 in the same read is still echoed by the worker before the close frame goes,
 because the echo is posted from another thread; the strict expectation is
 that nothing follows the error.
+
+**Pub/sub topics** (`bearings.ws.topics`, `TWsTopics`). A registry in
+which connections subscribe to topics (`/`-separated levels, MQTT `+` and
+`#` wildcards in a subscription) and any thread publishes a message to a
+concrete topic, once encoded, to every subscriber on every loop. Modelled
+on uWebSockets. The choices:
+
+- *A table per loop, touched by its thread only.* Each loop has a trie
+  keyed by level: a node holds the subscribers whose pattern ends there,
+  its named children in a small hash table, and the `+` and `#` children.
+  A publish walks the trie with the topic's levels, following the exact
+  child, the `+` child and the `#` child (whose subscribers match at once,
+  the rest of the levels or none). No lock on the fan-out path; the only
+  lock is a spin lock on the array of tables, which grows when a
+  connection on a new loop subscribes and which `Publish` copies.
+- *The publish object.* One heap object per publish: the prepared frame,
+  the topic's levels, the excluded connection (a reference is taken), a
+  count of loops still to run it, and one embedded `TLoopMsg` per loop, so
+  the posts allocate nothing (`TLoop.Post`). Each loop runs its message
+  (`lmCall`), walks its table and calls `SendFrame`, which shares the
+  frame's bytes by reference for frames of 1 KiB or more; the last loop
+  frees the object (`AtomicDec` with the happens-before edge for drd, as
+  `TWebSocket.Release`). A publish from a loop thread posts to its own
+  loop too, so every publish goes through the inbox and messages published
+  by one thread reach each subscriber in that order. A sequence number per
+  loop marks the per-connection record during the walk, so a connection
+  matched by two patterns is sent to once.
+- *The per-connection record* (the loop table, the trie nodes the
+  connection is in with the pattern of each, the sequence mark) lives in
+  `TWebSocket.HookData`, not in `User`, which belongs to the application.
+  `TWebSocket.Finish` calls `TWebSocket.Hook` (a `TWsConnHook`, the
+  abstract class in `bearings.ws.conn` that `TWsTopics` implements) first,
+  so the subscriptions go before `OnClose` and `bearings.ws.conn` does not
+  use `bearings.ws.topics`. Nodes left empty are pruned on unsubscribe and
+  at the end of a connection; an unsubscribe that a handler makes inside a
+  publish (`OnError` after a write error in `SendFrame`) is deferred until
+  the walk is done.
+- *Subscribe from another thread* (a `TWsWorkerHandler` method): an
+  `lmCall` posted to the connection's loop with a reference taken, as
+  `PostText`; the loop does nothing if the connection is `Closing` by
+  then. So a publish in between may miss the new subscriber, as in
+  uWebSockets.
+- *Backpressure: drop, never queue without a bound.* A subscriber whose
+  queue is at `SendHighWater` does not get the message; it is counted in
+  `DroppedMessages`. The alternative, a per-subscriber backlog, is what
+  the application-level broadcast had to do by hand and what makes a slow
+  client hold memory for everyone's messages. `CloseOnBackpressure` aborts
+  the connection instead (no close frame: the client is not reading), as
+  uWebSockets' `closeOnBackpressureLimit`.
+- *Nothing retained*, no retained messages or queued history: a subscriber
+  gets what is published after it subscribed.
+
+`tests/unit/test_ws_echo.pas` (`TTestWsTopics`, real sockets) covers the
+fan-out on two loops in order, the wildcards, the exclusion, unsubscribe
+and the removal at close, subscribe and publish from a worker handler,
+a subscriber that does not read (drops; aborted with
+`CloseOnBackpressure`) and a publish from a plain thread, also under drd
+and heaptrc. `examples/ws_chat.pas` is a chat with rooms on it.
 
 ## 7. Memory
 
@@ -1164,16 +1223,17 @@ the wake-source check runs in every test), `test_workers`, `test_server`,
 `test_server_ops` (real sockets through `TServer`), `test_ws_frame`,
 `test_ws_handshake`, `test_ws_conn` and `test_ws_echo` (a WebSocket echo
 server on real sockets). The script prints the total (`unit tests run: N`;
-1056 at the time of writing). The suites that own memory across threads
+1089 at the time of writing). The suites that own memory across threads
 (`test_h1_conn`, `test_body_chan`, `test_exchange`, `test_h1_dispatch`,
 `test_workers`, `test_server`, `test_server_ops`, `test_ws_conn`,
 `test_ws_echo`) run once more under heaptrc (`-gh`) and must report 0
 unfreed blocks. `test_workers` also runs three times under
 `valgrind --tool=drd` (built with `-dWD_DRD` and the C heap, with
 `tools/drd.supp` and `--fair-sched=yes`) and must report 0 errors, and so
-does the WebSocket worker-handler suite (`test_ws_echo --suite=TTestWsWorker`,
-once, with `WD_ITER=20`); what the suppressions hide and what "drd clean"
-does not cover is stated in that file. The test doubles are `tests/support/bearings.test.mocktransport`
+do the WebSocket worker-handler and topics suites (`test_ws_echo
+--suite=TTestWsWorker` and `--suite=TTestWsTopics`, once each, with
+`WD_ITER=20`, the C heap too); what the suppressions hide and what "drd
+clean" does not cover is stated in that file. The test doubles are `tests/support/bearings.test.mocktransport`
 (scripted reads and exact expected writes), `bearings.test.scriptio`
 (scripted answers, recorded writes, for the dispatcher and the fuzz) and
 `bearings.test.ws` (masked client frames, a log of `TWsReader` events, a
@@ -1343,6 +1403,7 @@ observable.
 | No HTTP/2 | HTTP/1.1 only | the service types are protocol-neutral in content (6.9) |
 | No WebSocket extensions | no permessage-deflate | none planned |
 | No blocking WebSocket receive for worker threads | a handler that blocks uses `TWsWorkerHandler` (events delivered on the pool, section 6.10), not a receive call | by design: a waiting receive would hold a pool thread per connection; the event queue is bounded by `ReceiveHighWater` and the posts by `SendHighWater` |
+| A pub/sub subscriber that does not read misses messages (6.10) | the published messages its queue cannot take are dropped for it and counted in `DroppedMessages`; the others are not slowed down | by design (no unbounded queue); `CloseOnBackpressure` disconnects it instead; a subscribe from a worker thread takes effect after a short delay, so a publish in between may miss it |
 | `src/ws` is not covered by `tools/check-hot-asm.sh` | a managed local or `try` in a per-frame routine would go unnoticed | none yet; the check would need `src/ws` in its unit path and the per-frame routines (`TWsReader`, `TUtf8Check`) on its list |
 | The Autobahn run is not automated | a WebSocket conformance regression shows up only when someone runs it | `conformance/autobahn/run.sh` by hand; the unit suites cover the frame reader, the handshake and the connection |
 | Throughput at pipeline depth 16 is 0.85 to 0.88 of hyper (depth 1: 0.96 to 0.98) | the gate (0.80) is met, parity is not | the instruction count per request equals hyper's within 3 %; the difference is CPU time per instruction (`docs/perf-report.md` section 8) |

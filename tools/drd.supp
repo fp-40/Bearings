@@ -147,7 +147,12 @@
 #    a split of the var block) and the freeing thread's reads of it as
 #    unordered. Seen with the WebSocket worker handler (test_ws_echo
 #    TTestWsWorker): the loop allocates a message, a worker frees it, and
-#    the posted answer goes the other way.
+#    the posted answer goes the other way. test_ws_echo's drd build now
+#    uses the C heap too (cmem, as test_workers): the frames of the pub/sub
+#    topics (TTestWsTopics) are freed on another loop and reused, and with
+#    the FPC heap the owner's writes into the reused block (Move,
+#    fpc_ansistr_setlength) were reported without a frame to suppress on.
+#    Kept for a -dWD_DRD build without cmem.
 {
    fpc-heap-free-foreign-block
    drd:ConflictingAccess
