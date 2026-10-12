@@ -27,7 +27,9 @@
     TBodySource      a response body produced piece by piece. TChannelBody
                      is the bounded queue behind BeginStream and Write.
     TUpgradeSlot, TUpgradeHandler   connection upgrades (see below).
-    TBlockingHandler, TOffloadCall  running a handler on a worker thread.
+    TBlockingHandler, TOffloadCall  running a handler on a worker thread
+                     (TOffloadCall.SaturatedStatus: answer, for example,
+                     503 instead of queueing when the pool is saturated).
     TConnObserver, TConnParts       hooks for tests and the conformance
                      server.
 
@@ -637,7 +639,13 @@ type
   public
     Pool: TWorkerPool;
     Handler: TBlockingHandler;
-    { First poll: Ex.Offload(Pool, Handler), Pending. Later polls: cpReady once Ex.Answered. }
+    { 0 (the default): every request is queued on the pool, however long its queue is. Another
+      value, 503 for example: a request that arrives while Pool.Saturated is True (the pool's
+      QueueLimit is reached) is answered at once on the loop with that status, a "Retry-After: 1"
+      header and a short text body; nothing is offloaded and the handler does not run for it. }
+    SaturatedStatus: Word;
+    { First poll: Ex.Offload(Pool, Handler), Pending (or the SaturatedStatus answer, cpReady).
+      Later polls: cpReady once Ex.Answered. }
     function Poll(Ex: TExchange): TCallPoll; override;
   end;
 
@@ -3238,6 +3246,9 @@ procedure TUpgradeHandler.UpgradeFailed(const Msg: string); begin end;
 
 { TOffloadCall }
 
+const
+  SATURATED_BODY: array[0..24] of AnsiChar = 'server busy, retry later'#10;
+
 function TOffloadCall.Poll(Ex: TExchange): TCallPoll;
 begin
   { first poll: hand the exchange to the pool (the worker answers and wakes
@@ -3245,6 +3256,16 @@ begin
     worker's terminal call won }
   if Ex.FHandler = nil then
   begin
+    if (SaturatedStatus <> 0) and Pool.Saturated then
+    begin
+      { the queue is at its limit: answered here, on the loop, with constant
+        bytes (no allocation); the request is not shared and no worker sees it }
+      Ex.Status := SaturatedStatus;
+      Ex.ResponseHeaders.AddTrusted('content-type', 'text/plain; charset=utf-8');
+      Ex.ResponseHeaders.AddTrusted('retry-after', '1');
+      Ex.Respond(BodyStatic(@SATURATED_BODY[0], Length(SATURATED_BODY)));
+      Exit(cpReady);
+    end;
     Ex.Offload(Pool, Handler);
     Exit(cpPending);
   end;

@@ -843,6 +843,7 @@ type
     procedure Inline_stream_without_finish_ends_at_completion;
     procedure Second_offload_raises;
     procedure Post_counts_the_poster_before_the_push;
+    procedure Saturated_status_answers_on_the_loop;
   end;
 
 procedure TOwnerTask.Run;
@@ -4195,6 +4196,81 @@ begin
     FWork.Shutdown(5000);
     RTLEventDestroy(FH.Gate);
     H2.Free;
+  end;
+end;
+
+procedure TTestOffload.Saturated_status_answers_on_the_loop;
+var
+  One: TWorkerPool;
+  Blocker, Filler: TGateItem;
+  S: RawByteString;
+  T0: QWord;
+begin
+  { a pool of one worker with a queue limit of 1: the worker is held at a
+    gate and one item waits in the queue, so Saturated is True. With
+    SaturatedStatus set, TOffloadCall answers the request at once on the
+    loop, without sharing or queueing it; with the default 0 it queues the
+    request as before }
+  One := TWorkerPool.Create(1, nil, 1);
+  Blocker := TGateItem.Create;
+  Blocker.Gate := RTLEventCreate;
+  Filler := TGateItem.Create;
+  Filler.Gate := RTLEventCreate;
+  FH := TRecHandler.Create(hmRespond);
+  try
+    One.Submit(Blocker);
+    T0 := GetTickCount64;
+    while (AtomicLoad(Blocker.Started) = 0) and (GetTickCount64 - T0 < 5000) do
+      Sleep(1);
+    AssertEquals('the worker is at the gate', 1, AtomicLoad(Blocker.Started));
+    One.Submit(Filler);
+    AssertTrue('saturated', One.Saturated);
+
+    FEx := NewEx('GET /busy HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
+    FCall := TOffloadCall.Create;
+    FCall.Pool := One;
+    FCall.Handler := FH;
+    FCall.SaturatedStatus := 503;
+    AssertTrue('answered at the first poll', FCall.Poll(FEx) = cpReady);
+    AssertTrue('answered', FEx.Answered);
+    AssertFalse('not offloaded', FEx.Offloaded);
+    AssertFalse('not shared', FEx.Shared);
+    AssertEquals('one reference (the transport)', 1, FEx.RefCount);
+    AssertEquals(503, FEx.Status);
+    AssertEquals('1', FEx.ResponseHeaders.GetValue('retry-after'));
+    AssertEquals('text/plain; charset=utf-8', FEx.ResponseHeaders.GetValue('content-type'));
+    SetString(S, PAnsiChar(FEx.Resp.Body.P), FEx.Resp.Body.Len);
+    AssertTrue('a short text body (got: ' + S + ')', Pos('busy', S) > 0);
+    AssertEquals('nothing was queued', 1, One.QueueLength);
+    AssertEquals('the handler did not run', 0, AtomicLoad(FH.Started));
+    FCall.Drop(FEx, True);
+    FEx.CompleteCall;
+    FinishExchange;
+
+    { the default: queued even when saturated; the worker answers it once the gate opens }
+    FEx := NewEx('GET /queued HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
+    FCall.SaturatedStatus := 0;
+    AssertTrue('pending', FCall.Poll(FEx) = cpPending);
+    AssertTrue('offloaded', FEx.Offloaded);
+    AssertEquals('queued behind the filler', 2, One.QueueLength);
+    RTLEventSetEvent(Blocker.Gate);
+    RTLEventSetEvent(Filler.Gate);
+    AssertTrue('the handler ran', Until_(@CondFinished, 5000));
+    AssertTrue('and answered', Until_(@CondAnswered, 5000));
+    AssertTrue('ready', FCall.Poll(FEx) = cpReady);
+    AssertEquals('the handler''s status', 201, FEx.Status);
+    FCall.Drop(FEx, True);
+    FEx.CompleteCall;
+    FinishExchange;
+  finally
+    RTLEventSetEvent(Blocker.Gate);
+    RTLEventSetEvent(Filler.Gate);
+    One.Shutdown(5000);
+    One.Free;
+    RTLEventDestroy(Blocker.Gate);
+    RTLEventDestroy(Filler.Gate);
+    Blocker.Free;
+    Filler.Free;
   end;
 end;
 

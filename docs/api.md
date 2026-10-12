@@ -148,7 +148,7 @@ Srv.Free;
 | `PinLoops: Boolean` | pin loop i to the i-th usable CPU (`sched_setaffinity`) |
 | `H1: TH1Config` | the HTTP/1.1 connection options (below) |
 | `Workers: Integer` | worker threads; -1 = no pool; 0 = `Min(32, cpus + 4)` |
-| `WorkerQueueLimit: Integer` | `TWorkerPool.Saturated` is True at this many queued items; 0 = no limit |
+| `WorkerQueueLimit: Integer` | `TWorkerPool.Saturated` is True at this many queued items; 0 = no limit (section 4: `TOffloadCall.SaturatedStatus`) |
 | `WorkerHooks: TWorkerHooks` | per-worker-thread start and stop callbacks; nil = none; not owned |
 | `WorkerWaitMs: Integer` | how long `Wait` and `Destroy` wait for queued and running work items; 0 = 30 000 |
 | `GraceMs: Integer` | the grace period `RunUntilSignal` passes to `Stop` |
@@ -350,10 +350,15 @@ Rules:
   net.
 - On a worker the blocking body reads are allowed (section 6), and `Write`
   parks while the stream queue is full (section 5).
-- `TWorkerPool.Saturated` (`Config.WorkerQueueLimit` reached) is not
-  checked by `TOffloadCall`. A service that wants to answer `503` instead
-  of queueing checks `Srv.Workers.Saturated` in its own `Poll` before
-  calling `Offload`.
+- `TOffloadCall.SaturatedStatus` (default 0) decides what happens when the
+  pool is saturated (`TWorkerPool.Saturated`: `Config.WorkerQueueLimit`
+  queued items). 0: the request is queued anyway. Another value, for
+  example 503: a request whose first poll finds the pool saturated is
+  answered at once on the loop thread with that status, a `Retry-After: 1`
+  header and a short `text/plain` body (`server busy, retry later`); it is
+  not shared or offloaded, and the handler does not run for it. A service
+  with its own call object checks `Srv.Workers.Saturated` in its `Poll`
+  before calling `Offload` to do the same.
 - The connection does not reuse a shared exchange for its next request; it
   takes another one from the loop's pool.
 
@@ -902,7 +907,7 @@ methods are internal and are left out.
 | `TServiceCall.Drop(Ex, Completed)` | called exactly once at the end | loop |
 | `TCallPoll` | `cpPending`, `cpReady` | - |
 | `TBlockingHandler.Run(Ex)` | the handler of an offloaded request; may block | worker |
-| `TOffloadCall` (`Pool`, `Handler`, `Poll`) | a stateless call that offloads every request | loop |
+| `TOffloadCall` (`Pool`, `Handler`, `SaturatedStatus`, `Poll`) | a stateless call that offloads every request; `SaturatedStatus` <> 0 answers that status on the loop when the pool is saturated (section 4) | loop |
 | `TExchangeAttachment.Detach(Ex)` | per-request state the exchange detaches at recycle or next request | loop |
 | `TByteSlice` | `P: PByte; Len: SizeInt` | - |
 | `SliceToStr(S): RawByteString` | a copy of the slice's bytes as a string | any holder, while the slice is valid |
