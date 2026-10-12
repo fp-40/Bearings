@@ -258,6 +258,14 @@ A line that does not fit is dropped and counted (`TServer.AccessLog.Dropped`,
 `bearings_access_log_dropped_total`), so a slow sink never stalls a loop.
 `Wait` flushes the last lines after the loops stopped.
 
+Cost (bench/run_gate.sh on 2026-10-12, `ACCESS_LOG=/dev/null METRICS=1`,
+four loops): formatting one JSON line takes about 180 ns; with the log and
+the metrics on, the gate's cells ran at 0.86 and 0.88 of hyper at pipeline
+depth 1 (0.96 and 0.98 with them off) and at 0.61 and 0.64 at depth 16
+(0.85 and 0.88 off), where the server logs about 1.9 million lines per
+second. The metrics alone cost about 2 %. With both off the cost is one
+pointer test per request and the cells match the report.
+
 `Metrics: Boolean` keeps per-loop counters; `TServer.Metrics(out S:
 TMetricsSnapshot)` adds them together (each running loop copies its own on
 its thread; not from a loop thread) and `TServer.PrometheusText` renders
