@@ -1,0 +1,6 @@
+valdría la pena mirar
+
+1. Métricas del runtime. Tokio expone por worker: profundidad del queue, tareas corridas, tiempo ocupado versus esperando, profundidad del queue del pool bloqueante. Bearings tiene métricas HTTP. Faltan las del loop: iteraciones, waits de epoll, largo del run queue, ratio ocupado, y para el pool el tiempo de espera en cola. Es lo que te dice si un loop está saturado antes de que el stall detector salte.
+2. Elasticidad del pool bloqueante. Tokio crea hilos bajo demanda hasta max_blocking_threads y los retira tras 10 s sin trabajo (thread_keep_alive). Si el pool de bearings es de tamaño fijo, un servidor con picos paga hilos ociosos o cola. Tendría que confirmar en bearings.rt.workers cómo se dimensiona hoy.
+3. Slot LIFO. Tokio corre primero la tarea recién despertada, por localidad de caché. En el pool de workers sería: el worker que acaba de terminar un trabajo toma el siguiente del mismo exchange o conexión si hay uno. Ganancia chica y medible solo con benchmark.
+4. Introspección tipo tokio-console. Volcado del estado de cada loop y conexión al recibir una señal. Bearings tiene el stall detector en builds -dWD_STALL; una versión de producción, bajo demanda, sería útil para diagnosticar sin reconstruir.

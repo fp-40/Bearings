@@ -1,6 +1,8 @@
 # M3 performance report (step S10)
 
 > Written while this code was part of wd-40 (where "wd-40" in the text means the project of that time). The unit names were changed to `bearings.*` when the transport moved to this repository; commit hashes refer to the wd-40 history.
+>
+> "7.6" in this report is section 7.6 ("Performance measurement and gate") of the design document of that time, `docs/design/m3-transport.md`, which commit 0331008 replaced with `docs/design.md`; read it with `git show 0331008^:docs/design/m3-transport.md`. Its method and the hard gate (every cell at or above 0.80 of hyper) are in `docs/design.md` section 9; the other targets it set (p99, idle RSS, RSS under load, the micro-benchmark budgets) are recorded only there and here. Section 9 measures the web framework built on top in wd-40: `bench/web_gate.sh`, `bench/web_hello` and `m5-report.md` are part of that project, not of this repository.
 
 Date: 2026-10-10. Tree: HEAD 094152c (no source change in S10). Machine: Intel i5-14400 (CPUs 0-11 =
 6 P-cores with SMT, 12-15 = 4 E-cores), kernel 7.0.0, FPC 3.2.2. Design: `docs/design.md` section 9

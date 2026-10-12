@@ -1,4 +1,4 @@
-# bearings API guide
+# Bearings API guide
 
 This guide is organized by what a program does with the library, not by
 unit. The last section is a reference table of every public type and
@@ -7,10 +7,11 @@ here was taken from the code and the header comments of the units under
 `src/`; where a detail matters, the unit is named so you can read the
 header comment, which is written for the same audience as this guide.
 
-Three complete programs under `examples/` accompany it: `hello.pas`
+Four example programs under `examples/` accompany it: `hello.pas`
 (inline answer, static body), `worker.pas` (every request on a worker,
 request body read with `ReadAll`, echoed back), `stream.pas` (a streamed
-response and a file response). `examples/README.md` has the build command.
+response and a file response), and `ws_echo.pas` (a WebSocket echo server)
+You can find the build command for them in `examples/README.md`.
 
 Contents:
 
@@ -59,16 +60,16 @@ threads; -1 means no pool) and is reachable as `TServer.Workers`.
 
 The rule for what may run where:
 
-| Code | Runs on | May block? |
-|------|---------|------------|
-| `THttpService.Call` | loop thread | no; must not answer or read the body either |
-| `TServiceCall.Poll`, `TServiceCall.Drop` | loop thread | no |
-| `TBlockingHandler.Run` | worker thread | yes |
-| `TBodySource.PollFrame`, `TBodySource.Done` | loop thread | no |
-| `TUpgradeHandler.Upgraded`, `UpgradeFailed`, `TRawListener` callbacks | loop thread | no |
-| `TConnObserver` hooks | loop thread | no |
-| `TWorkerHooks.ThreadStarted`, `ThreadStopping` | the worker thread | yes |
-| a thread holding a reference from `TExchange.Share` | that thread | yes (its own code); exchange calls follow section 14 |
+Code | Runs on | May block?
+---- | ------- | ----------
+`THttpService.Call` | loop thread | no; must not answer or read the body either
+`TServiceCall.Poll`, `TServiceCall.Drop` | loop thread | no
+`TBlockingHandler.Run` | worker thread | yes
+`TBodySource.PollFrame`, `TBodySource.Done` | loop thread | no
+`TUpgradeHandler.Upgraded`, `UpgradeFailed`, `TRawListener` callbacks | loop thread | no
+`TConnObserver` hooks | loop thread | no
+`TWorkerHooks.ThreadStarted`, `ThreadStopping` | the worker thread | yes
+a thread holding a reference from `TExchange.Share` | that thread | yes (its own code); exchange calls follow section 14
 
 ### The exchange
 
@@ -154,22 +155,22 @@ apart in an overload, hence the separate names.
 
 ### TServerConfig (unit `bearings.server`)
 
-| Field | Meaning |
-|-------|---------|
-| `Listen: TListenSpec` | where and how to listen (below) |
-| `Loops: Integer` | number of event loops; 0 = `DefaultLoopCount` |
-| `PinLoops: Boolean` | pin loop i to the i-th usable CPU (`sched_setaffinity`) |
-| `H1: TH1Config` | the HTTP/1.1 connection options (below) |
-| `Workers: Integer` | worker threads; -1 (`NO_WORKER_POOL`) = no pool; 0 = `Min(32, cpus + 4)` |
-| `WorkerQueueLimit: Integer` | `TWorkerPool.Saturated` is True at this many queued items; 0 = no limit (section 4: `TOffloadCall.SaturatedStatus`) |
-| `WorkerHooks: TWorkerHooks` | per-worker-thread start and stop callbacks; nil = none; not owned |
-| `WorkerWaitMs: Integer` | how long `Wait` and `Destroy` wait for queued and running work items; 0 = 30 000 |
-| `GraceMs: Integer` | the grace period `RunUntilSignal` passes to `Stop` |
-| `AlsoListen: array of TListenSpec` | more places to listen on; every loop serves all of them (below) |
-| `MaxConnections: Integer` | connections open at once over all loops; 0 = no limit (below) |
-| `AccessLog: TAccessLogConfig` | one line per completed request, off by default (below) |
-| `Metrics: Boolean` | keep the counters `TServer.Metrics` reports (below) |
-| `Watchdog: Boolean` | send the systemd watchdog heartbeat while every loop makes progress (below; the production preset sets it) |
+Field | Meaning
+----- | -------
+`Listen: TListenSpec` | where and how to listen (below)
+`Loops: Integer` | number of event loops; 0 = `DefaultLoopCount`
+`PinLoops: Boolean` | pin loop i to the i-th usable CPU (`sched_setaffinity`)
+`H1: TH1Config` | the HTTP/1.1 connection options (below)
+`Workers: Integer` | worker threads; -1 (`NO_WORKER_POOL`) = no pool; 0 = `Min(32, cpus + 4)`
+`WorkerQueueLimit: Integer` | `TWorkerPool.Saturated` is True at this many queued items; 0 = no limit (section 4: `TOffloadCall.SaturatedStatus`)
+`WorkerHooks: TWorkerHooks` | per-worker-thread start and stop callbacks; nil = none; not owned
+`WorkerWaitMs: Integer` | how long `Wait` and `Destroy` wait for queued and running work items; 0 = 30 000
+`GraceMs: Integer` | the grace period `RunUntilSignal` passes to `Stop`
+`AlsoListen: array of TListenSpec` | more places to listen on; every loop serves all of them (below)
+`MaxConnections: Integer` | connections open at once over all loops; 0 = no limit (below)
+`AccessLog: TAccessLogConfig` | one line per completed request, off by default (below)
+`Metrics: Boolean` | keep the counters `TServer.Metrics` reports (below)
+`Watchdog: Boolean` | send the systemd watchdog heartbeat while every loop makes progress (below; the production preset sets it)
 
 `TListenSpec` (unit `bearings.rt.net`): `Host` (`'0.0.0.0'`,
 `'127.0.0.1'`, `'::'`), `Port` (0 = a free port, read it back from
@@ -243,14 +244,14 @@ operation.
 response's last bytes handed to the write buffer; automatic error
 responses to unparsable requests are not logged):
 
-| Field | Meaning |
-|-------|---------|
-| `Enabled` | turn the log on |
-| `Format` | `alfJson` (default): one JSON object per line with the OpenTelemetry HTTP field names `time` (RFC 3339 UTC, milliseconds), `client.address` (`"unix"` on a Unix socket), `http.request.method`, `url.path`, `url.query` (when present), `network.protocol.version`, `http.response.status_code`, `http.response.body.size`, `http.server.request.duration` (seconds, by the loop's clock, which is sampled once per iteration: a request answered in the iteration that read it shows 0), `user_agent.original` (when present and `UserAgent` is set); `alfCombined`: the Combined Log Format (`host - - [time] "request line" status bytes "referer" "agent"`) |
-| `Sink: TLogSink` | where the lines go; nil = stdout (`TFdSink`); an application's own sink overrides `Write(P, Len)`, which runs on the flusher thread and may block |
-| `BufferBytes` | per-loop buffer size (two areas of this size); 0 = 64 KiB |
-| `FlushMs` | the flusher thread's period; 0 = 100 ms; a half-full buffer wakes it early |
-| `UserAgent` | include the User-Agent header |
+Field | Meaning
+----- | -------
+`Enabled` | turn the log on
+`Format` | `alfJson` (default): one JSON object per line with the OpenTelemetry HTTP field names `time` (RFC 3339 UTC, milliseconds), `client.address` (`"unix"` on a Unix socket), `http.request.method`, `url.path`, `url.query` (when present), `network.protocol.version`, `http.response.status_code`, `http.response.body.size`, `http.server.request.duration` (seconds, by the loop's clock, which is sampled once per iteration: a request answered in the iteration that read it shows 0), `user_agent.original` (when present and `UserAgent` is set); `alfCombined`: the Combined Log Format (`host - - [time] "request line" status bytes "referer" "agent"`)
+`Sink: TLogSink` | where the lines go; nil = stdout (`TFdSink`); an application's own sink overrides `Write(P, Len)`, which runs on the flusher thread and may block
+`BufferBytes` | per-loop buffer size (two areas of this size); 0 = 64 KiB
+`FlushMs` | the flusher thread's period; 0 = 100 ms; a half-full buffer wakes it early
+`UserAgent` | include the User-Agent header
 
 The loop formats each line into its buffer under a spin lock; the flusher
 thread swaps the buffer's two areas and writes the full one to the sink.
@@ -272,22 +273,22 @@ its thread; not from a loop thread) and `TServer.PrometheusText` renders
 the snapshot with `MetricsToPrometheus`: `# HELP` and `# TYPE` lines,
 names with the `bearings_` prefix, fixed label sets. The metrics:
 
-| Metric | Kind | Meaning |
-|--------|------|---------|
-| `bearings_connections_open` | gauge | HTTP connections in the loops' lists |
-| `bearings_connections_counted` | gauge | the connection limit's count (0 without a limit) |
-| `bearings_connections_accepted_total` | counter | accepted by the listeners |
-| `bearings_connections_closed_total{outcome=...}` | counter | by `TConnOutcome` (`ok`, `timeout`, `parse_too_large`, `parse_version_h2`, `parse`, `incomplete`, `user`, `canceled`, `closed`, `body_write_aborted`, `shutdown`, `io`, `other`) |
-| `bearings_requests_total` | counter | request heads read |
-| `bearings_requests_in_flight` | gauge | connections with a service call in progress or a response body being written (counted at snapshot time) |
-| `bearings_responses_total{status=...}` | counter | completed responses by class `1xx` .. `5xx`, `other` |
-| `bearings_request_bytes_total`, `bearings_response_bytes_total` | counter | HTTP bytes: heads and bodies |
-| `bearings_request_duration_seconds` | histogram | head read to complete response; buckets `le` = 2^K microseconds, K = 0..23, plus `+Inf`; `_sum`, `_count` |
-| `bearings_listener_pauses_total{reason="error"|"limit"}` | counter | listeners taken out of epoll |
-| `bearings_worker_queue_length`, `bearings_worker_threads` | gauge | the worker pool |
-| `bearings_buffer_pool_bytes` | gauge | bytes held in the loops' buffer pools |
-| `bearings_access_log_dropped_total` | counter | see above |
-| `bearings_loops` | gauge | event loops |
+Metric | Kind | Meaning
+------ | ---- | --------
+`bearings_connections_open` | gauge | HTTP connections in the loops' lists
+`bearings_connections_counted` | gauge | the connection limit's count (0 without a limit)
+`bearings_connections_accepted_total` | counter | accepted by the listeners
+`bearings_connections_closed_total{outcome=...}` | counter | by `TConnOutcome` (`ok`, `timeout`, `parse_too_large`, `parse_version_h2`, `parse`, `incomplete`, `user`, `canceled`, `closed`, `body_write_aborted`, `shutdown`, `io`, `other`)
+`bearings_requests_total` | counter | request heads read
+`bearings_requests_in_flight` | gauge | connections with a service call in progress or a response body being written (counted at snapshot time)
+`bearings_responses_total{status=...}` | counter | completed responses by class `1xx` .. `5xx`, `other`
+`bearings_request_bytes_total`, `bearings_response_bytes_total` | counter | HTTP bytes: heads and bodies
+`bearings_request_duration_seconds` | histogram | head read to complete response; buckets `le` = 2^K microseconds, K = 0..23, plus `+Inf`; `_sum`, `_count`
+`bearings_listener_pauses_total{reason="error"|"limit"}` | counter | listeners taken out of epoll
+`bearings_worker_queue_length`, `bearings_worker_threads` | gauge | the worker pool
+`bearings_buffer_pool_bytes` | gauge | bytes held in the loops' buffer pools
+`bearings_access_log_dropped_total` | counter | see above
+`bearings_loops` | gauge | event loops
 
 Serving the text at an HTTP path such as `/metrics` is the application's
 job; `MetricsToPrometheus` does no I/O.
@@ -297,13 +298,13 @@ job; `MetricsToPrometheus` does no I/O.
 The unit talks to systemd without libsystemd; `README.md` has sample
 `.socket` and `.service` units.
 
-| Routine | Meaning |
-|---------|---------|
-| `SdListenFds(out Fds, out Names): Integer` | the sockets systemd passed (`LISTEN_FDS`, descriptors from 3 on, set close-on-exec) when `LISTEN_PID` is this process; removes the three variables from the environment; `Names` from `LISTEN_FDNAMES` |
-| `ApplySdListenFds(var Cfg: TServerConfig): Integer` (unit `bearings.server`) | `Cfg.Listen.InheritedFd` gets the first passed socket and `Cfg.AlsoListen` the others; 0 (nothing passed) leaves `Cfg` unchanged |
-| `SdNotifyEnabled: Boolean` | `NOTIFY_SOCKET` is set |
-| `SdNotify(State): Boolean` | sends one datagram (`'READY=1'`, `'STATUS=...'`, `'WATCHDOG=1'`, lines separated by LF) to `NOTIFY_SOCKET` (a path, or an abstract name starting with `@`) |
-| `SdWatchdogUsec: Int64` | the watchdog interval when `WATCHDOG_USEC` is set and `WATCHDOG_PID` (if set) is this process; else 0 |
+Routine | Meaning
+------- | -------
+`SdListenFds(out Fds, out Names): Integer` | the sockets systemd passed (`LISTEN_FDS`, descriptors from 3 on, set close-on-exec) when `LISTEN_PID` is this process; removes the three variables from the environment; `Names` from `LISTEN_FDNAMES`
+`ApplySdListenFds(var Cfg: TServerConfig): Integer` (unit `bearings.server`) | `Cfg.Listen.InheritedFd` gets the first passed socket and `Cfg.AlsoListen` the others; 0 (nothing passed) leaves `Cfg` unchanged
+`SdNotifyEnabled: Boolean` | `NOTIFY_SOCKET` is set
+`SdNotify(State): Boolean` | sends one datagram (`'READY=1'`, `'STATUS=...'`, `'WATCHDOG=1'`, lines separated by LF) to `NOTIFY_SOCKET` (a path, or an abstract name starting with `@`)
+`SdWatchdogUsec: Int64` | the watchdog interval when `WATCHDOG_USEC` is set and `WATCHDOG_PID` (if set) is this process; else 0
 
 `TServer` uses them itself: `Start` sends `READY=1` (with a `STATUS=` line)
 once every listener is open and the loops run, `Stop` sends `STOPPING=1`,
@@ -321,24 +322,24 @@ the thread runs; `Wait` joins it after a `Stop`.
 The options of one HTTP/1.1 connection. The defaults in parentheses are
 those of `ConformanceH1Config`.
 
-| Field | Meaning |
-|-------|---------|
-| `KeepAlive` (True) | serve more requests on the connection after the first one |
-| `HalfClose` (False) | when the client closes its sending side, still finish the response in progress |
-| `TitleCaseHeaders` (False) | write response header names as `Content-Type` instead of `content-type` |
-| `PreserveHeaderCase` (False) | accepted and ignored (request names are always kept as received) |
-| `MaxHeaders` (-1 = 100) | most header fields in a request head; more gives 431 |
-| `MaxHeaderSize` (-1 = no own limit) | most bytes in a request head; more gives 431 |
-| `MaxBufSize` (-1 = about 408 KiB) | largest read buffer; a request head must fit; minimum 8192 |
-| `Timer` (False) | the connection may arm timers; every timeout needs it |
-| `HeaderReadTimeout: TTimeoutSetting` (tsDefault) | `tsDefault`: 30 s with a timer, none without; `tsDisabled`; `tsMs`: `HeaderReadTimeoutMs` |
-| `HeaderReadTimeoutMs` | used with `tsMs` |
-| `PipelineFlush` (False) | while a pipelined request is still buffered, hold the response so several go out in one write |
-| `AutoDateHeader` (True) | add a `Date` header unless the application set one |
-| `BodyReadTimeoutMs` (0 = off) | longest wait for one request body byte |
-| `BodyMinRate` (0 = off) | bytes/s the client must keep up after `BodyReadTimeoutMs` of waiting |
-| `Parser: TParserConfig` | leniency switches of the head parser (`bearings.http1.parser`) |
-| `Mode: TH1ConnMode` (cmPlain) | what happens after a `101` response and at the end of the connection (section 10) |
+Field | Meaning
+----- | -------
+`KeepAlive` (True) | serve more requests on the connection after the first one
+`HalfClose` (False) | when the client closes its sending side, still finish the response in progress
+`TitleCaseHeaders` (False) | write response header names as `Content-Type` instead of `content-type`
+`PreserveHeaderCase` (False) | accepted and ignored (request names are always kept as received)
+`MaxHeaders` (-1 = 100) | most header fields in a request head; more gives 431
+`MaxHeaderSize` (-1 = no own limit) | most bytes in a request head; more gives 431
+`MaxBufSize` (-1 = about 408 KiB) | largest read buffer; a request head must fit; minimum 8192
+`Timer` (False) | the connection may arm timers; every timeout needs it
+`HeaderReadTimeout: TTimeoutSetting` (tsDefault) | `tsDefault`: 30 s with a timer, none without; `tsDisabled`; `tsMs`: `HeaderReadTimeoutMs`
+`HeaderReadTimeoutMs` | used with `tsMs`
+`PipelineFlush` (False) | while a pipelined request is still buffered, hold the response so several go out in one write
+`AutoDateHeader` (True) | add a `Date` header unless the application set one
+`BodyReadTimeoutMs` (0 = off) | longest wait for one request body byte
+`BodyMinRate` (0 = off) | bytes/s the client must keep up after `BodyReadTimeoutMs` of waiting
+`Parser: TParserConfig` | leniency switches of the head parser (`bearings.http1.parser`)
+`Mode: TH1ConnMode` (cmPlain) | what happens after a `101` response and at the end of the connection (section 10)
 
 Presets: `ConformanceH1Config` is the base (no timer, so no timeouts;
 upgrades not handed over). `ProductionH1Config` is the base plus `Timer`,
@@ -576,14 +577,14 @@ written to stderr and the worker goes on.
 a `Content-Length` (the encoder writes it; the application does not).
 `TBodyData` (unit `bearings.rt.buf`) is a plain record built by one of:
 
-| Constructor | Memory / file | Who releases it, and how |
-|-------------|---------------|--------------------------|
-| `BodyEmpty` | no bytes | nothing |
-| `BodyStatic(P, Len)` | memory that outlives the write (a constant, a global) | nothing |
-| `BodyString(S)` | the bytes of a `RawByteString`, no copy | one reference to `S` is held until the bytes were written, then dropped |
-| `BodyHeap(P, Len)` | memory from `GetMem` | `FreeMem(P)` after the write; the server owns `P` from the call on |
-| `BodyCopy(Ex, P, Len)` (unit `bearings.http.exchange`) | a copy of `P^` in a block from the loop's pool (on the loop thread) or the heap (elsewhere) | the block goes back after the write |
-| `BodyFile(Fd, Offset, Len, CloseAfter)` | `Len` bytes of the open file `Fd` from `Offset`, sent with `sendfile(2)` | `Fd` is closed after the last byte when `CloseAfter`; also when the connection dies before that |
+Constructor | Memory / file | Who releases it, and how
+----------- | ------------- | ------------------------
+`BodyEmpty` | no bytes | nothing
+`BodyStatic(P, Len)` | memory that outlives the write (a constant, a global) | nothing
+`BodyString(S)` | the bytes of a `RawByteString`, no copy | one reference to `S` is held until the bytes were written, then dropped
+`BodyHeap(P, Len)` | memory from `GetMem` | `FreeMem(P)` after the write; the server owns `P` from the call on
+`BodyCopy(Ex, P, Len)` (unit `bearings.http.exchange`) | a copy of `P^` in a block from the loop's pool (on the loop thread) or the heap (elsewhere) | the block goes back after the write
+`BodyFile(Fd, Offset, Len, CloseAfter)` | `Len` bytes of the open file `Fd` from `Offset`, sent with `sendfile(2)` | `Fd` is closed after the last byte when `CloseAfter`; also when the connection dies before that
 
 `TBodyData` values may be built on any thread; the release
 (`ReleaseBody`) runs on the loop thread after the bytes were written. If
@@ -694,14 +695,14 @@ read buffer, not a copy, and it is valid until the next body call.
 
 `TryRead(out Chunk: TByteSlice): TBodyReadStatus` never blocks:
 
-| Result | Meaning |
-|--------|---------|
-| `brData` | `Chunk` holds bytes, valid until the next body call |
-| `brPending` | nothing yet; the call is polled again when data arrives (return `cpPending`) |
-| `brTrailers` | the body ended with trailers: `RequestTrailers` holds them; `brEnd` follows |
-| `brEnd` | the body ended (a request without a body gives `brEnd` at once) |
-| `brError` | the body could not be read: `BodyErrorKind`, `BodyErrorMessage`, `BodyErrorIsTimeout` |
-| `brCanceled` | the exchange was canceled, or the request was already released |
+Result | Meaning
+------ | -------
+`brData` | `Chunk` holds bytes, valid until the next body call
+`brPending` | nothing yet; the call is polled again when data arrives (return `cpPending`)
+`brTrailers` | the body ended with trailers: `RequestTrailers` holds them; `brEnd` follows
+`brEnd` | the body ended (a request without a body gives `brEnd` at once)
+`brError` | the body could not be read: `BodyErrorKind`, `BodyErrorMessage`, `BodyErrorIsTimeout`
+`brCanceled` | the exchange was canceled, or the request was already released
 
 ### On a worker thread: Read, ReadChunk, ReadAll, ReadFrame
 
@@ -832,16 +833,16 @@ connections. Without a timer (`Timer = False`) nothing times out.
 
 Exceptions a program meets:
 
-| Exception | Unit | When |
-|-----------|------|------|
-| `EServerError` | `bearings.server` | `Start` failed (port in use, invalid `H1`, no factory, started twice), `RunLoop0` without `StartCallerRunsLoop0` |
-| `EInvalidHeader` | `bearings.http.headers` | a validating header mutator got a bad name or value |
-| `EBodyError` | `bearings.http.exchange` | a blocking body read: the body could not be read (`Kind: TBodyErrorKind`) |
-| `EClientGone` | `bearings.http.exchange` | a blocking body read after a cancel or a release |
-| `EBodyTooLarge` | `bearings.http.exchange` | `ReadAll`: the body is over the limit |
-| `EExchangeState` | `bearings.http.exchange` | a call the exchange's state does not allow: a second `Offload` of one request; `Share` with no call in flight or after the request's last holder released it |
-| `EWorkerPoolStopped` | `bearings.rt.workers` | `Submit` or `Offload` after `Shutdown` started |
-| `EH1Panic` | `bearings.http.error` | a program error inside the HTTP/1 code (for example a response version the encoder cannot write); the loop aborts the connection |
+Exception | Unit | When
+--------- | ---- | ----
+`EServerError` | `bearings.server` | `Start` failed (port in use, invalid `H1`, no factory, started twice), `RunLoop0` without `StartCallerRunsLoop0`
+`EInvalidHeader` | `bearings.http.headers` | a validating header mutator got a bad name or value
+`EBodyError` | `bearings.http.exchange` | a blocking body read: the body could not be read (`Kind: TBodyErrorKind`)
+`EClientGone` | `bearings.http.exchange` | a blocking body read after a cancel or a release
+`EBodyTooLarge` | `bearings.http.exchange` | `ReadAll`: the body is over the limit
+`EExchangeState` | `bearings.http.exchange` | a call the exchange's state does not allow: a second `Offload` of one request; `Share` with no call in flight or after the request's last holder released it
+`EWorkerPoolStopped` | `bearings.rt.workers` | `Submit` or `Offload` after `Shutdown` started
+`EH1Panic` | `bearings.http.error` | a program error inside the HTTP/1 code (for example a response version the encoder cannot write); the loop aborts the connection
 
 The HTTP layer's own error value is `THyperError` (unit
 `bearings.http.error`), a plain record: `Kind: THyperErrorKind` says what
@@ -1000,13 +1001,13 @@ conformance server and instrumentation. Pass an instance as the third
 argument of `TServer.Create`; nil costs nothing. All hooks run on the loop
 thread:
 
-| Hook | When | Default |
-|------|------|---------|
-| `OnAccept(Loop, ConnId, Peer): Pointer` | a socket was accepted; returns per-connection data passed to the other hooks | nil |
-| `WrapTransport(T: TTcpTransport, Data): TTransport` | may wrap the socket transport (for example to count bytes) | returns `T` |
-| `OnStart(ConnId, Data, Task)` | the connection task is set up and registered, before its first run | nothing |
-| `OnConnClose(ConnId, Data, Outcome, Detail)` | the connection ended; `Outcome` is a `TConnOutcome`, `Detail` the error text | nothing |
-| `OnParts(ConnId, Data, var Parts: TConnParts)` | `cmWithoutShutdown` only: the HTTP connection ended; `Parts.Transport` (owned by the receiver), `Parts.Rest` (unread bytes, a pinned view) and `Parts.Src` are handed over | closes them |
+Hook | When | Default
+---- | ---- | -------
+`OnAccept(Loop, ConnId, Peer): Pointer` | a socket was accepted; returns per-connection data passed to the other hooks | nil
+`WrapTransport(T: TTcpTransport, Data): TTransport` | may wrap the socket transport (for example to count bytes) | returns `T`
+`OnStart(ConnId, Data, Task)` | the connection task is set up and registered, before its first run | nothing
+`OnConnClose(ConnId, Data, Outcome, Detail)` | the connection ended; `Outcome` is a `TConnOutcome`, `Detail` the error text | nothing
+`OnParts(ConnId, Data, var Parts: TConnParts)` | `cmWithoutShutdown` only: the HTTP connection ended; `Parts.Transport` (owned by the receiver), `Parts.Rest` (unread bytes, a pinned view) and `Parts.Src` are handed over | closes them
 
 A receiver that keeps the socket open in `OnParts` builds a `TUpgraded`
 with `TUpgraded.CreateFrom(Loop, Transport, Rest, Src, True)` before
@@ -1061,7 +1062,7 @@ the program that compiles it. They keep the `WD_` prefix.
 
 ## 13. Performance rules
 
-The measured speed (`docs/design/m3-perf-report.md`: 0.85 to 0.98 of hyper
+The measured speed (`docs/perf-report.md`: 0.85 to 0.98 of hyper
 on the plaintext benchmark; an idle keep-alive connection at about 1.3 KB)
 depends on the *inline path* allocating nothing and touching no atomic
 instruction per request. The library keeps its side of this: the exchange
@@ -1116,209 +1117,209 @@ methods are internal and are left out.
 
 ### bearings.server
 
-| Member | Description | Thread |
-|--------|-------------|--------|
-| `TServerConfig` | the options (section 2) | plain value |
-| `TServer.Create(Cfg, Factory, Observer = nil)` | stores the configuration, the service factory (a `TServiceFactory` method) and the observer | owner |
-| `TServer.CreateWithProc(Cfg, Factory, Observer = nil)` | the same with a `TServiceProc` (a plain function) as the factory | owner |
-| `TServer.Start` | binds, starts loops and workers; returns | owner |
-| `TServer.StartCallerRunsLoop0` | `Start` without a thread for loop 0 | owner |
-| `TServer.RunLoop0` | runs loop 0 on the calling thread until `Stop` | owner |
-| `TServer.Stop(GraceMs)` | starts the graceful shutdown; returns at once | any |
-| `TServer.Wait` | joins the loop threads, then shuts the worker pool down | owner |
-| `TServer.RunUntilSignal(Started = nil): cint` | `Start`, wait for SIGTERM/SIGINT, `Stop`, `Wait`; the signal number or 0 | owner |
-| `TServer.RunUntilSignalProc(Started: TServerProc): cint` | the same with a plain procedure as the `Started` callback | owner |
-| `TServer.GracefulShutdownConnections` | closes every open connection after its current response; listeners keep accepting | any except a loop thread |
-| `TServer.Destroy` | stops if needed, aborts what is left, frees loops and pools (or leaks them on purpose) | owner |
-| `TServer.Port` | the bound port | any after `Start` |
-| `TServer.Started` | `Start` completed | any |
-| `TServer.Workers` | the worker pool, nil without one | any after `Start` |
-| `TServer.Config`, `LoopCount`, `Loops[I]` | the configuration, the loops | any after `Start` |
-| `TServerEvent` | `procedure(Server: TServer) of object`, the `Started` callback | owner |
-| `TServerProc` | `procedure(Server: TServer)`, the `Started` callback of `RunUntilSignalProc` | owner |
-| `NO_WORKER_POOL` | -1: the `Workers` value for a service that never offloads (no pool) | - |
-| `TServerLoop` | one loop and what it owns: `Loop`, `Listener`, `Service`, `Pool`, `Conns`, `Index`, `Cpu`, `Thread`, `Running`, `Stopping`, `GraceMs`; `AbortConnections` and `Destroy` are internal | loop (read by tests after the loop stopped) |
-| `EServerError` | `Start` / `RunLoop0` errors | - |
-| `ProductionServerConfig`, `BenchmarkServerConfig` | the two presets | any |
-| `TConnOutcome`, `TConnParts`, `TConnObserver` | re-exported from `bearings.http.error` and `bearings.http.exchange` | see there |
-| `STALL_MS`, `StallReports` | `WD_STALL` builds only (section 12) | any (atomic) |
+Member | Description | Thread
+------ | ----------- | ------
+`TServerConfig` | the options (section 2) | plain value
+`TServer.Create(Cfg, Factory, Observer = nil)` | stores the configuration, the service factory (a `TServiceFactory` method) and the observer | owner
+`TServer.CreateWithProc(Cfg, Factory, Observer = nil)` | the same with a `TServiceProc` (a plain function) as the factory | owner
+`TServer.Start` | binds, starts loops and workers; returns | owner
+`TServer.StartCallerRunsLoop0` | `Start` without a thread for loop 0 | owner
+`TServer.RunLoop0` | runs loop 0 on the calling thread until `Stop` | owner
+`TServer.Stop(GraceMs)` | starts the graceful shutdown; returns at once | any
+`TServer.Wait` | joins the loop threads, then shuts the worker pool down | owner
+`TServer.RunUntilSignal(Started = nil): cint` | `Start`, wait for SIGTERM/SIGINT, `Stop`, `Wait`; the signal number or 0 | owner
+`TServer.RunUntilSignalProc(Started: TServerProc): cint` | the same with a plain procedure as the `Started` callback | owner
+`TServer.GracefulShutdownConnections` | closes every open connection after its current response; listeners keep accepting | any except a loop thread
+`TServer.Destroy` | stops if needed, aborts what is left, frees loops and pools (or leaks them on purpose) | owner
+`TServer.Port` | the bound port | any after `Start`
+`TServer.Started` | `Start` completed | any
+`TServer.Workers` | the worker pool, nil without one | any after `Start`
+`TServer.Config`, `LoopCount`, `Loops[I]` | the configuration, the loops | any after `Start`
+`TServerEvent` | `procedure(Server: TServer) of object`, the `Started` callback | owner
+`TServerProc` | `procedure(Server: TServer)`, the `Started` callback of `RunUntilSignalProc` | owner
+`NO_WORKER_POOL` | -1: the `Workers` value for a service that never offloads (no pool) | -
+`TServerLoop` | one loop and what it owns: `Loop`, `Listener`, `Service`, `Pool`, `Conns`, `Index`, `Cpu`, `Thread`, `Running`, `Stopping`, `GraceMs`; `AbortConnections` and `Destroy` are internal | loop (read by tests after the loop stopped)
+`EServerError` | `Start` / `RunLoop0` errors | -
+`ProductionServerConfig`, `BenchmarkServerConfig` | the two presets | any
+`TConnOutcome`, `TConnParts`, `TConnObserver` | re-exported from `bearings.http.error` and `bearings.http.exchange` | see there
+`STALL_MS`, `StallReports` | `WD_STALL` builds only (section 12) | any (atomic)
 
 ### bearings.http.exchange
 
-| Member | Description | Thread |
-|--------|-------------|--------|
-| `THttpService.Call(Ex): TServiceCall` | picks the call of a request; must not answer or read the body | loop |
-| `TServiceFactory` | `function(Loop: TLoop): THttpService of object`; one call per loop | owner (inside `Start`) |
-| `TServiceProc` | `function(Loop: TLoop): THttpService`, the plain-function form (`TServer.CreateWithProc`) | owner (inside `Start`) |
-| `TServiceCall.Poll(Ex): TCallPoll` | runs the handler; `cpReady` after a terminal call, else `cpPending` | loop |
-| `TServiceCall.Drop(Ex, Completed)` | called exactly once at the end | loop |
-| `TCallPoll` | `cpPending`, `cpReady` | - |
-| `TBlockingHandler.Run(Ex)` | the handler of an offloaded request; may block | worker |
-| `TOffloadCall` (`Pool`, `Handler`, `SaturatedStatus`, `Poll`) | a stateless call that offloads every request; `SaturatedStatus` <> 0 answers that status on the loop when the pool is saturated (section 4) | loop |
-| `TExchangeAttachment.Detach(Ex)` | per-request state the exchange detaches at recycle or next request | loop |
-| `TByteSlice` | `P: PByte; Len: SizeInt` | - |
-| `SliceToStr(S): RawByteString` | a copy of the slice's bytes as a string | any holder, while the slice is valid |
-| `SliceEquals(S, Text): Boolean` | the slice holds exactly the bytes of `Text` (byte for byte) | any holder, while the slice is valid |
-| `PathIs(Ex, Text): Boolean` | `SliceEquals(Ex.Path, Text)` | same as `TExchange.Path` |
-| `TRequestHead` (`Ex.Head`) | the parsed head: `View`, `Method`, `MethodSlice`, `Target`, `Uri`, `Version`, `Headers`, `ContentLength`, `ExpectContinue`, `WantsUpgrade`, `Peer`, `Local`, `ConnId`, `RequestNo`, `Released`; read through the accessors below | any holder, until the request is released |
-| `TExchange.Method`, `MethodBytes`, `Target`, `Path`, `Query(out Q)`, `Version`, `Headers`, `Header(Name, out V)`, `ContentLength`, `ExpectsContinue`, `WantsUpgrade`, `ConnId`, `RequestNo`, `PeerAddr` | request head accessors; valid until the request is released; `Headers` is read-only by contract | loop when unshared; any holder when shared |
-| `TExchange.ReleaseRequest` | the application is done with the request: body receiver closed, head unpinned | loop when unshared; any holder when shared |
-| `TExchange.TryRead(out Chunk): TBodyReadStatus` | non-blocking body read | loop when unshared; any holder when shared |
-| `TExchange.Read(Buf, Max): SizeInt` | blocking copy read; 0 = end | worker |
-| `TExchange.ReadChunk(out Chunk): Boolean` | blocking zero-copy read; False = end; skips trailers | worker |
-| `TExchange.ReadAll(var Dst, Limit): SizeInt` | blocking; appends the body to `Dst`; `EBodyTooLarge` | worker |
-| `TExchange.ReadFrame(out Chunk): TBodyReadStatus` | `TryRead` that blocks instead of `brPending` | worker |
-| `TExchange.DiscardBody` | closes the body receiver only | loop when unshared; any holder when shared |
-| `TExchange.RequestTrailers: THttpHeaders` | the request trailers after `brTrailers` / `brEnd` | same as `TryRead` |
-| `TExchange.BodyErrorKind`, `BodyErrorMessage`, `BodyErrorIsTimeout` | the last body error | same as `TryRead` |
-| `TExchange.Status`, `ResponseVersion` | the status (default 200) and version (default `hv11`) | the answering thread, before the terminal call |
-| `TExchange.SetReason(P, Len): Boolean` | a custom reason phrase; False for an invalid byte | the answering thread, before the terminal call |
-| `TExchange.ResponseHeaders: THttpHeaders` | the response header list | the answering thread, before the terminal call |
-| `TExchange.Respond(Body): Boolean` | terminal: known length or empty | any holder |
-| `TExchange.RespondText(Status, Text, ContentType = 'text/plain; charset=utf-8'): Boolean` | terminal: `Status`, the `Content-Type` header and `Respond(BodyString(Text))` in one call; False (nothing touched) when canceled or already answered | any holder |
-| `TExchange.RespondStream(Source): Boolean` | terminal: a `TBodySource` | any holder |
-| `TExchange.BeginStream(HighWater = 65536): Boolean` | terminal: the exchange's own channel body | any holder |
-| `TExchange.Fail(Msg): Boolean` | terminal: no response, the connection closes with a user error | any holder |
-| `TExchange.Write(P, Len)`, `WriteString(S)`: `TWriteResult` | queue a chunk; park while full off the loop (`wrWouldBlock` on the loop) | any holder, after `BeginStream` |
-| `TExchange.TryWrite(P, Len): TWriteResult` | queue a chunk; never parks | any holder, after `BeginStream` |
-| `TExchange.Finish(Trailers = nil): Boolean` | end the streamed body | any holder, after `BeginStream` |
-| `TExchange.AbortStream(Msg)` | end the streamed body with an error | any holder, after `BeginStream` |
-| `TExchange.OnUpgrade(H)` | register the upgrade handler | loop, before answering |
-| `TExchange.OnLoopThread: Boolean` | the caller is the loop thread (a query) | any |
-| `TExchange.Offload(Pool, H)` | `Share` and queue on the pool; a worker runs `H.Run`; a second call raises `EExchangeState` | loop, from `Poll`, once per request |
-| `TExchange.Share: TExchange` | switch to shared mode, +1 reference | loop |
-| `TExchange.Release` | -1 reference; the last one recycles the exchange | any, after `Share` |
-| `TExchange.Wake` | run the owning connection again | loop when unshared; any when shared |
-| `TExchange.IsCanceled`, `Answered: Boolean` | the state | any (loop only when unshared) |
-| `TExchange.SetBodyErrorText(Msg)` | the error text a `TBodySource` sets before `fpError` | loop |
-| `TExchange.Loop: TLoop` | the owning loop | any |
-| `TExchange.User: TObject`, `Tag: PtrInt` | per-request application state; nil / 0 at every request; not freed by the exchange | the holder |
-| `TExchange.Attachment` | per-request state with a `Detach` callback | loop (set before `Offload` when a worker reads it) |
-| `TExchange.Shared`, `RefCount`, `Offloaded`, `Owner`, `Generation`, `UpgradeSlot` | read-only state | any (`RefCount` atomic) |
-| `TExchange.Head`, `Chan`, `Resp`, `ReqTrailers` | the public fields; `Chan` and `Resp` are the dispatcher's | internal except `Head` (read) |
-| `TExchange.BeginRequest`, `FillHead`, `LinkUpgrade`, `CompleteCall`, `Cancel`, `Recycle`, `ReleaseTransport`, `Execute` | the dispatcher's and the pool's entry points | internal |
-| `TBodyReadStatus` | `brData`, `brTrailers`, `brEnd`, `brPending`, `brError`, `brCanceled` | - |
-| `TWriteResult` | `wrOk`, `wrWouldBlock`, `wrCanceled` | - |
-| `TBodyErrorKind` | `bekUnexpectedEof`, `bekInvalidData`, `bekInvalidInput`, `bekIo`, `bekOther` | - |
-| `EClientGone`, `EBodyError` (`Kind`), `EBodyTooLarge` | body read exceptions (section 6) | - |
-| `EExchangeState` | a second `Offload`; `Share` in a state that does not allow it (section 9) | - |
-| `TExchangeState` | `xsIdle`, `xsCalled`, `xsAnswered`, `xsCanceled`, `xsDone` | - |
-| `TWakeTimer.Arm(Ex, DelayMs)`, `Fired`, `Cancel(Ex)` | an application timer that wakes the connection | loop |
-| `TBodySource.SizeHint`, `IsEndStream`, `PollFrame`, `Done` | a response body produced piece by piece | loop (called by the dispatcher) |
-| `TFramePoll` | `fpData`, `fpTrailers`, `fpEnd`, `fpError`, `fpPending` | - |
-| `TChannelBody.Create(HighWater)`, `Reset(Ex, HighWater)`, `Push(var B, Block)`, `FinishStream(Trailers)`, `AbortWith(Msg)`, `Queued`, `EmptyWrite`, `Closed` | the bounded frame queue behind `BeginStream`; usable with `RespondStream` | producers: any; `PollFrame`/`Done`: loop |
-| `TChannelBody.AutoFinish`, `WakeProducer`, `Deactivate` | called by the exchange | internal |
-| `TUpgradeHandler.Upgraded(U)`, `UpgradeFailed(Msg)` | the upgrade callbacks | loop |
-| `TUpgradeSlot`, `TUpgradeState`, `TUpgradePending` | the connection side of an upgrade | internal |
-| `TExchangePool` (`Take`, `Give`, `FreeCount`, `Outstanding`) | the per-loop exchange pool | internal (loop) |
-| `TConnObserver` hooks (section 11) | per-connection hooks | loop |
-| `TConnParts` | `Transport`, `Rest`, `Src` handed over by `OnParts` | loop |
-| `BodyCopy(Ex, P, Len): TBodyData` | a body that is a copy of `P^` in a pooled or heap block | any |
-| `UpgradeSlotsLive`, `ExchangesLive` | object counters for tests | any (atomic) |
-| `NoResponseFailures` | completions without a terminal call (section 12) | any (atomic) |
-| `TExchange.NoResponseIsExpected` | keeps a `-Sa` build from raising for this request's completion without a terminal call (tests) | loop, or the worker before it returns |
-| `TBodyChan`, `TChanItemKind`, `TChanPoll`, `TResponseSlot` | the body channel record and the response slot | internal |
+Member | Description | Thread
+------ | ----------- | ------
+`THttpService.Call(Ex): TServiceCall` | picks the call of a request; must not answer or read the body | loop
+`TServiceFactory` | `function(Loop: TLoop): THttpService of object`; one call per loop | owner (inside `Start`)
+`TServiceProc` | `function(Loop: TLoop): THttpService`, the plain-function form (`TServer.CreateWithProc`) | owner (inside `Start`)
+`TServiceCall.Poll(Ex): TCallPoll` | runs the handler; `cpReady` after a terminal call, else `cpPending` | loop
+`TServiceCall.Drop(Ex, Completed)` | called exactly once at the end | loop
+`TCallPoll` | `cpPending`, `cpReady` | -
+`TBlockingHandler.Run(Ex)` | the handler of an offloaded request; may block | worker
+`TOffloadCall` (`Pool`, `Handler`, `SaturatedStatus`, `Poll`) | a stateless call that offloads every request; `SaturatedStatus` <> 0 answers that status on the loop when the pool is saturated (section 4) | loop
+`TExchangeAttachment.Detach(Ex)` | per-request state the exchange detaches at recycle or next request | loop
+`TByteSlice` | `P: PByte; Len: SizeInt` | -
+`SliceToStr(S): RawByteString` | a copy of the slice's bytes as a string | any holder, while the slice is valid
+`SliceEquals(S, Text): Boolean` | the slice holds exactly the bytes of `Text` (byte for byte) | any holder, while the slice is valid
+`PathIs(Ex, Text): Boolean` | `SliceEquals(Ex.Path, Text)` | same as `TExchange.Path`
+`TRequestHead` (`Ex.Head`) | the parsed head: `View`, `Method`, `MethodSlice`, `Target`, `Uri`, `Version`, `Headers`, `ContentLength`, `ExpectContinue`, `WantsUpgrade`, `Peer`, `Local`, `ConnId`, `RequestNo`, `Released`; read through the accessors below | any holder, until the request is released
+`TExchange.Method`, `MethodBytes`, `Target`, `Path`, `Query(out Q)`, `Version`, `Headers`, `Header(Name, out V)`, `ContentLength`, `ExpectsContinue`, `WantsUpgrade`, `ConnId`, `RequestNo`, `PeerAddr` | request head accessors; valid until the request is released; `Headers` is read-only by contract | loop when unshared; any holder when shared
+`TExchange.ReleaseRequest` | the application is done with the request: body receiver closed, head unpinned | loop when unshared; any holder when shared
+`TExchange.TryRead(out Chunk): TBodyReadStatus` | non-blocking body read | loop when unshared; any holder when shared
+`TExchange.Read(Buf, Max): SizeInt` | blocking copy read; 0 = end | worker
+`TExchange.ReadChunk(out Chunk): Boolean` | blocking zero-copy read; False = end; skips trailers | worker
+`TExchange.ReadAll(var Dst, Limit): SizeInt` | blocking; appends the body to `Dst`; `EBodyTooLarge` | worker
+`TExchange.ReadFrame(out Chunk): TBodyReadStatus` | `TryRead` that blocks instead of `brPending` | worker
+`TExchange.DiscardBody` | closes the body receiver only | loop when unshared; any holder when shared
+`TExchange.RequestTrailers: THttpHeaders` | the request trailers after `brTrailers` / `brEnd` | same as `TryRead`
+`TExchange.BodyErrorKind`, `BodyErrorMessage`, `BodyErrorIsTimeout` | the last body error | same as `TryRead`
+`TExchange.Status`, `ResponseVersion` | the status (default 200) and version (default `hv11`) | the answering thread, before the terminal call
+`TExchange.SetReason(P, Len): Boolean` | a custom reason phrase; False for an invalid byte | the answering thread, before the terminal call
+`TExchange.ResponseHeaders: THttpHeaders` | the response header list | the answering thread, before the terminal call
+`TExchange.Respond(Body): Boolean` | terminal: known length or empty | any holder
+`TExchange.RespondText(Status, Text, ContentType = 'text/plain; charset=utf-8'): Boolean` | terminal: `Status`, the `Content-Type` header and `Respond(BodyString(Text))` in one call; False (nothing touched) when canceled or already answered | any holder
+`TExchange.RespondStream(Source): Boolean` | terminal: a `TBodySource` | any holder
+`TExchange.BeginStream(HighWater = 65536): Boolean` | terminal: the exchange's own channel body | any holder
+`TExchange.Fail(Msg): Boolean` | terminal: no response, the connection closes with a user error | any holder
+`TExchange.Write(P, Len)`, `WriteString(S)`: `TWriteResult` | queue a chunk; park while full off the loop (`wrWouldBlock` on the loop) | any holder, after `BeginStream`
+`TExchange.TryWrite(P, Len): TWriteResult` | queue a chunk; never parks | any holder, after `BeginStream`
+`TExchange.Finish(Trailers = nil): Boolean` | end the streamed body | any holder, after `BeginStream`
+`TExchange.AbortStream(Msg)` | end the streamed body with an error | any holder, after `BeginStream`
+`TExchange.OnUpgrade(H)` | register the upgrade handler | loop, before answering
+`TExchange.OnLoopThread: Boolean` | the caller is the loop thread (a query) | any
+`TExchange.Offload(Pool, H)` | `Share` and queue on the pool; a worker runs `H.Run`; a second call raises `EExchangeState` | loop, from `Poll`, once per request
+`TExchange.Share: TExchange` | switch to shared mode, +1 reference | loop
+`TExchange.Release` | -1 reference; the last one recycles the exchange | any, after `Share`
+`TExchange.Wake` | run the owning connection again | loop when unshared; any when shared
+`TExchange.IsCanceled`, `Answered: Boolean` | the state | any (loop only when unshared)
+`TExchange.SetBodyErrorText(Msg)` | the error text a `TBodySource` sets before `fpError` | loop
+`TExchange.Loop: TLoop` | the owning loop | any
+`TExchange.User: TObject`, `Tag: PtrInt` | per-request application state; nil / 0 at every request; not freed by the exchange | the holder
+`TExchange.Attachment` | per-request state with a `Detach` callback | loop (set before `Offload` when a worker reads it)
+`TExchange.Shared`, `RefCount`, `Offloaded`, `Owner`, `Generation`, `UpgradeSlot` | read-only state | any (`RefCount` atomic)
+`TExchange.Head`, `Chan`, `Resp`, `ReqTrailers` | the public fields; `Chan` and `Resp` are the dispatcher's | internal except `Head` (read)
+`TExchange.BeginRequest`, `FillHead`, `LinkUpgrade`, `CompleteCall`, `Cancel`, `Recycle`, `ReleaseTransport`, `Execute` | the dispatcher's and the pool's entry points | internal
+`TBodyReadStatus` | `brData`, `brTrailers`, `brEnd`, `brPending`, `brError`, `brCanceled` | -
+`TWriteResult` | `wrOk`, `wrWouldBlock`, `wrCanceled` | -
+`TBodyErrorKind` | `bekUnexpectedEof`, `bekInvalidData`, `bekInvalidInput`, `bekIo`, `bekOther` | -
+`EClientGone`, `EBodyError` (`Kind`), `EBodyTooLarge` | body read exceptions (section 6) | -
+`EExchangeState` | a second `Offload`; `Share` in a state that does not allow it (section 9) | -
+`TExchangeState` | `xsIdle`, `xsCalled`, `xsAnswered`, `xsCanceled`, `xsDone` | -
+`TWakeTimer.Arm(Ex, DelayMs)`, `Fired`, `Cancel(Ex)` | an application timer that wakes the connection | loop
+`TBodySource.SizeHint`, `IsEndStream`, `PollFrame`, `Done` | a response body produced piece by piece | loop (called by the dispatcher)
+`TFramePoll` | `fpData`, `fpTrailers`, `fpEnd`, `fpError`, `fpPending` | -
+`TChannelBody.Create(HighWater)`, `Reset(Ex, HighWater)`, `Push(var B, Block)`, `FinishStream(Trailers)`, `AbortWith(Msg)`, `Queued`, `EmptyWrite`, `Closed` | the bounded frame queue behind `BeginStream`; usable with `RespondStream` | producers: any; `PollFrame`/`Done`: loop
+`TChannelBody.AutoFinish`, `WakeProducer`, `Deactivate` | called by the exchange | internal
+`TUpgradeHandler.Upgraded(U)`, `UpgradeFailed(Msg)` | the upgrade callbacks | loop
+`TUpgradeSlot`, `TUpgradeState`, `TUpgradePending` | the connection side of an upgrade | internal
+`TExchangePool` (`Take`, `Give`, `FreeCount`, `Outstanding`) | the per-loop exchange pool | internal (loop)
+`TConnObserver` hooks (section 11) | per-connection hooks | loop
+`TConnParts` | `Transport`, `Rest`, `Src` handed over by `OnParts` | loop
+`BodyCopy(Ex, P, Len): TBodyData` | a body that is a copy of `P^` in a pooled or heap block | any
+`UpgradeSlotsLive`, `ExchangesLive` | object counters for tests | any (atomic)
+`NoResponseFailures` | completions without a terminal call (section 12) | any (atomic)
+`TExchange.NoResponseIsExpected` | keeps a `-Sa` build from raising for this request's completion without a terminal call (tests) | loop, or the worker before it returns
+`TBodyChan`, `TChanItemKind`, `TChanPoll`, `TResponseSlot` | the body channel record and the response slot | internal
 
 ### bearings.rt.buf (the body API)
 
-| Member | Description | Thread |
-|--------|-------------|--------|
-| `TBodyData` | one piece of response body: `Kind: TBodyKind` (`bkEmpty`, `bkMem`, `bkFile`), `P`, `Len`, `Own: TBodyOwnership`, `Ctx`, `ReleaseProc`, `Fd`, `Offset`, `CloseFd` | build: any; release: loop |
-| `TBodyOwnership` | `boStatic`, `boString`, `boHeap`, `boExchange`, `boCustom` (how the memory is released) | - |
-| `TBodyReleaseProc` | `procedure(Ctx: Pointer; Data: PByte)` for `boCustom` | loop |
-| `BodyEmpty` | no bytes | any |
-| `BodyStatic(P, Len)` | memory that outlives the write | any |
-| `BodyString(S)` | a string; one reference held until released | any |
-| `BodyHeap(P, Len)` | `GetMem` memory; `FreeMem` after the write | any |
-| `BodyFile(Fd, Offset, Len, CloseAfter)` | a file range sent with sendfile | any |
-| `ReleaseBody(var B)` | releases per `Own`, closes the file if `CloseFd`; `B` becomes `BodyEmpty` | loop (the dispatcher) |
-| `TBlockPool`, `TBufBlock`, `TReadBuf`, `TBytesView`, `TByteVec`, `BlockAlloc`, `BlockFree`, `PoolClassIndex`, `POOL_*` | the buffer pool and the connection buffers | internal (loop) |
+Member | Description | Thread
+------ | ----------- | ------
+`TBodyData` | one piece of response body: `Kind: TBodyKind` (`bkEmpty`, `bkMem`, `bkFile`), `P`, `Len`, `Own: TBodyOwnership`, `Ctx`, `ReleaseProc`, `Fd`, `Offset`, `CloseFd` | build: any; release: loop
+`TBodyOwnership` | `boStatic`, `boString`, `boHeap`, `boExchange`, `boCustom` (how the memory is released) | -
+`TBodyReleaseProc` | `procedure(Ctx: Pointer; Data: PByte)` for `boCustom` | loop
+`BodyEmpty` | no bytes | any
+`BodyStatic(P, Len)` | memory that outlives the write | any
+`BodyString(S)` | a string; one reference held until released | any
+`BodyHeap(P, Len)` | `GetMem` memory; `FreeMem` after the write | any
+`BodyFile(Fd, Offset, Len, CloseAfter)` | a file range sent with sendfile | any
+`ReleaseBody(var B)` | releases per `Own`, closes the file if `CloseFd`; `B` becomes `BodyEmpty` | loop (the dispatcher)
+`TBlockPool`, `TBufBlock`, `TReadBuf`, `TBytesView`, `TByteVec`, `BlockAlloc`, `BlockFree`, `PoolClassIndex`, `POOL_*` | the buffer pool and the connection buffers | internal (loop)
 
 ### bearings.http.headers
 
-| Member | Description | Thread |
-|--------|-------------|--------|
-| `THttpHeaders.Create(AEntryCapacity = 16, ADataCapacity = 1024)` | an empty list | any |
-| `Clear` | removes every entry; keeps capacity | one thread at a time |
-| `Add(Name, Value)` (2 overloads), `Append(Name, Value)` | append a field; validate; `EInvalidHeader` | one thread at a time |
-| `Insert(Name, Value)` (2 overloads) | set the only value of `Name`; validate | one thread at a time |
-| `SetValue(I, Value)` (2 overloads) | replace a value; validate | one thread at a time |
-| `TryAdd`, `TryInsert`, `TrySetValue` | the same without exceptions: `THeaderCheck` | one thread at a time |
-| `AddTrusted` (2 overloads), `InsertTrusted` (2 overloads), `SetValueTrusted` | no validation | one thread at a time |
-| `AddExternal(NameOfs, NameLen, ValueOfs, ValueLen)` | a field whose bytes stay in the external buffer (the parser uses it) | one thread at a time |
-| `Delete(I)`, `Remove(Name): SizeInt` | remove entries | one thread at a time |
-| `SetExternalBase(Base)`, `Detach`, `ExternalBase` | the external buffer (parser side) | one thread at a time |
-| `IndexOf` (2 overloads), `LastIndexOf`, `Contains`, `CountOf`, `Get`, `GetValue` | lookups (case-insensitive) | one thread at a time |
-| `NamePtr`, `NameLen`, `ValuePtr`, `ValueLen`, `Name`, `Value`, `NameIs` | entry access | one thread at a time |
-| `WireLength`, `WriteTo(Dst, NameCase)`, `AppendTo(var Buf, var Len, NameCase)` | serialization as `name: value\r\n` lines | one thread at a time |
-| `Count`, `Entries[I]` | the entries (`THttpHeaderEntry`) | one thread at a time |
-| `THeaderNameCase` | `hncLower`, `hncTitle`, `hncAsIs` | - |
-| `THeaderCheck`, `EInvalidHeader` (`Check`) | the validation result and exception | - |
-| `IsValidHeaderName`, `IsValidHeaderValue`, `CheckHeaderField`, `RaiseInvalidHeader`, `IsVisibleAscii` | the checks | any |
-| `AsciiLower`, `AsciiEqualIgnoreCase`, `AsciiEqualIgnoreCaseStr`, `WriteTitleCase`, `WriteDecimal`, `FromDigits` | byte helpers | any |
-| `ConnectionKeepAlive`, `ConnectionClose`, `ConnectionHas`, `ConnectionAnyClose`, `TeIsTrailers`, `HeaderValueListHas`, `ContentLengthParse`, `ContentLengthParseAll`, `TransferEncodingIsChunked`, `IsChunkedValue` | interpretation of header values | any |
-| `HN_*` constants, `DEFAULT_MAX_HEADERS`, `MAX_HEADER_NAME_LEN` | lowercase header names and limits | - |
-| `ValidatingMutatorCalls` | `-Sa` builds only: a counter for tests | any (atomic) |
+Member | Description | Thread
+------ | ----------- | ------
+`THttpHeaders.Create(AEntryCapacity = 16, ADataCapacity = 1024)` | an empty list | any
+`Clear` | removes every entry; keeps capacity | one thread at a time
+`Add(Name, Value)` (2 overloads), `Append(Name, Value)` | append a field; validate; `EInvalidHeader` | one thread at a time
+`Insert(Name, Value)` (2 overloads) | set the only value of `Name`; validate | one thread at a time
+`SetValue(I, Value)` (2 overloads) | replace a value; validate | one thread at a time
+`TryAdd`, `TryInsert`, `TrySetValue` | the same without exceptions: `THeaderCheck` | one thread at a time
+`AddTrusted` (2 overloads), `InsertTrusted` (2 overloads), `SetValueTrusted` | no validation | one thread at a time
+`AddExternal(NameOfs, NameLen, ValueOfs, ValueLen)` | a field whose bytes stay in the external buffer (the parser uses it) | one thread at a time
+`Delete(I)`, `Remove(Name): SizeInt` | remove entries | one thread at a time
+`SetExternalBase(Base)`, `Detach`, `ExternalBase` | the external buffer (parser side) | one thread at a time
+`IndexOf` (2 overloads), `LastIndexOf`, `Contains`, `CountOf`, `Get`, `GetValue` | lookups (case-insensitive) | one thread at a time
+`NamePtr`, `NameLen`, `ValuePtr`, `ValueLen`, `Name`, `Value`, `NameIs` | entry access | one thread at a time
+`WireLength`, `WriteTo(Dst, NameCase)`, `AppendTo(var Buf, var Len, NameCase)` | serialization as `name: value\r\n` lines | one thread at a time
+`Count`, `Entries[I]` | the entries (`THttpHeaderEntry`) | one thread at a time
+`THeaderNameCase` | `hncLower`, `hncTitle`, `hncAsIs` | -
+`THeaderCheck`, `EInvalidHeader` (`Check`) | the validation result and exception | -
+`IsValidHeaderName`, `IsValidHeaderValue`, `CheckHeaderField`, `RaiseInvalidHeader`, `IsVisibleAscii` | the checks | any
+`AsciiLower`, `AsciiEqualIgnoreCase`, `AsciiEqualIgnoreCaseStr`, `WriteTitleCase`, `WriteDecimal`, `FromDigits` | byte helpers | any
+`ConnectionKeepAlive`, `ConnectionClose`, `ConnectionHas`, `ConnectionAnyClose`, `TeIsTrailers`, `HeaderValueListHas`, `ContentLengthParse`, `ContentLengthParseAll`, `TransferEncodingIsChunked`, `IsChunkedValue` | interpretation of header values | any
+`HN_*` constants, `DEFAULT_MAX_HEADERS`, `MAX_HEADER_NAME_LEN` | lowercase header names and limits | -
+`ValidatingMutatorCalls` | `-Sa` builds only: a counter for tests | any (atomic)
 
 ### bearings.http1.config
 
-| Member | Description | Thread |
-|--------|-------------|--------|
-| `TH1Config` | the connection options (section 2) | plain value |
-| `TH1ConnMode` | `cmPlain`, `cmWithUpgrades`, `cmWithoutShutdown` | - |
-| `TTimeoutSetting` | `tsDefault`, `tsDisabled`, `tsMs` | - |
-| `ConformanceH1Config`, `ProductionH1Config` | the presets | any |
-| `ValidateH1Config(C, out Msg): Boolean` | checks a configuration | any |
-| `ApplyH1Config(C, var Conn)` | applies it to a connection; `TServer` calls it | internal (loop) |
+Member | Description | Thread
+------ | ----------- | ------
+`TH1Config` | the connection options (section 2) | plain value
+`TH1ConnMode` | `cmPlain`, `cmWithUpgrades`, `cmWithoutShutdown` | -
+`TTimeoutSetting` | `tsDefault`, `tsDisabled`, `tsMs` | -
+`ConformanceH1Config`, `ProductionH1Config` | the presets | any
+`ValidateH1Config(C, out Msg): Boolean` | checks a configuration | any
+`ApplyH1Config(C, var Conn)` | applies it to a connection; `TServer` calls it | internal (loop)
 
 ### bearings.rt.stream
 
-| Member | Description | Thread |
-|--------|-------------|--------|
-| `TRawListener.Readable(U)`, `Writable(U)` | callbacks of an attached stream | loop |
-| `TRawListener.Shutdown(U)` | the server stops gracefully; default `U.Close` | loop |
-| `TRawListener.Aborted(U)` | the stream is closed by force; release and do not use `U` after it | loop |
-| `TUpgraded.Track(List)`, `Shutdown`, `TUpgradedList` | the server's per-loop list of upgraded streams and its graceful stop | loop |
-| `TUpgraded.CreateFrom(Loop, Transport, Rest, FromSrc, OwnsTransport)` | the hand-off constructor (the dispatcher, or an `OnParts` receiver) | loop |
-| `TUpgraded.Transport` | the transport | loop |
-| `TUpgraded.Run`, `Abort` | the loop task's entry points | internal |
-| `TUpgraded.Leftover(out P, out Len)`, `ConsumeLeftover(N)` | the bytes read before the hand-off | loop |
-| `TUpgraded.Attach(L)` | stay on the loop with callbacks; nil removes them | loop |
-| `TUpgraded.TryRead(Buf, Max)`, `TryWrite(Buf, Len)` | non-blocking socket calls; `> 0`, `0` EOF, `-errno` | loop |
-| `TUpgraded.Detach(out Fd, out Rest): Boolean` | leave the loop; the caller owns the blocking `Fd` | loop (then `Fd`: any) |
-| `TUpgraded.Close` | closes the socket and the task | loop |
-| `TUpgraded.Taken: Boolean` | attached, detached or closed | loop |
+Member | Description | Thread
+------ | ----------- | ------
+`TRawListener.Readable(U)`, `Writable(U)` | callbacks of an attached stream | loop
+`TRawListener.Shutdown(U)` | the server stops gracefully; default `U.Close` | loop
+`TRawListener.Aborted(U)` | the stream is closed by force; release and do not use `U` after it | loop
+`TUpgraded.Track(List)`, `Shutdown`, `TUpgradedList` | the server's per-loop list of upgraded streams and its graceful stop | loop
+`TUpgraded.CreateFrom(Loop, Transport, Rest, FromSrc, OwnsTransport)` | the hand-off constructor (the dispatcher, or an `OnParts` receiver) | loop
+`TUpgraded.Transport` | the transport | loop
+`TUpgraded.Run`, `Abort` | the loop task's entry points | internal
+`TUpgraded.Leftover(out P, out Len)`, `ConsumeLeftover(N)` | the bytes read before the hand-off | loop
+`TUpgraded.Attach(L)` | stay on the loop with callbacks; nil removes them | loop
+`TUpgraded.TryRead(Buf, Max)`, `TryWrite(Buf, Len)` | non-blocking socket calls; `> 0`, `0` EOF, `-errno` | loop
+`TUpgraded.Detach(out Fd, out Rest): Boolean` | leave the loop; the caller owns the blocking `Fd` | loop (then `Fd`: any)
+`TUpgraded.Close` | closes the socket and the task | loop
+`TUpgraded.Taken: Boolean` | attached, detached or closed | loop
 
 ### bearings.ws.handshake, bearings.ws.conn, bearings.ws.frame
 
-| Member | Description | Thread |
-|--------|-------------|--------|
-| `CheckRequest(Ex, Protocols): TWsHandshake` | checks the opening handshake; `Ok`, `Accept`, `Protocol`, `HttpStatus`, `Text` | loop |
-| `CheckRequest(Ex, Protocols, Origins)` | the same, and refuses (403) an `Origin` not in `Origins` | loop |
-| `CheckHandshake(Method, Version, IsUpgrade, Headers, Protocols)` | the same on the parts of a request | any |
-| `AcceptValue(Key)` | base64(SHA-1(Key + GUID)) | any |
-| `Respond101(Ex, R, H)`, `RespondHandshakeError(Ex, R)` | the answers | loop |
-| `AcceptWebSocket(Ex, R, Handler, Cfg): Boolean` | 101 plus a `TWebSocket` for the connection | loop |
-| `TWebSocketHandler.OnOpen`, `OnText`, `OnBinary`, `OnPong`, `OnWritable`, `OnError`, `OnClose` | the application's callbacks | loop |
-| `TWebSocket.SendText`, `SendBinary`, `SendFrame`, `Ping`, `CloseWith`, `Abort`, `Queued`, `Closing`, `User` | sending and state | loop |
-| `TWebSocket.PostText`, `PostBinary`, `PostFrame`, `AddRef`, `Release` | sending from another thread | any (`AddRef`: loop, or a holder) |
-| `TWsFrame`, `WsTextFrame`, `WsBinaryFrame`, `WsMakeFrame`, `WsFrameValid` | prepared frames for broadcast | any |
-| `TWebSocket.Create(Handler, Cfg, OwnsHandler)`, `Start(U)`, `TWsUpgradeHandler` | for an application with its own `TUpgradeHandler` | loop |
-| `TWsConfig`, `DefaultWsConfig` | limits and timeouts | any |
-| `TWsReader`, `WsEncodeHeader`, `TUtf8Check`, `WS_OP_*`, `WS_CLOSE_*` | the frame layer | any (one reader per connection) |
+Member | Description | Thread
+------ | ----------- | ------
+`CheckRequest(Ex, Protocols): TWsHandshake` | checks the opening handshake; `Ok`, `Accept`, `Protocol`, `HttpStatus`, `Text` | loop
+`CheckRequest(Ex, Protocols, Origins)` | the same, and refuses (403) an `Origin` not in `Origins` | loop
+`CheckHandshake(Method, Version, IsUpgrade, Headers, Protocols)` | the same on the parts of a request | any
+`AcceptValue(Key)` | base64(SHA-1(Key + GUID)) | any
+`Respond101(Ex, R, H)`, `RespondHandshakeError(Ex, R)` | the answers | loop
+`AcceptWebSocket(Ex, R, Handler, Cfg): Boolean` | 101 plus a `TWebSocket` for the connection | loop
+`TWebSocketHandler.OnOpen`, `OnText`, `OnBinary`, `OnPong`, `OnWritable`, `OnError`, `OnClose` | the application's callbacks | loop
+`TWebSocket.SendText`, `SendBinary`, `SendFrame`, `Ping`, `CloseWith`, `Abort`, `Queued`, `Closing`, `User` | sending and state | loop
+`TWebSocket.PostText`, `PostBinary`, `PostFrame`, `AddRef`, `Release` | sending from another thread | any (`AddRef`: loop, or a holder)
+`TWsFrame`, `WsTextFrame`, `WsBinaryFrame`, `WsMakeFrame`, `WsFrameValid` | prepared frames for broadcast | any
+`TWebSocket.Create(Handler, Cfg, OwnsHandler)`, `Start(U)`, `TWsUpgradeHandler` | for an application with its own `TUpgradeHandler` | loop
+`TWsConfig`, `DefaultWsConfig` | limits and timeouts | any
+`TWsReader`, `WsEncodeHeader`, `TUtf8Check`, `WS_OP_*`, `WS_CLOSE_*` | the frame layer | any (one reader per connection)
 
 ### bearings.http.error
 
-| Member | Description | Thread |
-|--------|-------------|--------|
-| `THyperError` and its predicates (`IsParse`, `IsParseTooLarge`, `IsParseVersionH2`, `IsUser`, `IsCanceled`, `IsClosed`, `IsIncompleteMessage`, `IsBodyWriteAborted`, `IsShutdown`, `IsTimeout`, `HasIoSource`) | why an HTTP message failed (section 9) | any (plain value) |
-| `THyperErrorKind`, `THyperUserKind`, `TErrorCause` | its enumerations | - |
-| `TPollResult` (`prOk`, `prErr`, `prPending`), `TPollOpt` (`poSome`, `poErr`, `poNone`, `poPending`) | results of the connection code's poll routines | internal |
-| `EH1Panic` | a program error inside the HTTP/1 code | - |
-| `TConnOutcome` | how a connection ended | - |
-| `New*` (`NewParse`, `NewIncomplete`, `NewTooLarge`, `NewVersionH2`, `NewIo`, `NewHeaderTimeout`, `NewBodyDecode`, `NewBodyIo`, `NewBodyStatic`, `NewBodyWrite`, `NewBodyWriteAborted`, `NewShutdown`, `NewUserService`, `NewUserBody`, `NewUserHeader`, `NewUserUnsupportedStatusCode`, `NewUserManualUpgrade`, `NewClosed`) | constructors of error values (the connection code uses them) | any |
-| `ErrorDescription(E, ConnText): string` | the log text of an error | any |
-| `OutcomeOf(R, E): TConnOutcome` | maps a result to an outcome | any |
+Member | Description | Thread
+------ | ----------- | ------
+`THyperError` and its predicates (`IsParse`, `IsParseTooLarge`, `IsParseVersionH2`, `IsUser`, `IsCanceled`, `IsClosed`, `IsIncompleteMessage`, `IsBodyWriteAborted`, `IsShutdown`, `IsTimeout`, `HasIoSource`) | why an HTTP message failed (section 9) | any (plain value)
+`THyperErrorKind`, `THyperUserKind`, `TErrorCause` | its enumerations | -
+`TPollResult` (`prOk`, `prErr`, `prPending`), `TPollOpt` (`poSome`, `poErr`, `poNone`, `poPending`) | results of the connection code's poll routines | internal
+`EH1Panic` | a program error inside the HTTP/1 code | -
+`TConnOutcome` | how a connection ended | -
+`New*` (`NewParse`, `NewIncomplete`, `NewTooLarge`, `NewVersionH2`, `NewIo`, `NewHeaderTimeout`, `NewBodyDecode`, `NewBodyIo`, `NewBodyStatic`, `NewBodyWrite`, `NewBodyWriteAborted`, `NewShutdown`, `NewUserService`, `NewUserBody`, `NewUserHeader`, `NewUserUnsupportedStatusCode`, `NewUserManualUpgrade`, `NewClosed`) | constructors of error values (the connection code uses them) | any
+`ErrorDescription(E, ConnText): string` | the log text of an error | any
+`OutcomeOf(R, E): TConnOutcome` | maps a result to an outcome | any
 
 ### Also used directly
 

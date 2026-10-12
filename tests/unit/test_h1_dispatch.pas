@@ -207,6 +207,9 @@ type
     procedure Without_shutdown_parts;
     procedure Idle_releases_exchange_and_blocks;
     procedure Header_read_timeout;
+    procedure Body_rate_rule_outcome_io;
+    procedure Body_framing_error_outcome_io;
+    procedure Body_socket_error_outcome_io;
     procedure Stream_body_error_is_user;
     procedure Http10_closes;
     procedure Write_error_ends_connection;
@@ -1234,6 +1237,62 @@ begin
   AssertTrue('done', Done);
   AssertTrue('outcome timeout', FObs.Outcome = coTimeout);
   AssertEquals('nothing written', '', FIo.Written);
+end;
+
+procedure TTestDispatchBehavior.Body_rate_rule_outcome_io;
+begin
+  { docs/design.md 5.7: the body rate rule fails the body; the handler sees
+    the error and answers, the response is written and the socket shut
+    down, and the connection ends with the stored error: outcome io }
+  FCfg.Timer := True;
+  FCfg.BodyReadTimeoutMs := 20;
+  FSvc.ReadBody := True;
+  FSvc.Status := 408;
+  FIo.AddRead('POST / HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Content-Length: 6' + CRLF + CRLF + 'ab');
+  Start;
+  Drive;
+  AssertFalse('waiting for the body', FD.Closed);
+  { real time: RunIteration samples the clock, and the rule compares it }
+  Sleep(30);
+  FLoop.Timers.Advance(FLoop.NowMs + 100);  { the body timer wakes the task }
+  AssertTrue('woken', FD.Queued);
+  Drive;
+  AssertTrue('done', Done);
+  AssertEquals('body read before the error', 'ab', FSvc.LastBody);
+  AssertTrue('408 written: ' + FIo.Written, Pos('HTTP/1.1 408', FIo.Written) = 1);
+  AssertEquals('shutdown after the response', 1, FIo.ShutdownCalls);
+  AssertTrue('outcome io', FObs.Outcome = coIo);
+end;
+
+procedure TTestDispatchBehavior.Body_framing_error_outcome_io;
+begin
+  { a malformed chunk size: the handler sees the body error and answers,
+    and the connection ends with the stored error (hyper: Ok) }
+  FSvc.ReadBody := True;
+  FSvc.Status := 400;
+  FIo.AddRead('POST / HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Transfer-Encoding: chunked' + CRLF + CRLF +
+    '2' + CRLF + 'ab' + CRLF + 'zz' + CRLF);
+  Start;
+  Drive;
+  AssertTrue('done', Done);
+  AssertEquals('body read before the error', 'ab', FSvc.LastBody);
+  AssertTrue('400 written: ' + FIo.Written, Pos('HTTP/1.1 400', FIo.Written) = 1);
+  AssertEquals('shutdown after the response', 1, FIo.ShutdownCalls);
+  AssertTrue('outcome io', FObs.Outcome = coIo);
+end;
+
+procedure TTestDispatchBehavior.Body_socket_error_outcome_io;
+begin
+  { a socket error in the middle of the body: as above }
+  FSvc.ReadBody := True;
+  FSvc.Status := 400;
+  FIo.AddRead('POST / HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Content-Length: 6' + CRLF + CRLF + 'ab');
+  FIo.AddReadError(ESysECONNRESET);
+  Start;
+  Drive;
+  AssertTrue('done', Done);
+  AssertEquals('body read before the error', 'ab', FSvc.LastBody);
+  AssertTrue('outcome io', FObs.Outcome = coIo);
 end;
 
 procedure TTestDispatchBehavior.Stream_body_error_is_user;

@@ -21,9 +21,9 @@
   TTestH1Config: bearings.http1.config. TTestHyperError: bearings.http.error.
   TTestConnBodyRate (step UB): the body rate rule (docs/design.md 5.7): off by
   default, one wait of BodyTimeoutMs fails the body (ETIMEDOUT, Reading
-  closed, the owner woken by the timer), a frame restarts the wait, time
-  the server does not read is not counted, the average-rate part, the
-  config fields, defaults and validation.
+  closed, the owner woken by the timer, the error kept for TakeError), a
+  frame restarts the wait, time the server does not read is not counted,
+  the average-rate part, the config fields, defaults and validation.
   Run: test_h1_conn --all --format=plain }
 program test_h1_conn;
 
@@ -2079,7 +2079,9 @@ begin
 end;
 
 procedure TTestConnBodyRate.One_wait_fails_the_body;
-var S: RawByteString;
+var
+  S: RawByteString;
+  E2: THyperError;
 begin
   PostHead(5, 'ab');
   FMock.ReadPending.ReadPending.ReadPending;
@@ -2101,6 +2103,7 @@ begin
     and (FErr.Errno = ESysETIMEDOUT));
   AssertTrue('reading closed', FConn.State.Reading = rdClosed);
   AssertTrue('outcome io (not a header timeout)', OutcomeOf(prErr, FErr) = coIo);
+  AssertTrue('kept for TakeError', FConn.TakeError(E2) and (E2.Errno = ESysETIMEDOUT));
   AssertFalse('nothing written', FConn.HasBufferedWrite);
 end;
 

@@ -251,7 +251,8 @@ type
       out Errno: cint): TDecodeFrame;
     { Reads the next piece of the request body. poSome: Frame is data (a
       pinned view) or trailers; poNone: the body ended; poPending: wait.
-      Trailers: where a trailer frame goes (nil: validated and dropped). }
+      Trailers: where a trailer frame goes (nil: validated and dropped).
+      poErr: Err set, and stored for TakeError too. }
     function PollReadBody(Trailers: THttpHeaders; out Frame: TInFrame; var Err: THyperError): TPollOpt;
     { returns NotifyRead and clears it }
     function WantsReadAgain: Boolean;
@@ -942,6 +943,16 @@ begin
       Exit(poNone);
     end;
   end;
+  if Ret = poErr then
+  begin
+    { the body failed (rate rule, framing, socket): the receiver gets Err,
+      and the connection keeps it too (TakeError after the response and
+      the shutdown), so the outcome is io. hyper gives a body error to the
+      receiver only and ends the connection with Ok (docs/design.md
+      section 10) }
+    State.Error := Err;
+    State.HasError := True;
+  end;
   { the body may have ended: start the next request if the response is
     done too }
   TryKeepAlive;
@@ -1486,7 +1497,8 @@ begin
       case the body is small }
     State.Reading := rdBody;
   Err := Default(THyperError);
-  { the frame and any error are discarded }
+  { the frame is discarded; an error (malformed framing, a socket error)
+    stays with the connection for TakeError }
   PollReadBody(nil, Frame, Err);
   if Frame.Data.Block <> nil then
     Frame.Data.Release;

@@ -654,6 +654,44 @@ fn known_deviation(spec: &Value, half_close: bool, data: &[u8], a: &Outcome, b: 
             return Some("S6-15");
         }
     }
+    // BODY-ERR (docs/design.md section 10): a request body error (framing,
+    // socket, the body rate rule), whether the handler reads it or the
+    // server drains the body, ends the connection Ok on hyper (the error
+    // goes to the body receiver only) and io on bearings (the connection
+    // keeps it). Recognized when everything but the last outcome is the
+    // same, hyper's outcome is ok, bearings' is io, and the last request has
+    // a body (content-length or transfer-encoding).
+    let has_body = |o: &Outcome| {
+        o.events.iter().rev().find(|e| e["event"] == "request").map_or(false, |e| {
+            e["headers"].as_array().map_or(false, |h| {
+                h.iter().any(|f| {
+                    let n = f[0].as_str().unwrap_or("").to_ascii_lowercase();
+                    n == "content-length" || n == "transfer-encoding"
+                })
+            })
+        })
+    };
+    if a.responses == b.responses
+        && a.rest == b.rest
+        && a.end == b.end
+        && a.events.len() == b.events.len()
+        && !a.events.is_empty()
+        && a.events[..a.events.len() - 1] == b.events[..b.events.len() - 1]
+        && has_body(b)
+        && last(a) == json!("ok")
+        && last(b) == json!("io")
+    {
+        let strip = |e: &Value| {
+            let mut e = e.clone();
+            if let Some(m) = e.as_object_mut() {
+                m.remove("outcome");
+            }
+            e
+        };
+        if strip(a.events.last().unwrap()) == strip(b.events.last().unwrap()) {
+            return Some("BODY-ERR");
+        }
+    }
     // S9-11: a 100 Continue that hyper leaves in its write buffer when the
     // body read then fails at the client's EOF (the handler fails, outcome
     // user, nothing flushed); bearings writes it before it closes. Recognized
