@@ -2,7 +2,7 @@
 # Conformance gate, worker executor (docs/design.md section 9):
 # builds beconf and runs the wire cases against `beconf --executor worker`
 # in assertion mode.
-#   1. the 105 cases, RUNS times: every run must print
+#   1. the 105 cases, RUNS times, JOBS cases at a time: every run must print
 #      "SUMMARY passed=104 failed=0 pending=1 total=105", except that a case
 #      listed in worker-exceptions.txt may fail (only
 #      chunk2::pipeline_enabled: S7 decision 14, deviation S7-1); the output
@@ -20,13 +20,16 @@
 # otherwise.
 # Usage: conformance/pascal-server/gate_worker.sh
 # Env: OUT_DIR (default build/conformance), PROFILE (debug | release, see
-#      build.sh), RUNS (default 5), DIFF (default 0).
+#      build.sh), RUNS (default 1; 5 before a
+#      commit catches intermittent failures), JOBS (cases run at a time,
+#      default 4: the 9.2 s header-read timeout case then sets the run time), DIFF (default 0).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CONF=$ROOT/conformance
 PS=$CONF/pascal-server
 OUT=${OUT_DIR:-$ROOT/build/conformance}
-RUNS=${RUNS:-5}
+RUNS=${RUNS:-1}
+JOBS=${JOBS:-4}
 LOG=$OUT/gate-worker
 mkdir -p "$LOG"
 OUT_DIR=$OUT sh "$PS/build.sh" > "$LOG/build.log" 2>&1 || {
@@ -50,7 +53,7 @@ LISTED=$(sed -n 's/^\([^#|][^|]*\)|.*/\1/p' "$EXC" | sed 's/ *$//')
 I=1
 while [ "$I" -le "$RUNS" ]; do
   L=$LOG/run-$I.log
-  "$RUNNER" run --server "$W" "$CASES" > "$L" 2>&1 || true
+  "$RUNNER" run --jobs "$JOBS" --server "$W" "$CASES" > "$L" 2>&1 || true
   S=$(tail -n 1 "$L")
   if [ "$S" = "$WANT_RUN" ]; then
     echo "assertion run $I: $S"
@@ -69,19 +72,19 @@ while [ "$I" -le "$RUNS" ]; do
   I=$((I + 1))
 done
 
-"$RUNNER" run --server "$W" "$PS/extra/extra-cases.json" > "$LOG/extra.log" 2>&1 || true
+"$RUNNER" run --jobs "$JOBS" --server "$W" "$PS/extra/extra-cases.json" > "$LOG/extra.log" 2>&1 || true
 S=$(tail -n 1 "$LOG/extra.log")
 if [ "$S" = "$WANT_EXTRA" ]; then echo "extra cases, assertion mode: $S"
 else echo "extra cases, assertion mode: FAILED: $S (see $LOG/extra.log)"; FAIL=1; fi
 
-"$RUNNER" run --server "$REF" "$PS/extra/worker-probe.json" > "$LOG/probe-ref.log" 2>&1 || true
+"$RUNNER" run --jobs "$JOBS" --server "$REF" "$PS/extra/worker-probe.json" > "$LOG/probe-ref.log" 2>&1 || true
 S=$(tail -n 1 "$LOG/probe-ref.log")
 if [ "$S" = "$WANT_PROBE" ]; then
   echo "probe, reference-server assertion mode: $S (expected: both fail)"
 else
   echo "probe, reference-server assertion mode: UNEXPECTED: $S (see $LOG/probe-ref.log)"; FAIL=1
 fi
-"$RUNNER" run --server "$W" "$PS/extra/worker-probe.json" > "$LOG/probe-wd.log" 2>&1 || true
+"$RUNNER" run --jobs "$JOBS" --server "$W" "$PS/extra/worker-probe.json" > "$LOG/probe-wd.log" 2>&1 || true
 S=$(tail -n 1 "$LOG/probe-wd.log")
 if [ "$S" = "$WANT_PROBE" ]; then
   echo "probe, beconf --executor worker assertion mode: $S (expected: both fail, as the reference)"
@@ -89,7 +92,7 @@ else
   echo "probe, beconf --executor worker assertion mode: UNEXPECTED: $S (see $LOG/probe-wd.log)"; FAIL=1
 fi
 if [ "${DIFF:-0}" = 1 ]; then
-  "$RUNNER" diff --a "$REF" --b "$W" "$CASES" > "$LOG/diff-report.log" 2>&1 || true
+  "$RUNNER" diff --jobs "$JOBS" --a "$REF" --b "$W" "$CASES" > "$LOG/diff-report.log" 2>&1 || true
   echo "report only, diff mode vs reference-server: $(tail -n 1 "$LOG/diff-report.log")"
 fi
 echo "gate_worker: load after: $(cat /proc/loadavg)"

@@ -1,7 +1,7 @@
 //! Conformance runner. See ../SPEC.md.
 //!
-//!   runner run  [--server CMD] [--filter S] [-v] PATH...
-//!   runner diff --a CMD --b CMD [--filter S] [-v] PATH...
+//!   runner run  [--server CMD] [--filter S] [--jobs N] [-v] PATH...
+//!   runner diff --a CMD --b CMD [--filter S] [--jobs N] [-v] PATH...
 //!   runner list [--filter S] PATH...
 
 mod assert;
@@ -15,6 +15,7 @@ mod tokiort;
 use case::{run_case, validate_case, CaseResult, Mode};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 struct Opts {
@@ -23,17 +24,19 @@ struct Opts {
     a: Option<String>,
     b: Option<String>,
     filters: Vec<String>,
+    jobs: usize,
     verbose: bool,
     paths: Vec<PathBuf>,
 }
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  runner run  [--server CMD] [--filter S]... [-v] PATH...\n  \
-         runner diff --a CMD --b CMD [--filter S]... [-v] PATH...\n  \
+        "usage:\n  runner run  [--server CMD] [--filter S]... [--jobs N] [-v] PATH...\n  \
+         runner diff --a CMD --b CMD [--filter S]... [--jobs N] [-v] PATH...\n  \
          runner list [--filter S]... PATH...\n\
          PATH is a case file or a directory searched recursively for *.json.\n\
          CMD is a shell command line; the runner appends `--config <file>`.\n\
+         --jobs N runs N cases at a time (default 1); the output keeps the case order.\n\
          Default --server: the reference-server binary next to this runner."
     );
     std::process::exit(2);
@@ -48,6 +51,7 @@ fn parse_args() -> Opts {
         a: None,
         b: None,
         filters: vec![],
+        jobs: 1,
         verbose: false,
         paths: vec![],
     };
@@ -57,6 +61,15 @@ fn parse_args() -> Opts {
             "--a" => o.a = Some(args.next().unwrap_or_else(|| usage())),
             "--b" => o.b = Some(args.next().unwrap_or_else(|| usage())),
             "--filter" => o.filters.push(args.next().unwrap_or_else(|| usage())),
+            "--jobs" => {
+                o.jobs = match args.next().and_then(|n| n.parse::<usize>().ok()) {
+                    Some(n) if n >= 1 => n,
+                    _ => {
+                        eprintln!("--jobs needs a number >= 1");
+                        usage()
+                    }
+                }
+            }
             "-v" | "--verbose" => o.verbose = true,
             "-h" | "--help" => usage(),
             s if s.starts_with('-') => {
@@ -167,54 +180,99 @@ fn pending_reason(c: &Value) -> Option<String> {
     }
 }
 
-fn print_failure(r: &CaseResult) {
+fn write_failure(out: &mut String, r: &CaseResult) {
     for f in &r.failures {
-        println!("    {f}");
+        let _ = writeln!(out, "    {f}");
     }
-    println!("    server events:");
+    let _ = writeln!(out, "    server events:");
     for e in &r.events {
-        println!("      {e}");
+        let _ = writeln!(out, "      {e}");
     }
     let err = r.stderr.trim();
     if !err.is_empty() {
-        println!("    server stderr (last 2000 bytes):");
+        let _ = writeln!(out, "    server stderr (last 2000 bytes):");
         let tail = &err[err.len().saturating_sub(2000)..];
         for l in tail.lines() {
-            println!("      {l}");
+            let _ = writeln!(out, "      {l}");
         }
     }
+}
+
+/// Run `work(i)` for i in 0..n on `jobs` threads and pass the results to
+/// `emit` in index order, each as soon as it and every earlier one are done.
+fn run_ordered<T: Send>(n: usize, jobs: usize, work: impl Fn(usize) -> T + Sync, mut emit: impl FnMut(T)) {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let (tx, rx) = std::sync::mpsc::channel::<(usize, T)>();
+    std::thread::scope(|s| {
+        for _ in 0..jobs.min(n) {
+            let tx = tx.clone();
+            let (next, work) = (&next, &work);
+            s.spawn(move || loop {
+                let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if i >= n || tx.send((i, work(i))).is_err() {
+                    break;
+                }
+            });
+        }
+        drop(tx);
+        let mut done: BTreeMap<usize, T> = BTreeMap::new();
+        let mut want = 0;
+        for (i, t) in rx {
+            done.insert(i, t);
+            while let Some(t) = done.remove(&want) {
+                emit(t);
+                want += 1;
+            }
+        }
+    });
+}
+
+/// How one case ended, for the SUMMARY counts.
+enum Outcome {
+    Passed,
+    Failed,
+    Pending,
+    Invalid,
 }
 
 fn cmd_run(o: &Opts) -> i32 {
     let server = o.server.clone().unwrap_or_else(default_server);
     let cases = load_cases(&o.paths, &o.filters);
     let (mut passed, mut failed, mut pending) = (0, 0, 0);
-    for lc in &cases {
+    let work = |i: usize| {
+        let lc = &cases[i];
+        let mut out = String::new();
         if let Some(e) = &lc.invalid {
-            failed += 1;
-            println!("FAIL {} (invalid case)\n    {e}", lc.id);
-            continue;
+            let _ = writeln!(out, "FAIL {} (invalid case)\n    {e}", lc.id);
+            return (Outcome::Failed, out);
         }
         if let Some(reason) = pending_reason(&lc.case) {
-            pending += 1;
-            println!("PEND {}: {reason}", lc.id);
-            continue;
+            let _ = writeln!(out, "PEND {}: {reason}", lc.id);
+            return (Outcome::Pending, out);
         }
         let r = run_case(&lc.case, &server, Mode::Assert, o.verbose);
         if r.failures.is_empty() {
-            passed += 1;
-            println!("PASS {} ({} ms)", lc.id, r.elapsed.as_millis());
+            let _ = writeln!(out, "PASS {} ({} ms)", lc.id, r.elapsed.as_millis());
             if o.verbose {
                 for e in &r.events {
-                    println!("      {e}");
+                    let _ = writeln!(out, "      {e}");
                 }
             }
+            (Outcome::Passed, out)
         } else {
-            failed += 1;
-            println!("FAIL {} ({} ms)", lc.id, r.elapsed.as_millis());
-            print_failure(&r);
+            let _ = writeln!(out, "FAIL {} ({} ms)", lc.id, r.elapsed.as_millis());
+            write_failure(&mut out, &r);
+            (Outcome::Failed, out)
         }
-    }
+    };
+    run_ordered(cases.len(), o.jobs, work, |(outcome, out)| {
+        match outcome {
+            Outcome::Passed => passed += 1,
+            Outcome::Pending => pending += 1,
+            Outcome::Failed | Outcome::Invalid => failed += 1,
+        }
+        print!("{out}");
+    });
     println!(
         "SUMMARY passed={passed} failed={failed} pending={pending} total={}",
         cases.len()
@@ -289,16 +347,16 @@ fn cmd_diff(o: &Opts) -> i32 {
     };
     let cases = load_cases(&o.paths, &o.filters);
     let (mut same, mut different, mut pending, mut invalid) = (0, 0, 0, 0);
-    for lc in &cases {
+    let work = |i: usize| {
+        let lc = &cases[i];
+        let mut out = String::new();
         if let Some(e) = &lc.invalid {
-            invalid += 1;
-            println!("INVALID {}\n    {e}", lc.id);
-            continue;
+            let _ = writeln!(out, "INVALID {}\n    {e}", lc.id);
+            return (Outcome::Invalid, out);
         }
         if let Some(reason) = pending_reason(&lc.case) {
-            pending += 1;
-            println!("PEND {}: {reason}", lc.id);
-            continue;
+            let _ = writeln!(out, "PEND {}: {reason}", lc.id);
+            return (Outcome::Pending, out);
         }
         let ra = run_case(&lc.case, &a, Mode::Transcript, o.verbose);
         let rb = run_case(&lc.case, &b, Mode::Transcript, o.verbose);
@@ -326,25 +384,35 @@ fn cmd_diff(o: &Opts) -> i32 {
         }
         let fa = ra.failures.len();
         let fb = rb.failures.len();
-        if diffs.is_empty() {
-            same += 1;
-            println!("SAME {} (assertion failures: A={fa} B={fb})", lc.id);
+        let outcome = if diffs.is_empty() {
+            let _ = writeln!(out, "SAME {} (assertion failures: A={fa} B={fb})", lc.id);
+            Outcome::Passed
         } else {
-            different += 1;
-            println!("DIFF {} (assertion failures: A={fa} B={fb})", lc.id);
+            let _ = writeln!(out, "DIFF {} (assertion failures: A={fa} B={fb})", lc.id);
             for d in diffs {
-                println!("    {d}");
+                let _ = writeln!(out, "    {d}");
             }
-        }
+            Outcome::Failed
+        };
         if o.verbose {
             for f in &ra.failures {
-                println!("    A failure: {f}");
+                let _ = writeln!(out, "    A failure: {f}");
             }
             for f in &rb.failures {
-                println!("    B failure: {f}");
+                let _ = writeln!(out, "    B failure: {f}");
             }
         }
-    }
+        (outcome, out)
+    };
+    run_ordered(cases.len(), o.jobs, work, |(outcome, out)| {
+        match outcome {
+            Outcome::Passed => same += 1,
+            Outcome::Failed => different += 1,
+            Outcome::Pending => pending += 1,
+            Outcome::Invalid => invalid += 1,
+        }
+        print!("{out}");
+    });
     println!(
         "SUMMARY same={same} different={different} pending={pending} invalid={invalid} total={}",
         cases.len()

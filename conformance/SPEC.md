@@ -50,6 +50,7 @@ cargo build --release                     # builds target/release/{runner,refere
 target/release/runner run cases/h1                         # default server: target/release/reference-server
 target/release/runner run --server 'path/to/pascal-server' cases/h1
 target/release/runner run --filter pipeline cases/h1/chunk2.json -v
+target/release/runner run --jobs 4 --server 'path/to/pascal-server' cases/h1   # 4 cases at a time
 
 # diff mode: run every case against two servers and compare transcripts
 target/release/runner diff --a target/release/reference-server --b 'path/to/pascal-server' cases/h1
@@ -67,6 +68,9 @@ target/release/runner list cases/h1
   `sh -c 'exec CMD "$@"' sh --config <tmpfile>`, which appends `--config <tmpfile>` to CMD.
 - `--filter S` (repeatable): run only cases whose `<file path>::<case name>` contains `S`. With
   several filters, a case runs if any filter matches.
+- `--jobs N` (default 1): run N cases at a time, each against its own server process. The output
+  keeps the case order: a case's lines are printed when it and every case before it are done.
+  With `-v` and N > 1 the stderr transcript entries of different cases interleave.
 - `-v`: print every step's transcript entry (stderr) and the server events of passing cases.
 
 Output of `run`: one line per case, `PASS <id> (<ms> ms)`, `FAIL <id> (<ms> ms)` followed by

@@ -1012,8 +1012,9 @@ server; `reference-server` is hyper itself. The Pascal conformance server
 `bearings.server`: everything on the wire comes from the library, the
 wrapper only configures the connection from the spec, installs the named
 handler and reports events. `conformance/pascal-server/gate.sh` runs the
-cases in assertion mode five times and requires `passed=104 failed=0
-pending=1` every time (one case is pending by design in `MANIFEST.md`), then
+cases in assertion mode, four cases at a time (`JOBS`), once by default
+(`RUNS=5` before a commit catches intermittent failures), and requires
+`passed=104 failed=0 pending=1` every time (one case is pending by design in `MANIFEST.md`), then
 the 25 extra cases of `extra/extra-cases.json` (behaviours the 105 do not
 reach); `LOOPS=4` runs the same with four loops sharing one listener.
 `gate_worker.sh` runs it with every handler on a worker; one case,

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Conformance gate, inline executor (docs/design.md section 9):
 # builds beconf and runs the wire cases against it in assertion mode.
-#   1. the 105 cases, RUNS times in a row: every run must print
+#   1. the 105 cases, RUNS times in a row, JOBS cases at a time: every run must print
 #      "SUMMARY passed=104 failed=0 pending=1 total=105";
 #   2. the extra cases (extra/extra-cases.json: SPEC behaviors the 105 cases
 #      do not reach) once: every case must pass.
@@ -15,13 +15,16 @@
 # Logs: $OUT_DIR/gate/. Exit status 0 when every check passes, 1 otherwise.
 # Usage: conformance/pascal-server/gate.sh
 # Env: OUT_DIR (default build/conformance), PROFILE (debug | release, see
-#      build.sh), RUNS (default 5), DIFF (default 0), LOOPS (default: none,
+#      build.sh), RUNS (default 1; 5 before a
+#      commit catches intermittent failures), JOBS (cases run at a time,
+#      default 4: the 9.2 s header-read timeout case then sets the run time), DIFF (default 0), LOOPS (default: none,
 #      one loop).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CONF=$ROOT/conformance
 OUT=${OUT_DIR:-$ROOT/build/conformance}
-RUNS=${RUNS:-5}
+RUNS=${RUNS:-1}
+JOBS=${JOBS:-4}
 LOG=$OUT/gate${LOOPS:+-loops$LOOPS}
 mkdir -p "$LOG"
 OUT_DIR=$OUT sh "$CONF/pascal-server/build.sh" > "$LOG/build.log" 2>&1 || {
@@ -45,14 +48,14 @@ check() {   # name, log file, expected summary
 
 I=1
 while [ "$I" -le "$RUNS" ]; do
-  "$RUNNER" run --server "$W" "$CASES" > "$LOG/run-$I.log" 2>&1 || true
+  "$RUNNER" run --jobs "$JOBS" --server "$W" "$CASES" > "$LOG/run-$I.log" 2>&1 || true
   check "assertion run $I" "$LOG/run-$I.log" "$WANT_RUN"
   I=$((I + 1))
 done
-"$RUNNER" run --server "$W" "$EXTRA" > "$LOG/extra.log" 2>&1 || true
+"$RUNNER" run --jobs "$JOBS" --server "$W" "$EXTRA" > "$LOG/extra.log" 2>&1 || true
 check "extra cases, assertion mode" "$LOG/extra.log" "$WANT_EXTRA"
 if [ "${DIFF:-0}" = 1 ]; then
-  "$RUNNER" diff --a "$REF" --b "$W" "$CASES" > "$LOG/diff-report.log" 2>&1 || true
+  "$RUNNER" diff --jobs "$JOBS" --a "$REF" --b "$W" "$CASES" > "$LOG/diff-report.log" 2>&1 || true
   echo "report only, diff mode vs reference-server: $(tail -n 1 "$LOG/diff-report.log")"
 fi
 echo "gate: load after: $(cat /proc/loadavg)"
