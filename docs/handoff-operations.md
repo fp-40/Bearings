@@ -77,9 +77,14 @@ noted.
 
 ### 3.1 Unix domain socket listener
 
-- Extend `TListenSpec` with a path (for example a `UnixPath` field, or a
-  Host of the form `unix:/run/app.sock`; pick one and document it), plus
-  the file mode of the socket file (so the proxy's user can connect).
+- Configuration (decided by the user, 2026-10-11): new `TListenSpec`
+  fields `UnixPath` (a non-empty path selects a Unix socket; Host and Port
+  are then ignored), `UnixMode` (the socket file's permission bits,
+  default `0660`: the owner and the group can connect) and an optional
+  `UnixGroup` (a group name; when set, the socket file's group is changed
+  to it, so for example nginx's group can connect). A `unix:/path` string
+  form is not part of bearings; an application may accept it in its own
+  configuration and fill `UnixPath`.
 - `OpenListener`: `socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK |
   SOCK_CLOEXEC)`, remove a stale socket file before bind (only if it is a
   socket), bind, `chmod`, listen. `SO_REUSEPORT` and `TCP_NODELAY` do not
@@ -250,7 +255,5 @@ noted.
 
 ## 6. Questions to ask the user at the start
 
-1. Unix socket: the configuration form (a path field or `unix:` in Host),
-   and the default file mode.
-2. Connection limit: stop accepting or accept-and-close at the limit? Is
+1. Connection limit: stop accepting or accept-and-close at the limit? Is
    the per-IP limit wanted?
