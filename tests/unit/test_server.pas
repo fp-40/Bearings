@@ -401,6 +401,7 @@ type
     procedure Shared_exclusive_four_loops;
     procedure Run_until_sigterm_in_child;
     procedure Run_until_signal_ends_on_external_stop;
+    procedure Create_with_proc_and_run_until_signal_proc;
   private
     procedure StopAtStart(Server: TServer);
   end;
@@ -993,6 +994,65 @@ begin
   T0 := GetTickCount64;
   AssertEquals('no signal', 0, Srv.RunUntilSignal(@StopAtStart));
   AssertTrue('returned within the 200 ms check', GetTickCount64 - T0 < 2000);
+end;
+
+var
+  ProcFactoryCalls: Integer = 0;
+  ProcStartedPort: Integer = -1;
+
+{ plain routines (not methods) for CreateWithProc and RunUntilSignalProc }
+function ProcNewService(Loop: TLoop): THttpService;
+begin
+  Inc(ProcFactoryCalls);
+  Result := App.NewService(Loop);
+end;
+
+procedure ProcStopAtStart(Server: TServer);
+begin
+  ProcStartedPort := Server.Port;
+  Server.Stop(0);
+end;
+
+procedure TTestServerStop.Create_with_proc_and_run_until_signal_proc;
+var
+  Fd: cint;
+  Got: RawByteString;
+begin
+  { the plain-routine forms: the factory is called once per loop and the
+    Started callback runs after Start }
+  ProcFactoryCalls := 0;
+  ProcStartedPort := -1;
+  Srv := TServer.CreateWithProc(TestConfig(2), @ProcNewService);
+  Srv.Start;
+  AssertEquals('the factory ran once per loop', 2, ProcFactoryCalls);
+  Fd := Connect(Srv.Port);
+  try
+    SendAll(Fd, Get('/mem'));
+    Got := RecvBytes(Fd, Length(Resp(Content)));
+  finally
+    fpClose(Fd);
+  end;
+  AssertTrue('the service answers', Got = Resp(Content));
+  Srv.Stop(1000);
+  Srv.Wait;
+  FreeAndNil(Srv);
+
+  Srv := TServer.CreateWithProc(TestConfig(1), @ProcNewService);
+  AssertEquals('no signal: the Started procedure stopped the server', 0,
+    Srv.RunUntilSignalProc(@ProcStopAtStart));
+  AssertTrue('Started saw the bound port', ProcStartedPort > 0);
+  AssertEquals('port', Srv.Port, ProcStartedPort);
+
+  { neither factory: Start raises }
+  FreeAndNil(Srv);
+  Srv := TServer.CreateWithProc(TestConfig(1), nil);
+  try
+    Srv.Start;
+    Fail('Start without a factory did not raise');
+  except
+    on E: EServerError do
+      AssertTrue(Pos('no service factory', E.Message) > 0);
+  end;
 end;
 
 procedure TTestServerStop.Wait_shuts_worker_pool_down;

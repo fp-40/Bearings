@@ -37,8 +37,8 @@ valgrind, wrk and wrk2, fetched by `tools/get-tools.sh` into
 ## Hello world
 
 A server with the production configuration and one service that answers
-"Hello" to every request. The full program with comments is
-`examples/hello.pas`.
+"Hello" to every request, inline on the loop thread. The full program with
+comments is `examples/hello.pas`.
 
 ```pascal
 program hello;
@@ -67,11 +67,6 @@ type
     function Call(Ex: TExchange): TServiceCall; override;
   end;
 
-  TApp = class
-    Srv: TServer;
-    function NewService(Loop: TLoop): THttpService;
-  end;
-
 function THelloCall.Poll(Ex: TExchange): TCallPoll;
 begin
   Ex.ResponseHeaders.Add('content-type', 'text/plain');
@@ -96,34 +91,48 @@ begin
   Result := FCall;
 end;
 
-function TApp.NewService(Loop: TLoop): THttpService;
+function NewService(Loop: TLoop): THttpService;
 begin
   Result := THelloService.Create;
 end;
 
 var
   Cfg: TServerConfig;
-  App: TApp;
+  Srv: TServer;
 begin
   Cfg := ProductionServerConfig;
+  Cfg.Workers := NO_WORKER_POOL;     { answers inline: no worker threads }
   Cfg.Listen.Port := StrToIntDef(ParamStr(1), 8080);
-  App := TApp.Create;
-  App.Srv := TServer.Create(Cfg, @App.NewService);
-  App.Srv.RunUntilSignal;            { until SIGTERM or SIGINT }
-  App.Srv.Free;
-  App.Free;
+  Srv := TServer.CreateWithProc(Cfg, @NewService);
+  Srv.RunUntilSignal;                { until SIGTERM or SIGINT }
+  Srv.Free;
 end.
 ```
 
-What happens: `TServer.Create` stores the configuration and the factory.
-`RunUntilSignal` binds the port, starts one event loop thread per CPU
-(`DefaultLoopCount`), calls `NewService` once per loop, then waits for
-SIGTERM or SIGINT; on the signal it stops the server gracefully (open
-connections finish their current response, with a 30 s deadline) and
-returns. For every request a loop parses, it calls `THelloService.Call`,
-which returns the call object, and then polls `THelloCall.Poll`, which
-answers. `Respond` with a body of known length makes the encoder write a
-`Content-Length` header; a `Date` header is added too.
+What happens: `TServer.CreateWithProc` stores the configuration and the
+factory (a plain function; `TServer.Create` takes a method instead, for a
+program that keeps state in an object). `RunUntilSignal` binds the port,
+starts one event loop thread per CPU (`DefaultLoopCount`), calls
+`NewService` once per loop, then waits for SIGTERM or SIGINT; on the
+signal it stops the server gracefully (open connections finish their
+current response, with a 30 s deadline) and returns. For every request a
+loop parses, it calls `THelloService.Call`, which returns the call object,
+and then polls `THelloCall.Poll`, which answers. `Respond` with a body of
+known length makes the encoder write a `Content-Length` header; a `Date`
+header is added too.
+
+`ProductionServerConfig` starts a pool of worker threads for handlers
+that block (`Workers = 0`: `Min(32, cpus + 4)` threads). This service
+answers every request on the loop thread and never hands one to a worker,
+so the program sets `Workers := NO_WORKER_POOL` (-1) and no worker thread
+is started. Leave the default for a service that offloads
+(`examples/worker.pas`).
+
+For a handler that answers with a text, `Ex.RespondText(404, 'not
+found')` sets the status and the `Content-Type` header and responds in
+one call; `SliceToStr`, `SliceEquals` and `PathIs` turn the request head's
+byte slices (`Ex.Path`, header values) into strings or compare them
+(`examples/stream.pas`, `examples/worker.pas`).
 
 Compile and run, from the repository root:
 

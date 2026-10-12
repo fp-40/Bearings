@@ -178,6 +178,7 @@ type
     function Call(Ex: TExchange): TServiceCall; virtual; abstract;
   end;
   TServiceFactory = function(Loop: TLoop): THttpService of object;
+  TServiceProc = function(Loop: TLoop): THttpService;   { the same as a plain function (TServer.CreateWithProc) }
 
   TByteSlice = record P: PByte; Len: SizeInt; end;
 

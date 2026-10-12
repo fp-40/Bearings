@@ -2,9 +2,15 @@
   configuration and one service that answers "Hello" to every request.
 
   The request is answered inline, on the loop thread, inside the call's
-  Poll: no worker thread is involved. The body is static memory
-  (BodyStatic), so nothing is allocated per request. The encoder adds the
-  Content-Length and Date headers itself.
+  Poll: no worker thread is involved, so the configuration asks for no
+  worker pool (Workers := NO_WORKER_POOL; the production preset would start
+  one). The body is static memory (BodyStatic), so nothing is allocated per
+  request. The encoder adds the Content-Length and Date headers itself.
+
+  The service factory and the Started callback are plain routines here
+  (CreateWithProc, RunUntilSignalProc); a program that keeps state for them
+  uses the method forms (TServer.Create, RunUntilSignal) on an object of
+  its own, as worker.pas and stream.pas do.
 
   Usage: hello [port]        (default 8080; 0 = a free port, printed on stderr)
   Stop:  SIGTERM or SIGINT (Ctrl-C); RunUntilSignal then stops the server
@@ -39,13 +45,6 @@ type
     function Call(Ex: TExchange): TServiceCall; override;
   end;
 
-  { Holds the server so the factory and the Started callback can be methods. }
-  TApp = class
-    Srv: TServer;
-    function NewService(Loop: TLoop): THttpService;
-    procedure Started(Server: TServer);
-  end;
-
 function THelloCall.Poll(Ex: TExchange): TCallPoll;
 begin
   Ex.ResponseHeaders.Add('content-type', 'text/plain');
@@ -70,27 +69,28 @@ begin
   Result := FCall;
 end;
 
-function TApp.NewService(Loop: TLoop): THttpService;
+{ Called once per loop by Start (TServiceProc). }
+function NewService(Loop: TLoop): THttpService;
 begin
   Result := THelloService.Create;
 end;
 
-procedure TApp.Started(Server: TServer);
+{ Called by RunUntilSignalProc once the server runs (TServerProc). }
+procedure Started(Server: TServer);
 begin
   WriteLn(StdErr, 'hello: listening on port ', Server.Port, ' with ', Server.LoopCount, ' loops');
 end;
 
 var
   Cfg: TServerConfig;
-  App: TApp;
+  Srv: TServer;
   Sig: Integer;
 begin
   Cfg := ProductionServerConfig;
+  Cfg.Workers := NO_WORKER_POOL;              { every request is answered inline: no worker threads }
   Cfg.Listen.Port := StrToIntDef(ParamStr(1), 8080);
-  App := TApp.Create;
-  App.Srv := TServer.Create(Cfg, @App.NewService);
-  Sig := App.Srv.RunUntilSignal(@App.Started);
+  Srv := TServer.CreateWithProc(Cfg, @NewService);
+  Sig := Srv.RunUntilSignalProc(@Started);
   WriteLn(StdErr, 'hello: stopped (signal ', Sig, ')');
-  App.Srv.Free;
-  App.Free;
+  Srv.Free;
 end.

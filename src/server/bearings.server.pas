@@ -23,7 +23,14 @@
   Use: Create with a configuration and a service factory, Start (it returns
   once the sockets are bound and the threads run; Port gives the bound
   port), later Stop and Wait, then Free. RunUntilSignal does all of this
-  for a program that should stop on SIGTERM or SIGINT.
+  for a program that should stop on SIGTERM or SIGINT. The factory and the
+  Started callback are methods (TServiceFactory, TServerEvent);
+  CreateWithProc and RunUntilSignalProc take plain routines instead
+  (TServiceProc, TServerProc), for a program without a holder object.
+
+  The production preset starts a worker pool (Workers = 0). A service that
+  answers every request inline never uses it: set Workers to
+  NO_WORKER_POOL (-1) and no worker thread is started.
 
   Accept modes (TListenSpec.Mode, see bearings.rt.net):
     amReusePort        one listening socket per loop, all bound to the same
@@ -112,7 +119,7 @@ type
     Loops: Integer;                  { 0 = DefaultLoopCount }
     PinLoops: Boolean;
     H1: TH1Config;
-    Workers: Integer;                { -1 = no pool; 0 = Min(32, cpus + 4) }
+    Workers: Integer;                { -1 (NO_WORKER_POOL) = no pool; 0 = Min(32, cpus + 4) }
     WorkerQueueLimit: Integer;
     WorkerHooks: TWorkerHooks;       { nil = none; not owned }
     WorkerWaitMs: Integer;           { Wait / Destroy: wait for queued and running items (0 = 30 000) }
@@ -121,6 +128,7 @@ type
 
   TServer = class;
   TServerEvent = procedure(Server: TServer) of object;
+  TServerProc = procedure(Server: TServer);     { TServerEvent as a plain procedure (RunUntilSignalProc) }
 
   { One loop thread and what it owns. }
   TServerLoop = class
@@ -155,6 +163,7 @@ type
     FPort: Word;
     FCfg: TServerConfig;
     FFactory: TServiceFactory;
+    FFactoryProc: TServiceProc;    { CreateWithProc's factory; one of the two is assigned }
     FObserver: TConnObserver;
     FLoops: array of TServerLoop;
     FStarted, FStopRequested: Boolean;
@@ -165,10 +174,15 @@ type
     FGsLock: TRTLCriticalSection;
     FWorkers: TWorkerPool;
     procedure DoStart(CallerRunsLoop0: Boolean);
+    function DoRunUntilSignal(Started: TServerEvent; StartedProc: TServerProc): cint;
     function GetLoopCount: Integer;
     function GetLoop(I: Integer): TServerLoop;
   public
     constructor Create(const Cfg: TServerConfig; Factory: TServiceFactory;
+      Observer: TConnObserver = nil);
+    { Create with a plain function (not a method) as the service factory. A separate name
+      because the compiler cannot tell the two pointer kinds apart in an overload. }
+    constructor CreateWithProc(const Cfg: TServerConfig; Factory: TServiceProc;
       Observer: TConnObserver = nil);
     destructor Destroy; override;
     procedure Start;               { bind, start loops and workers; returns }
@@ -194,6 +208,8 @@ type
       (threads started before the call keep their own mask); the previous mask is restored
       before it returns. }
     function RunUntilSignal(Started: TServerEvent = nil): cint;
+    { RunUntilSignal with a plain procedure (not a method) as the Started callback }
+    function RunUntilSignalProc(Started: TServerProc): cint;
     property Port: Word read FPort;
     { Start completed (a Start that raised leaves it False) }
     property Started: Boolean read FStarted;
@@ -205,6 +221,10 @@ type
   end;
 
   EServerError = class(Exception);
+
+const
+  { TServerConfig.Workers for a service that never offloads: no worker pool, no worker threads }
+  NO_WORKER_POOL = -1;
 
 function ProductionServerConfig: TServerConfig;
 function BenchmarkServerConfig: TServerConfig;   { benchmark options: no timer, PipelineFlush, amReusePort }
@@ -474,6 +494,13 @@ begin
   InitCriticalSection(FGsLock);
 end;
 
+constructor TServer.CreateWithProc(const Cfg: TServerConfig; Factory: TServiceProc;
+  Observer: TConnObserver);
+begin
+  Create(Cfg, nil, Observer);
+  FFactoryProc := Factory;
+end;
+
 destructor TServer.Destroy;
 var
   I, W, Out, Posts: Integer;
@@ -617,7 +644,7 @@ begin
     raise EServerError.Create('TServer.Start: already started');
   if not ValidateH1Config(FCfg.H1, Msg) then
     raise EServerError.Create('TServer.Start: ' + Msg);
-  if not Assigned(FFactory) then
+  if not (Assigned(FFactory) or Assigned(FFactoryProc)) then
     raise EServerError.Create('TServer.Start: no service factory');
   IgnoreSigPipe;
   N := FCfg.Loops;
@@ -654,7 +681,10 @@ begin
     SL.FStopMsg.Kind := lmCall;
     SL.FStopMsg.Proc := @StopProc;
     SL.FStopMsg.Arg := SL;
-    SL.Service := FFactory(SL.Loop);
+    if Assigned(FFactory) then
+      SL.Service := FFactory(SL.Loop)
+    else
+      SL.Service := FFactoryProc(SL.Loop);
     {$ifdef WD_STALL}
     { before the loop thread starts: the wheel is the loop thread's from then on }
     TimerInit(@SL.FStallTimer, @StallTimerProc, SL);
@@ -760,6 +790,16 @@ begin
 end;
 
 function TServer.RunUntilSignal(Started: TServerEvent): cint;
+begin
+  Result := DoRunUntilSignal(Started, nil);
+end;
+
+function TServer.RunUntilSignalProc(Started: TServerProc): cint;
+begin
+  Result := DoRunUntilSignal(nil, Started);
+end;
+
+function TServer.DoRunUntilSignal(Started: TServerEvent; StartedProc: TServerProc): cint;
 var
   Sigs, Old: TSigSet;
   R: cint;
@@ -775,6 +815,8 @@ begin
     Start;
     if Assigned(Started) then
       Started(Self);
+    if Assigned(StartedProc) then
+      StartedProc(Self);
     { a Stop from elsewhere (a handler, another thread) also ends the wait:
       checked every 200 ms; Result is then 0 }
     Tick.tv_sec := 0;
@@ -829,7 +871,7 @@ begin
   Result.H1.PipelineFlush := True;
   Result.H1.Timer := False;
   Result.H1.Mode := cmPlain;
-  Result.Workers := -1;
+  Result.Workers := NO_WORKER_POOL;
   Result.WorkerQueueLimit := 0;
   Result.GraceMs := 1000;
 end;

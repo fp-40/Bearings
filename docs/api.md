@@ -102,8 +102,10 @@ The exchange has three parts:
 ### Services and calls
 
 `THttpService` is the application. The server calls the `TServiceFactory`
-(a method `function(Loop: TLoop): THttpService of object`) once per loop
-in `Start`, so there is one service instance per loop. For every request
+(a method `function(Loop: TLoop): THttpService of object`; or a
+`TServiceProc`, the same as a plain function, with `TServer.CreateWithProc`)
+once per loop in `Start`, so there is one service instance per loop. For
+every request
 the loop calls `THttpService.Call(Ex)` on the loop thread, right after the
 request head was parsed. `Call` returns a `TServiceCall` and must not
 answer or read the body (builds with assertions check this). It may look at
@@ -139,6 +141,13 @@ Sig := Srv.RunUntilSignal(@App.Started);       { or Start ... Stop(GraceMs); Wai
 Srv.Free;
 ```
 
+`NewService` and `Started` are methods of some object here
+(`TServiceFactory`, `TServerEvent`). With plain routines instead, use
+`TServer.CreateWithProc(Cfg, @NewService)` and
+`Srv.RunUntilSignalProc(@Started)` (`TServiceProc`, `TServerProc`), as
+`examples/hello.pas` does; the compiler cannot tell the two pointer kinds
+apart in an overload, hence the separate names.
+
 ### TServerConfig (unit `bearings.server`)
 
 | Field | Meaning |
@@ -147,7 +156,7 @@ Srv.Free;
 | `Loops: Integer` | number of event loops; 0 = `DefaultLoopCount` |
 | `PinLoops: Boolean` | pin loop i to the i-th usable CPU (`sched_setaffinity`) |
 | `H1: TH1Config` | the HTTP/1.1 connection options (below) |
-| `Workers: Integer` | worker threads; -1 = no pool; 0 = `Min(32, cpus + 4)` |
+| `Workers: Integer` | worker threads; -1 (`NO_WORKER_POOL`) = no pool; 0 = `Min(32, cpus + 4)` |
 | `WorkerQueueLimit: Integer` | `TWorkerPool.Saturated` is True at this many queued items; 0 = no limit (section 4: `TOffloadCall.SaturatedStatus`) |
 | `WorkerHooks: TWorkerHooks` | per-worker-thread start and stop callbacks; nil = none; not owned |
 | `WorkerWaitMs: Integer` | how long `Wait` and `Destroy` wait for queued and running work items; 0 = 30 000 |
@@ -206,9 +215,17 @@ Server presets: `ProductionServerConfig` listens on 0.0.0.0:8080, backlog
 measurements: `ConformanceH1Config` with `PipelineFlush`, no timer,
 `cmPlain`, no worker pool (`Workers` -1), `GraceMs` 1000.
 
+`ProductionServerConfig` starts the worker pool even when the service
+never uses it. Set `Workers := NO_WORKER_POOL` (-1) for a service that
+answers every request inline and never offloads: no worker thread is
+started, `TServer.Workers` is nil, and `Wait` and `Destroy` have no pool to
+shut down (`examples/hello.pas`).
+
 ### Lifecycle (TServer)
 
 - `Create(Cfg, Factory, Observer = nil)`: stores them; nothing runs yet.
+  `CreateWithProc(Cfg, Factory: TServiceProc, Observer = nil)` is the same
+  with a plain function as the factory.
 - `Start`: validates `Cfg.H1`, ignores SIGPIPE, creates the worker pool
   (before the services, so a factory may read `Workers`), creates the
   loops, calls the factory once per loop, binds the listening sockets and
@@ -237,6 +254,8 @@ measurements: `ConformanceH1Config` with `PipelineFlush`, no timer,
   blocked in the calling thread from the call on; the threads `Start`
   creates inherit that mask, so the signals stay pending until the calling
   thread takes them. The previous mask is restored before it returns.
+  `RunUntilSignalProc(Started: TServerProc)` is the same with a plain
+  procedure as the callback.
 - `GracefulShutdownConnections`: closes every connection open now after
   its current response, while the listeners keep accepting. Any thread
   except a loop thread (it waits until every loop ran it).
@@ -254,9 +273,9 @@ measurements: `ConformanceH1Config` with `PipelineFlush`, no timer,
 - `Workers` (nil without a pool), `Config`, `LoopCount`, `Loops[I]` (a
   `TServerLoop`: `Loop`, `Service`, `Pool`, `Index`, `Cpu`).
 
-`Create`, `Start`, `StartCallerRunsLoop0`, `RunLoop0`, `Wait`,
-`RunUntilSignal` and `Destroy` are called by the thread that owns the
-server. `Stop` may be called from any thread.
+`Create`, `CreateWithProc`, `Start`, `StartCallerRunsLoop0`, `RunLoop0`,
+`Wait`, `RunUntilSignal`, `RunUntilSignalProc` and `Destroy` are called by
+the thread that owns the server. `Stop` may be called from any thread.
 
 ## 3. Answering inline on the loop
 
@@ -339,8 +358,8 @@ the loop's inbox. When `Run` returns, the worker's reference is released.
 Rules:
 
 - One `Offload` per request. A second one raises `EExchangeState`.
-  shut down raises `EWorkerPoolStopped`; the exception aborts the
-  connection task.
+  `Offload` with the pool shut down raises `EWorkerPoolStopped`; either
+  exception aborts the connection task.
 - `Run` must make exactly one terminal call. If it returns without one, the
   exchange is failed with the message `handler returned no response`
   (the connection closes with a user error, section 9). If `Run` raises,
@@ -878,13 +897,15 @@ methods are internal and are left out.
 | Member | Description | Thread |
 |--------|-------------|--------|
 | `TServerConfig` | the options (section 2) | plain value |
-| `TServer.Create(Cfg, Factory, Observer = nil)` | stores the configuration, the service factory and the observer | owner |
+| `TServer.Create(Cfg, Factory, Observer = nil)` | stores the configuration, the service factory (a `TServiceFactory` method) and the observer | owner |
+| `TServer.CreateWithProc(Cfg, Factory, Observer = nil)` | the same with a `TServiceProc` (a plain function) as the factory | owner |
 | `TServer.Start` | binds, starts loops and workers; returns | owner |
 | `TServer.StartCallerRunsLoop0` | `Start` without a thread for loop 0 | owner |
 | `TServer.RunLoop0` | runs loop 0 on the calling thread until `Stop` | owner |
 | `TServer.Stop(GraceMs)` | starts the graceful shutdown; returns at once | any |
 | `TServer.Wait` | joins the loop threads, then shuts the worker pool down | owner |
 | `TServer.RunUntilSignal(Started = nil): cint` | `Start`, wait for SIGTERM/SIGINT, `Stop`, `Wait`; the signal number or 0 | owner |
+| `TServer.RunUntilSignalProc(Started: TServerProc): cint` | the same with a plain procedure as the `Started` callback | owner |
 | `TServer.GracefulShutdownConnections` | closes every open connection after its current response; listeners keep accepting | any except a loop thread |
 | `TServer.Destroy` | stops if needed, aborts what is left, frees loops and pools (or leaks them on purpose) | owner |
 | `TServer.Port` | the bound port | any after `Start` |
@@ -892,6 +913,8 @@ methods are internal and are left out.
 | `TServer.Workers` | the worker pool, nil without one | any after `Start` |
 | `TServer.Config`, `LoopCount`, `Loops[I]` | the configuration, the loops | any after `Start` |
 | `TServerEvent` | `procedure(Server: TServer) of object`, the `Started` callback | owner |
+| `TServerProc` | `procedure(Server: TServer)`, the `Started` callback of `RunUntilSignalProc` | owner |
+| `NO_WORKER_POOL` | -1: the `Workers` value for a service that never offloads (no pool) | - |
 | `TServerLoop` | one loop and what it owns: `Loop`, `Listener`, `Service`, `Pool`, `Conns`, `Index`, `Cpu`, `Thread`, `Running`, `Stopping`, `GraceMs`; `AbortConnections` and `Destroy` are internal | loop (read by tests after the loop stopped) |
 | `EServerError` | `Start` / `RunLoop0` errors | - |
 | `ProductionServerConfig`, `BenchmarkServerConfig` | the two presets | any |
@@ -904,6 +927,7 @@ methods are internal and are left out.
 |--------|-------------|--------|
 | `THttpService.Call(Ex): TServiceCall` | picks the call of a request; must not answer or read the body | loop |
 | `TServiceFactory` | `function(Loop: TLoop): THttpService of object`; one call per loop | owner (inside `Start`) |
+| `TServiceProc` | `function(Loop: TLoop): THttpService`, the plain-function form (`TServer.CreateWithProc`) | owner (inside `Start`) |
 | `TServiceCall.Poll(Ex): TCallPoll` | runs the handler; `cpReady` after a terminal call, else `cpPending` | loop |
 | `TServiceCall.Drop(Ex, Completed)` | called exactly once at the end | loop |
 | `TCallPoll` | `cpPending`, `cpReady` | - |
