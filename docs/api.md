@@ -166,6 +166,7 @@ apart in an overload, hence the separate names.
 | `WorkerWaitMs: Integer` | how long `Wait` and `Destroy` wait for queued and running work items; 0 = 30 000 |
 | `GraceMs: Integer` | the grace period `RunUntilSignal` passes to `Stop` |
 | `AlsoListen: array of TListenSpec` | more places to listen on; every loop serves all of them (below) |
+| `MaxConnections: Integer` | connections open at once over all loops; 0 = no limit (below) |
 | `Watchdog: Boolean` | send the systemd watchdog heartbeat while every loop makes progress (below; the production preset sets it) |
 
 `TListenSpec` (unit `bearings.rt.net`): `Host` (`'0.0.0.0'`,
@@ -209,6 +210,26 @@ sets it non-blocking and close-on-exec, reads its address with
 `Start`. The loops share the socket (`amReusePort` is mapped to
 `amSharedExclusive`). An inherited Unix socket's file is not removed at
 stop: it belongs to whoever created it.
+
+### Connection limit
+
+`MaxConnections` caps the connections open at once, over all loops, with
+one shared atomic count. A listener takes a slot before each `accept4`;
+at the limit it leaves epoll instead of accepting, so new clients wait in
+the kernel's accept queue (bounded by `Backlog`) and are not refused. The
+slot goes back when the connection task has released everything; a
+connection handed to an upgrade handler keeps its slot until the
+`TUpgraded` stream is closed or detached. The closing loop resumes its own
+listeners and posts a message to the other loops to resume theirs (a one
+second timer is the fallback). `TServer.CountedConnections` is the count,
+`TServer.OpenConnections` the HTTP connections in the loops' lists.
+`TListener.LimitPauses` and `LimitPaused` (per loop) show the listener's
+side. There is no per-IP limit: that policy belongs to the reverse proxy or
+the firewall (behind a proxy every connection has the proxy's address); an
+application facing clients directly can close a connection in
+`TConnObserver.OnAccept`, which receives the peer address. With the limit
+off, the accept path tests one integer and the connection task one
+pointer.
 
 ### systemd (unit `bearings.rt.sd`)
 

@@ -47,6 +47,19 @@
   always means the kernel said EAGAIN (or a short transfer) since the last
   event.
 
+  Connection limit. bearings.server can cap the number of open connections
+  (TServerConfig.MaxConnections). The listener enforces it before each
+  accept4: it takes a slot (an atomic increment of Limit^, a counter all
+  loops share) and, when the result exceeds MaxConns, gives the slot back
+  and leaves epoll (PauseForLimit) instead of accepting; new clients then
+  wait in the kernel's accept queue, bounded by the listen backlog, and
+  are not refused. The slot is released by whoever closes the connection
+  (bearings.server, when the connection task has released everything),
+  which also calls ResumeFromLimit on every loop's listeners; a timer of
+  ACCEPT_PAUSE_MS is the fallback should that call not come. With the
+  limit off (MaxConns = 0) the accept path tests one integer and nothing
+  else.
+
   Unix domain sockets. A listener can also be a Unix domain socket (a path
   in the file system) instead of a TCP port: TListenSpec.UnixPath selects
   it. A reverse proxy on the same machine connects to the path; no TCP is
@@ -61,7 +74,9 @@
   both. RemoveSocketFile deletes the socket file when the server stops.
 
   Threading: TListener and TTcpTransport belong to one loop and are used
-  only on that loop's thread. OpenListener, MakeSockAddr, MakeUnixSockAddr,
+  only on that loop's thread, except ResumeFromLimit, which the server
+  calls on the loop thread too (through a message when the closing
+  connection is on another loop). OpenListener, MakeSockAddr, MakeUnixSockAddr,
   RemoveSocketFile, LookupGroupId, SockAddrPort, SockAddrToStr and
   IgnoreSigPipe have no shared state and can be called from any thread. }
 unit bearings.rt.net;
@@ -71,7 +86,7 @@ unit bearings.rt.net;
 interface
 
 uses
-  SysUtils, ctypes, bearings.rt.sys, bearings.rt.timer, bearings.rt.loop;
+  SysUtils, ctypes, bearings.rt.sys, bearings.rt.sync, bearings.rt.timer, bearings.rt.loop;
 
 const
   { At most this many accept4 calls per listener event, so that a flood of
@@ -140,17 +155,25 @@ type
     FLastErrorLogNs, FLastSetupLogNs: Int64;
     FResume: TTimer;               { puts the listener back into epoll after a pause }
     FPaused: Boolean;
+    FLimitPaused: Boolean;         { paused by the connection limit, not by an error }
     procedure AcceptBatch(Max: Integer);
     procedure AcceptOne(Fd: cint; const Peer: TSockAddrStorage);
     procedure SetupFailed(E: Exception);
     procedure Pause;
+    procedure PauseForLimit;
     procedure StopResumeTimer;
     procedure CloseFd;
   public
     Accepted: QWord;               { statistics }
     AcceptErrors: QWord;           { accept4 errors other than EAGAIN / EINTR / connection errors }
     SetupErrors: QWord;            { OnAccept raised }
-    Pauses: QWord;                 { times the listener was taken out of epoll }
+    Pauses: QWord;                 { times the listener was taken out of epoll by an error }
+    LimitPauses: QWord;            { times the listener was taken out of epoll by the connection limit }
+    { The connection limit (see the unit header): the shared count of open
+      connections and the cap; MaxConns = 0 (the default) means none. Set
+      before the loop runs. }
+    Limit: PLongInt;
+    MaxConns: Integer;
     { Registers Fd with the loop's epoll set with Events: EPOLLIN
       (level-triggered: reported on every epoll_wait while the accept queue
       is not empty), or EPOLLIN or EPOLLEXCLUSIVE for amSharedExclusive.
@@ -167,7 +190,11 @@ type
     { Called by the loop's timer wheel ACCEPT_PAUSE_MS after Pause: puts the
       listener back into epoll. }
     procedure Resume;
+    { A connection closed and the count is below the limit again: a listener
+      paused by the limit goes back into epoll; otherwise nothing. }
+    procedure ResumeFromLimit;
     property Paused: Boolean read FPaused;
+    property LimitPaused: Boolean read FLimitPaused;
   end;
 
   { A non-blocking byte stream. Raw results: > 0 bytes, 0 end of stream,
@@ -318,11 +345,33 @@ begin
   Loop.Timers.Arm(@FResume, Loop.NowMs + ACCEPT_PAUSE_MS);
 end;
 
+procedure TListener.PauseForLimit;
+begin
+  if FPaused or (Src.Fd < 0) then
+    Exit;
+  FPaused := True;
+  FLimitPaused := True;
+  Inc(LimitPauses);
+  Loop.Unregister(@Src);
+  { the fallback: the server resumes the listener when a connection closes
+    (ResumeFromLimit); the timer covers the case that it does not }
+  Loop.Timers.Arm(@FResume, Loop.NowMs + ACCEPT_PAUSE_MS);
+end;
+
+procedure TListener.ResumeFromLimit;
+begin
+  if not FLimitPaused then
+    Exit;
+  Loop.Timers.Cancel(@FResume);
+  Resume;
+end;
+
 procedure TListener.Resume;
 begin
   if not FPaused then
     Exit;
   FPaused := False;
+  FLimitPaused := False;
   if Closed or (Src.Fd < 0) then
     Exit;
   if not Loop.Register(@Src, FEvents) then
@@ -370,6 +419,16 @@ begin
   I := 0;
   while (Max < 0) or (I < Max) do
   begin
+    { the connection limit: a slot is taken before the accept and given
+      back when there is nothing to accept. The drain at shutdown (Max < 0)
+      takes the slot too but is not stopped by the cap }
+    if MaxConns > 0 then
+      if (AtomicInc(Limit^) > MaxConns) and (Max >= 0) then
+      begin
+        AtomicDec(Limit^);
+        PauseForLimit;
+        Exit;
+      end;
     { a Unix socket's accept4 fills only the family: the rest of the peer
       record must be zero, not stack garbage }
     FillChar(Peer, SizeOf(Peer), 0);
@@ -383,6 +442,10 @@ begin
       if Closed then
         Exit;
     end
+    else if MaxConns > 0 then
+      AtomicDec(Limit^);           { nothing was accepted: the slot goes back }
+    if R >= 0 then
+      Continue
     else if R = -ESysEAGAIN then
       Exit
     else if (R = -ESysEINTR) or (R = -ESysECONNABORTED) or (R = -ESysECONNRESET)

@@ -43,6 +43,12 @@
     innermost transport is the TTcpTransport reading this task's Src) can be
     detached; otherwise Detach returns False and changes nothing.
 
+  Release notice (CloseProc). The server layer counts open connections; an
+  upgraded connection still counts. Whoever hands the connection over sets
+  CloseProc and CloseArg, and the stream calls CloseProc(CloseArg) once,
+  when it is closed or detached (after Detach the caller owns the socket and
+  the stream knows nothing more about it).
+
   Ownership: the upgrade handler owns U from the moment Upgraded(U) is
   called. If Upgraded raises while U is still open and not taken (Taken =
   False), bearings.http.exchange closes U before the exception goes on to the
@@ -62,6 +68,7 @@ uses
 
 type
   TUpgraded = class;
+  TUpgradedCloseProc = procedure(Arg: Pointer);
 
   { Callbacks of an attached TUpgraded, called on the loop thread. Readable:
     the task ran (socket event or Wake); try TryRead. Writable: called after
@@ -81,7 +88,11 @@ type
     FRest: TBytesView;               { leftover bytes; pinned view into a pooled block }
     FListener: TRawListener;
     FOwnsTransport: Boolean;
+    procedure NotifyClosed;
   public
+    { called once, with CloseArg, when the stream is closed or detached (nil = none) }
+    CloseProc: TUpgradedCloseProc;
+    CloseArg: Pointer;
     { The dispatcher's hand-off: takes ATransport and ARest (a pinned view).
       When the innermost transport is a TTcpTransport reading FromSrc, the
       source (fd, readiness) moves to this task and the epoll entry points
@@ -278,12 +289,23 @@ begin
     end;
   if not Closed then
     inherited Close;
+  NotifyClosed;
   Result := True;
 end;
 
 function TUpgraded.Taken: Boolean;
 begin
   Result := Closed or (FListener <> nil);
+end;
+
+procedure TUpgraded.NotifyClosed;
+var
+  P: TUpgradedCloseProc;
+begin
+  P := CloseProc;
+  CloseProc := nil;
+  if P <> nil then
+    P(CloseArg);
 end;
 
 procedure TUpgraded.Close;
@@ -304,6 +326,7 @@ begin
   end;
   if not Closed then
     inherited Close;
+  NotifyClosed;
 end;
 
 end.

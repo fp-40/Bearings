@@ -61,6 +61,22 @@
   = AF_UNIX and no address (TExchange.PeerAddr; SockAddrToStr gives '');
   behind a proxy the client's address comes from forwarding headers.
 
+  Connection limit. Config.MaxConnections (0 = none) caps the connections
+  open at once, over all loops. The count is one atomic integer: each
+  listener takes a slot before accept4 (bearings.rt.net) and the connection
+  task gives it back when it has released everything (TConnHooks.ConnDone,
+  from bearings.http1.dispatch). A connection handed to an upgrade handler
+  keeps its slot until the upgraded stream is closed or detached. At the
+  limit the listeners leave epoll and new clients wait in the accept queue
+  (they are not refused); when a connection closes and the count is below
+  the limit again, the closing loop resumes its own listeners and posts a
+  message to the other loops to resume theirs. There is no per-IP limit:
+  that policy belongs to the reverse proxy or the firewall (behind a
+  proxy every connection has the proxy's address); an application that
+  faces clients directly can close a connection in TConnObserver.OnAccept,
+  which receives the peer address. With the limit off, the accept path
+  tests one integer and the connection task one pointer.
+
   systemd (bearings.rt.sd). Socket activation: a TListenSpec with
   InheritedFd > 0 names a listening socket that is already open, such as
   one systemd passed (LISTEN_FDS); Start uses it instead of creating a
@@ -162,12 +178,14 @@ type
     WorkerHooks: TWorkerHooks;       { nil = none; not owned }
     WorkerWaitMs: Integer;           { Wait / Destroy: wait for queued and running items (0 = 30 000) }
     GraceMs: Integer;                { the grace period RunUntilSignal passes to Stop }
+    MaxConnections: Integer;         { connections open at once, all loops; 0 = no limit }
     { send the systemd watchdog heartbeat (WATCHDOG=1) while every loop
       makes progress; only when WATCHDOG_USEC is set (bearings.rt.sd) }
     Watchdog: Boolean;
   end;
 
   TServer = class;
+  TServerHooks = class;
   TServerEvent = procedure(Server: TServer) of object;
   TServerProc = procedure(Server: TServer);     { TServerEvent as a plain procedure (RunUntilSignalProc) }
 
@@ -183,7 +201,10 @@ type
     FWdTick: LongInt;                { the round number the ping carries (written before Post) }
     FWdSeen: LongInt;                { the last round this loop handled (loop thread writes, watchdog thread reads) }
     FWdPosted: LongInt;              { 1 while a ping is in the inbox }
+    FLimitMsg: TLoopMsg;             { resume the listeners paused by the connection limit (lmCall) }
+    FLimitPosted: LongInt;           { 1 while FLimitMsg is in the inbox }
     procedure OnAccept(ALoop: TLoop; var Fd: cint; const Peer: TSockAddrStorage);
+    procedure ResumeListeners;       { loop thread: ResumeFromLimit on every listener }
     procedure ConnsEmpty(List: PConnList);
     function GetListener: TListener;
   public
@@ -227,7 +248,10 @@ type
     FWdStop: PRTLEvent;
     FWdQuit: LongInt;              { 1: the watchdog thread must leave }
     FWdRunning: Boolean;
+    FHooks: TServerHooks;          { nil unless a feature needs the per-connection hooks }
+    FConnCount: LongInt;           { the connection limit's count (open connections, upgraded ones included) }
     procedure DoStart(CallerRunsLoop0: Boolean);
+    procedure ConnReleased;        { a slot of the connection limit went back; any loop thread }
     procedure RemoveUnixSocket;    { deletes the socket files Start created; idempotent }
     procedure StartWatchdog;
     procedure StopWatchdog;        { asks the thread to leave; JoinWatchdog waits for it }
@@ -273,6 +297,12 @@ type
     property Port: Word read FPort;
     { the watchdog heartbeat thread runs (Config.Watchdog and WATCHDOG_USEC set) }
     property WatchdogRunning: Boolean read FWdRunning;
+    { The HTTP connections open now: the sum of the loops' connection lists
+      (each written by its loop; the sum is a snapshot). Any thread. }
+    function OpenConnections: Integer;
+    { The connection limit's count: connections that hold a slot (upgraded
+      ones included); 0 when MaxConnections is 0. Any thread. }
+    function CountedConnections: Integer;
     { Start completed (a Start that raised leaves it False) }
     property Started: Boolean read FStarted;
     { the worker pool (Config.Workers >= 0), created by Start before the services; nil otherwise }
@@ -280,6 +310,16 @@ type
     property Config: TServerConfig read FCfg;
     property LoopCount: Integer read GetLoopCount;
     property Loops[I: Integer]: TServerLoop read GetLoop;
+  end;
+
+  { The per-connection hooks the server gives the connection tasks when a
+    feature needs them (the connection limit): the slot goes back when the
+    connection has released everything. }
+  TServerHooks = class(TConnHooks)
+  public
+    Server: TServer;
+    procedure ConnDone(D: TH1Dispatcher; Outcome: TConnOutcome; Upgraded: Boolean); override;
+    procedure UpgradedClosed; override;
   end;
 
   EServerError = class(Exception);
@@ -409,6 +449,7 @@ begin
   try
     Id := ALoop.NextConnId;
     D := TH1Dispatcher.Create(ALoop, F);
+    D.Hooks := Server.FHooks;      { first: an exception below must still release the slot }
     D.Peer := Peer;
     T := NewTcpTransport(@D.Src);
     Tr := T;
@@ -434,13 +475,15 @@ begin
     if D <> nil then
     begin
       { a transport the dispatcher does not hold yet is freed here (Abort
-        frees only Conn.Io.Io) }
+        frees only Conn.Io.Io); Abort's release calls the hooks }
       if (not SetUp_) and (T <> nil) then
         T.Free;
       D.Abort;
       if not D.Closed then
         D.Close;
-    end;
+    end
+    else if Server.FHooks <> nil then
+      Server.FHooks.ConnDone(nil, coOther, False);   { no task was created: the slot goes back here }
     raise;
   end;
 end;
@@ -449,6 +492,29 @@ procedure TServerLoop.ConnsEmpty(List: PConnList);
 begin
   if Stopping then
     Loop.StopNow;
+end;
+
+procedure TServerLoop.ResumeListeners;
+var
+  I: Integer;
+begin
+  for I := 0 to High(Listeners) do
+    if Listeners[I] <> nil then
+      Listeners[I].ResumeFromLimit;
+end;
+
+{ ---- TServerHooks ---- }
+
+procedure TServerHooks.ConnDone(D: TH1Dispatcher; Outcome: TConnOutcome; Upgraded: Boolean);
+begin
+  { an upgraded connection keeps its slot until UpgradedClosed }
+  if not Upgraded then
+    Server.ConnReleased;
+end;
+
+procedure TServerHooks.UpgradedClosed;
+begin
+  Server.ConnReleased;
 end;
 
 function TServerLoop.GetListener: TListener;
@@ -555,6 +621,17 @@ begin
   end;
 end;
 
+{ the connection limit: a connection closed on another loop; this loop's
+  listeners may accept again }
+procedure LimitResumeProc(Loop: TLoop; Arg: Pointer);
+var
+  SL: TServerLoop;
+begin
+  SL := TServerLoop(Arg);
+  AtomicStore(SL.FLimitPosted, 0);
+  SL.ResumeListeners;
+end;
+
 { the watchdog's ping, on the loop thread: this loop handled round FWdTick }
 procedure WdPingProc(Loop: TLoop; Arg: Pointer);
 var
@@ -588,7 +665,7 @@ begin
       if AtomicLoad(S.FLoops[I].FWdSeen) <> Tick then
         Alive := False;
     if Alive then
-      SdNotify('WATCHDOG=1');
+      SdNotify('WATCHDOG=1' + LF + 'STATUS=' + IntToStr(S.OpenConnections) + ' connection(s)');
     Inc(Tick);
     for I := 0 to High(S.FLoops) do
     begin
@@ -728,10 +805,52 @@ begin
   for I := 0 to High(FLoops) do
     FreeAndNil(FLoops[I]);
   FLoops := nil;
+  FreeAndNil(FHooks);
   RTLEventDestroy(FGsEvent);
   RTLEventDestroy(FWdStop);
   DoneCriticalSection(FGsLock);
   inherited Destroy;
+end;
+
+function TServer.OpenConnections: Integer;
+var
+  I: Integer;
+begin
+  Result := 0;
+  for I := 0 to High(FLoops) do
+    if FLoops[I] <> nil then
+      Inc(Result, FLoops[I].Conns.Count);
+end;
+
+function TServer.CountedConnections: Integer;
+begin
+  Result := AtomicLoad(FConnCount);
+end;
+
+procedure TServer.ConnReleased;
+var
+  N: LongInt;
+  I: Integer;
+  SL: TServerLoop;
+  Me: TThreadID;
+begin
+  N := AtomicDec(FConnCount);
+  { the count just dropped below the limit: every loop's listeners may
+    accept again. This loop's are resumed here; the others get a message
+    (one in flight per loop: the record is the inbox node) }
+  if (FCfg.MaxConnections <= 0) or (N <> FCfg.MaxConnections - 1) then
+    Exit;
+  Me := GetCurrentThreadId;
+  for I := 0 to High(FLoops) do
+  begin
+    SL := FLoops[I];
+    if (SL = nil) or (SL.Loop = nil) then
+      Continue;
+    if AtomicLoadThreadId(SL.Loop.ThreadId) = Me then
+      SL.ResumeListeners
+    else if InterlockedExchange(SL.FLimitPosted, 1) = 0 then
+      SL.Loop.Post(@SL.FLimitMsg);
+  end;
 end;
 
 procedure TServer.RemoveUnixSocket;
@@ -841,6 +960,17 @@ end;
 procedure TServer.DoStart(CallerRunsLoop0: Boolean);
 var
   N, I, K: Integer;
+
+  procedure SetListenerLimit(L: TListener);
+  begin
+    if FCfg.MaxConnections > 0 then
+    begin
+      L.Limit := @FConnCount;
+      L.MaxConns := FCfg.MaxConnections;
+    end;
+  end;
+
+var
   Cpus: TCpuList;
   Specs: array of TListenSpec;
   SharedFds: array of cint;
@@ -867,6 +997,11 @@ begin
     FWorkers := TWorkerPool.Create(FCfg.Workers, FCfg.WorkerHooks, FCfg.WorkerQueueLimit);
   Cpus := UsableCpus;
   SetLength(FLoops, N);
+  if (FCfg.MaxConnections > 0) and (FHooks = nil) then
+  begin
+    FHooks := TServerHooks.Create;
+    FHooks.Server := Self;
+  end;
   { the listen specs: Listen, then AlsoListen. A Unix socket has one path
     and an inherited socket is one socket: their loops share it }
   SetLength(Specs, 1 + Length(FCfg.AlsoListen));
@@ -903,6 +1038,9 @@ begin
     SL.FWdMsg.Kind := lmCall;
     SL.FWdMsg.Proc := @WdPingProc;
     SL.FWdMsg.Arg := SL;
+    SL.FLimitMsg.Kind := lmCall;
+    SL.FLimitMsg.Proc := @LimitResumeProc;
+    SL.FLimitMsg.Arg := SL;
     if Assigned(FFactory) then
       SL.Service := FFactory(SL.Loop)
     else
@@ -956,6 +1094,7 @@ begin
         if Spec.Mode = amSharedExclusive then
           SharedFds[K] := Fd;
         SL.Listeners[K] := TListener.Create(SL.Loop, Fd, @SL.OnAccept, ListenEvents);
+        SetListenerLimit(SL.Listeners[K]);
       end
       else if Spec.Mode = amSharedExclusive then
       begin
@@ -965,6 +1104,7 @@ begin
           raise EServerError.CreateFmt('TServer.Start: dup of the listener failed: errno %d',
             [fpgeterrno]);
         SL.Listeners[K] := TListener.Create(SL.Loop, Fd, @SL.OnAccept, ListenEvents);
+        SetListenerLimit(SL.Listeners[K]);
       end;
     end;
   end;

@@ -15,6 +15,11 @@
   AlsoListen, served by every loop; READY=1 and STOPPING=1 on a path and
   on an abstract NOTIFY_SOCKET; the watchdog heartbeat (WATCHDOG_USEC),
   which stops while a loop is blocked in a handler and resumes after.
+  TTestConnLimit (TServerConfig.MaxConnections): with a limit of two the
+  third connection waits in the accept queue and is served when one closes;
+  four loops at the limit resume their listeners when connections close on
+  another loop; an upgraded connection holds its slot until its stream
+  closes; the count is zero after Stop.
   Run: test_server_ops --all --format=plain }
 program test_server_ops;
 
@@ -23,7 +28,7 @@ program test_server_ops;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   Classes, SysUtils, StrUtils, fpcunit, testregistry, consoletestrunner, Sockets, BaseUnix,
-  ctypes, bearings.rt.sys, bearings.rt.buf, bearings.rt.loop, bearings.rt.net, bearings.rt.sd, bearings.http.headers,
+  ctypes, bearings.rt.sys, bearings.rt.buf, bearings.rt.loop, bearings.rt.net, bearings.rt.sd, bearings.rt.stream, bearings.http.headers,
   bearings.http.exchange, bearings.http1.config, bearings.server;
 
 const
@@ -378,6 +383,14 @@ type
     procedure Watchdog_heartbeat_stops_while_a_loop_is_blocked;
   end;
 
+  TTestConnLimit = class(TServerCase)
+  published
+    procedure Third_connection_waits_until_one_closes;
+    procedure Four_loops_resume_their_listeners;
+    procedure Upgraded_connection_counts_until_closed;
+    procedure Count_is_zero_after_stop;
+  end;
+
 procedure TServerCase.StartServer(const Cfg: TServerConfig);
 begin
   Srv := TServer.Create(Cfg, @App.NewService);
@@ -667,7 +680,7 @@ begin
   SetString(Result, PAnsiChar(@Buf[0]), R);
 end;
 
-{ datagrams received until TimeoutMs of silence; counts those equal to Msg }
+{ datagrams received until TimeoutMs of silence; counts those starting with Msg }
 function CountNotify(Fd: cint; const Msg: RawByteString; TimeoutMs: Integer): Integer;
 var
   S: RawByteString;
@@ -675,7 +688,7 @@ begin
   Result := 0;
   repeat
     S := RecvNotify(Fd, TimeoutMs);
-    if S = Msg then
+    if Pos(Msg, S) = 1 then
       Inc(Result);
   until S = '';
 end;
@@ -746,7 +759,7 @@ begin
     SetEnv('LISTEN_PID', IntToStr(FpGetPid));
     SetEnv('LISTEN_FDS', '1');
     SetEnv('LISTEN_FDNAMES', 'http');
-    UnsetEnv('HEAPTRC');             { the child must not write the parent's heaptrc log }
+    SetEnv('HEAPTRC', 'log=/dev/null');   { a -gh build: the child's heap report must not land in the parent's log or output }
     Args[0] := PAnsiChar(Exe);
     Args[1] := '--sd-child';
     Args[2] := nil;
@@ -970,7 +983,7 @@ begin
     N := 0;
     T0 := GetTickCount64;
     while (N < 3) and (GetTickCount64 - T0 < 3000) do
-      if RecvNotify(Sink, 1000) = 'WATCHDOG=1' then
+      if Pos('WATCHDOG=1', RecvNotify(Sink, 1000)) = 1 then
         Inc(N);
     AssertEquals('three heartbeats within 3 s', 3, N);
     { a handler that blocks its loop for 1.5 s: the heartbeat stops }
@@ -982,7 +995,7 @@ begin
       N := 0;
       T0 := GetTickCount64;
       while GetTickCount64 - T0 < 800 do
-        if RecvNotify(Sink, 200) = 'WATCHDOG=1' then
+        if Pos('WATCHDOG=1', RecvNotify(Sink, 200)) = 1 then
           Inc(N);
       AssertEquals('no heartbeat while a loop is blocked', 0, N);
       Msg := RecvUntil(Fd, 'blocked', Eof);
@@ -994,7 +1007,7 @@ begin
     N := 0;
     T0 := GetTickCount64;
     while (N < 2) and (GetTickCount64 - T0 < 3000) do
-      if RecvNotify(Sink, 1000) = 'WATCHDOG=1' then
+      if Pos('WATCHDOG=1', RecvNotify(Sink, 1000)) = 1 then
         Inc(N);
     AssertEquals('heartbeats resume', 2, N);
     Srv.Stop(1000);
@@ -1007,6 +1020,276 @@ begin
     CloseNotifySink(Sink, Path);
   end;
 end;
+{ ---- connection limit ---- }
+
+{ an upgrade handler that keeps the stream on the loop and closes it when
+  the client closes (EOF) }
+type
+  TEofCloser = class(TRawListener)
+  public
+    procedure Readable(U: TUpgraded); override;
+  end;
+
+  TAttachHandler = class(TUpgradeHandler)
+  public
+    Closer: TEofCloser;
+    procedure Upgraded(U: TUpgraded); override;
+  end;
+
+  TUpCall = class(TServiceCall)
+  public
+    Handler: TUpgradeHandler;
+    function Poll(Ex: TExchange): TCallPoll; override;
+  end;
+
+  TUpService = class(THttpService)
+  public
+    C: TUpCall;
+    destructor Destroy; override;
+    function Call(Ex: TExchange): TServiceCall; override;
+  end;
+
+  TUpApp = class
+  public
+    Handler: TUpgradeHandler;
+    function NewService(Loop: TLoop): THttpService;
+  end;
+
+const
+  UPGRADE_REQ = 'GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Upgrade: foo' + CRLF +
+    'Connection: upgrade' + CRLF + CRLF;
+
+procedure TEofCloser.Readable(U: TUpgraded);
+var
+  B: array[0..255] of Byte;
+  R: SizeInt;
+begin
+  R := U.TryRead(@B[0], SizeOf(B));
+  if (R = 0) or ((R < 0) and (R <> -ESysEAGAIN)) then
+    U.Close;
+end;
+
+procedure TAttachHandler.Upgraded(U: TUpgraded);
+begin
+  U.Attach(Closer);
+end;
+
+function TUpCall.Poll(Ex: TExchange): TCallPoll;
+begin
+  Ex.OnUpgrade(Handler);
+  Ex.Status := 101;
+  Ex.ResponseHeaders.Insert('upgrade', 'foo');
+  Ex.ResponseHeaders.Insert('connection', 'upgrade');
+  Ex.Respond(BodyEmpty);
+  Result := cpReady;
+end;
+
+destructor TUpService.Destroy;
+begin
+  C.Free;
+  inherited Destroy;
+end;
+
+function TUpService.Call(Ex: TExchange): TServiceCall;
+begin
+  Result := C;
+end;
+
+function TUpApp.NewService(Loop: TLoop): THttpService;
+var
+  S: TUpService;
+begin
+  S := TUpService.Create;
+  S.C := TUpCall.Create;
+  S.C.Handler := Handler;
+  Result := S;
+end;
+
+{ True when Fd has no bytes to read within Ms }
+function Silent(Fd: cint; Ms: Integer): Boolean;
+var
+  TV: TTimeVal;
+  B: array[0..15] of Byte;
+begin
+  TV.tv_sec := Ms div 1000;
+  TV.tv_usec := (Ms mod 1000) * 1000;
+  fpSetSockOpt(Fd, SOL_SOCKET, SO_RCVTIMEO, @TV, SizeOf(TV));
+  Result := fpRecv(Fd, @B[0], SizeOf(B), MSG_PEEK) < 0;
+end;
+
+{ waits up to 2 s for the server's counted connections to reach N }
+function WaitCounted(Srv: TServer; N: Integer): Boolean;
+var
+  T0: QWord;
+begin
+  T0 := GetTickCount64;
+  while (Srv.CountedConnections <> N) and (GetTickCount64 - T0 < 2000) do
+    Sleep(2);
+  Result := Srv.CountedConnections = N;
+end;
+
+procedure TTestConnLimit.Third_connection_waits_until_one_closes;
+var
+  Cfg: TServerConfig;
+  A, B, C: cint;
+  T0: QWord;
+begin
+  Cfg := TestConfig(1);
+  Cfg.MaxConnections := 2;
+  StartServer(Cfg);
+  A := Connect(Srv.Port);
+  B := Connect(Srv.Port);
+  AssertEquals(Resp('small'), GetOnce(A, '/small'));
+  AssertEquals(Resp('small'), GetOnce(B, '/small'));
+  AssertTrue('two counted', WaitCounted(Srv, 2));
+  { the third connection is completed by the kernel (it waits in the accept
+    queue) but not served }
+  C := Connect(Srv.Port);
+  SendAll(C, Get('/small'));
+  AssertTrue('the third connection gets no answer', Silent(C, 300));
+  AssertEquals('still two', 2, Srv.CountedConnections);
+  AssertTrue('the listener is paused by the limit', Srv.Loops[0].Listener.LimitPaused);
+  fpClose(A);
+  { the slot goes back and the listener resumes: C is served; the count is
+    at the limit again, so the listener's next accept try pauses it again }
+  AssertEquals(Resp('small'), RecvBytes(C, Length(Resp('small'))));
+  AssertEquals('two counted again', 2, Srv.CountedConnections);
+  AssertEquals('limit pauses counted', 2, Srv.Loops[0].Listener.LimitPauses);
+  fpClose(B);
+  fpClose(C);
+  AssertTrue('none left', WaitCounted(Srv, 0));
+  T0 := GetTickCount64;
+  while Srv.Loops[0].Listener.LimitPaused and (GetTickCount64 - T0 < 2000) do
+    Sleep(2);
+  AssertFalse('the listener accepts again', Srv.Loops[0].Listener.LimitPaused);
+  AssertEquals(3, Calls);
+end;
+
+procedure TTestConnLimit.Four_loops_resume_their_listeners;
+var
+  Cfg: TServerConfig;
+  Held: array[0..3] of cint;
+  Waiting: array[0..11] of cint;
+  I, Pauses, Served: Integer;
+  T0: QWord;
+begin
+  Cfg := TestConfig(4);
+  Cfg.MaxConnections := 4;
+  StartServer(Cfg);
+  for I := 0 to 3 do
+  begin
+    Held[I] := Connect(Srv.Port);
+    AssertEquals(Resp('small'), GetOnce(Held[I], '/small'));
+  end;
+  AssertTrue('four counted', WaitCounted(Srv, 4));
+  { twelve more wait in the accept queues of the four listeners }
+  for I := 0 to 11 do
+  begin
+    Waiting[I] := Connect(Srv.Port);
+    SendAll(Waiting[I], Get('/small'));
+  end;
+  Sleep(300);
+  AssertEquals('none of them was accepted', 4, Calls);
+  Pauses := 0;
+  for I := 0 to 3 do
+    Inc(Pauses, Srv.Loops[I].Listener.LimitPauses);
+  AssertTrue('listeners paused by the limit', Pauses > 0);
+  { closing the held connections lets the waiting ones through, whichever
+    loop they wait on: each close resumes every loop's listener. Only four
+    can be served at a time, so each served one is closed as soon as its
+    response is read, in whatever order they come }
+  for I := 0 to 3 do
+    fpClose(Held[I]);
+  Served := 0;
+  T0 := GetTickCount64;
+  while (Served < 12) and (GetTickCount64 - T0 < 10000) do
+    for I := 0 to 11 do
+      if (Waiting[I] >= 0) and not Silent(Waiting[I], 20) then
+      begin
+        AssertEquals('waiting connection ' + IntToStr(I), Resp('small'),
+          RecvBytes(Waiting[I], Length(Resp('small'))));
+        fpClose(Waiting[I]);
+        Waiting[I] := -1;
+        Inc(Served);
+      end;
+  AssertEquals('every waiting connection was served', 12, Served);
+  AssertEquals(16, Calls);
+  AssertTrue('all slots back', WaitCounted(Srv, 0));
+  for I := 0 to 3 do
+    AssertFalse('loop ' + IntToStr(I) + ' listener resumed', Srv.Loops[I].Listener.LimitPaused);
+end;
+
+procedure TTestConnLimit.Upgraded_connection_counts_until_closed;
+var
+  UA: TUpApp;
+  H: TAttachHandler;
+  Cfg: TServerConfig;
+  A, B: cint;
+  Head: RawByteString;
+  Eof: Boolean;
+begin
+  UA := TUpApp.Create;
+  H := TAttachHandler.Create;
+  H.Closer := TEofCloser.Create;
+  UA.Handler := H;
+  Cfg := TestConfig(1);
+  Cfg.H1.Mode := cmWithUpgrades;
+  Cfg.MaxConnections := 1;
+  Srv := TServer.Create(Cfg, @UA.NewService);
+  try
+    Srv.Start;
+    A := Connect(Srv.Port);
+    SendAll(A, UPGRADE_REQ);
+    Head := RecvUntil(A, CRLF + CRLF, Eof);
+    AssertTrue('101: ' + Head, AnsiStartsStr('HTTP/1.1 101 Switching Protocols', Head));
+    Sleep(50);
+    AssertEquals('the upgraded connection holds its slot', 1, Srv.CountedConnections);
+    AssertEquals('the HTTP connection list no longer has it', 0, Srv.OpenConnections);
+    B := Connect(Srv.Port);
+    SendAll(B, UPGRADE_REQ);
+    AssertTrue('the second connection waits', Silent(B, 300));
+    fpClose(A);                      { EOF: the handler closes the stream, the slot goes back }
+    Head := RecvUntil(B, CRLF + CRLF, Eof);
+    AssertTrue('the second connection is served: ' + Head, AnsiStartsStr('HTTP/1.1 101', Head));
+    fpClose(B);
+    AssertTrue(WaitCounted(Srv, 0));
+    Srv.Stop(1000);
+    Srv.Wait;
+  finally
+    FreeAndNil(Srv);
+    H.Closer.Free;
+    H.Free;
+    UA.Free;
+  end;
+end;
+
+procedure TTestConnLimit.Count_is_zero_after_stop;
+var
+  Cfg: TServerConfig;
+  Fds: array[0..2] of cint;
+  I: Integer;
+  Eof: Boolean;
+begin
+  Cfg := TestConfig(2);
+  Cfg.MaxConnections := 3;
+  StartServer(Cfg);
+  for I := 0 to 2 do
+  begin
+    Fds[I] := Connect(Srv.Port);
+    AssertEquals(Resp('small'), GetOnce(Fds[I], '/small'));
+  end;
+  AssertTrue(WaitCounted(Srv, 3));
+  { idle keep-alive connections are closed by the stop }
+  Srv.Stop(1000);
+  Srv.Wait;
+  for I := 0 to 2 do
+  begin
+    RecvUntil(Fds[I], '', Eof);
+    AssertTrue('closed by the server', Eof);
+    fpClose(Fds[I]);
+  end;
+  AssertEquals('every slot went back', 0, Srv.CountedConnections);
+end;
 
 begin
   if ParamStr(1) = '--sd-child' then
@@ -1017,6 +1300,7 @@ begin
   App := TOpsApp.Create;
   RegisterTest(TTestUnixSocket);
   RegisterTest(TTestSystemd);
+  RegisterTest(TTestConnLimit);
   with TTestRunner.Create(nil) do
   try
     Initialize;

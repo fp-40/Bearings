@@ -20,6 +20,9 @@
                       bearings.server for graceful shutdown and stop.
     TUpgradeDelivery  a task that hands an upgraded connection to its
                       handler after the connection-close event was reported.
+    TConnHooks        the server layer's per-connection hooks (connection
+                      limit, metrics): ConnDone when the connection has
+                      released everything; nil when none.
 
   One Run. Run calls PollCatch -> PollInner -> PollLoop. PollLoop repeats
   "read (PollRead), write (PollWrite), flush (PollFlush)" until neither side
@@ -109,6 +112,22 @@ type
 
   TH1Dispatcher = class;
 
+  { Hooks of the server layer, per connection: the connection limit and the
+    metrics (bearings.server). nil, the default, means none: the dispatcher
+    then tests the pointer once per event and does nothing else. Loop
+    thread of the connection. }
+  TConnHooks = class
+  public
+    { The connection task has released everything (Finish, Abort or
+      Destroy). Outcome: how the connection ended (coOther for an abort).
+      Upgraded: the transport went to an upgrade handler (TUpgraded), and
+      the hooks get UpgradedClosed when that stream is closed or detached.
+      D is still allocated (it is freed after the event batch). }
+    procedure ConnDone(D: TH1Dispatcher; Outcome: TConnOutcome; Upgraded: Boolean); virtual; abstract;
+    { An upgraded connection announced in ConnDone is closed or detached. }
+    procedure UpgradedClosed; virtual; abstract;
+  end;
+
   { The connections of one loop, a doubly linked list through
     FPrevConn/FNextConn (bearings.server uses it for graceful shutdown and stop).
     Loop thread only. }
@@ -185,6 +204,8 @@ type
     FUpgraded: Boolean;              { the transport was handed to an upgrade }
     Observer: TConnObserver;         { nil in production }
     ObsData: Pointer;                { what Observer.OnAccept returned }
+    Hooks: TConnHooks;               { nil = none (the server sets it when a feature needs it) }
+    Outcome: TConnOutcome;           { set by Finish before the release; coOther until then (an abort) }
     ConnId: QWord;
     Peer: TSockAddrStorage;
     OwnsTransport: Boolean;          { Finish / Abort free the transport object (default True) }
@@ -317,6 +338,12 @@ begin
   end;
 end;
 
+{ TUpgraded.CloseProc: the stream of an upgraded connection closed or was detached }
+procedure UpgradedCloseProc(Arg: Pointer);
+begin
+  TConnHooks(Arg).UpgradedClosed;
+end;
+
 { TH1Dispatcher }
 
 constructor TH1Dispatcher.Create(ALoop: TLoop; AFd: cint);
@@ -350,6 +377,7 @@ begin
   Service := AService;
   Observer := AObserver;
   ObsData := AObsData;
+  Outcome := coOther;              { Hooks is left as set: the server sets it before Setup }
   ConnId := AConnId;
   InFlight := nil;
   Ex := nil;
@@ -1219,6 +1247,8 @@ begin
   ReleaseExchange;
   Conn.Done;
   Unlink;
+  if Hooks <> nil then
+    Hooks.ConnDone(Self, Outcome, FUpgraded);
 end;
 
 procedure TH1Dispatcher.Abort;
@@ -1238,7 +1268,6 @@ var
   U: TUpgraded;
   Delivery: TUpgradeDelivery;
   Slot: TUpgradeSlot;
-  Outcome: TConnOutcome;
   Detail: string;
 begin
   { The connection has finished (R = prOk) or failed (R = prErr). }
@@ -1254,6 +1283,12 @@ begin
         (they belong to the new protocol) and fulfill the upgrade }
       Conn.Io.IntoInner(T, Rest);
       U := TUpgraded.CreateFrom(Loop, T, Rest, @Src, OwnsTransport);
+      if Hooks <> nil then
+      begin
+        { the connection counts until the upgraded stream closes }
+        U.CloseProc := @UpgradedCloseProc;
+        U.CloseArg := Hooks;
+      end;
       FUpgraded := True;
       Slot.Fulfill(U);
       FPendingUpgrade.Active := False;
@@ -1279,12 +1314,12 @@ begin
     Parts.Src := @Src;
     HaveParts := True;
   end;
-  { 2. release everything }
+  { 2. release everything (the hooks get the outcome from DropAll) }
+  Outcome := OutcomeOf(R, Err);
   DropAll;
   { 3. report the outcome }
   if Observer <> nil then
   begin
-    Outcome := OutcomeOf(R, Err);
     if R = prOk then
       Detail := ''
     else

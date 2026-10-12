@@ -26,7 +26,9 @@
   Usage: plaintext [port]   env: THREADS=n (default DefaultLoopCount),
                                  PIN=1 (pin loop i to the i-th usable CPU),
                                  SERVER=hyper, OFFLOAD=1, WORKERS=n,
-                                 WORKER_SPIN_NS=n (TWorkerPool.SpinNs)
+                                 WORKER_SPIN_NS=n (TWorkerPool.SpinNs),
+                                 MAX_CONNECTIONS=n (the connection limit,
+                                 for the gate run with the feature on)
   Build: fpc -Mobjfpc -Sh -O3 -CX -XX -Xs -Fusrc/rt -Fusrc/http -Fusrc/http1
            -Fusrc/server bench/plaintext.pas }
 program plaintext;
@@ -178,6 +180,7 @@ begin
   Cfg.Listen.Port := StrToIntDef(ParamStr(1), 8080);
   Cfg.Loops := StrToIntDef(GetEnvironmentVariable('THREADS'), 0);
   Cfg.PinLoops := GetEnvironmentVariable('PIN') = '1';
+  Cfg.MaxConnections := StrToIntDef(GetEnvironmentVariable('MAX_CONNECTIONS'), 0);
   App := TApp.Create;
   App.Offload := GetEnvironmentVariable('OFFLOAD') = '1';
   if App.Offload then

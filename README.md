@@ -20,9 +20,11 @@ backpressure, file bodies with sendfile, graceful shutdown.
 
 It has no TLS, no HTTP/2 and no WebSocket protocol code yet. For TLS, put a
 reverse proxy such as nginx in front of it. WebSocket support on top of the
-existing upgrade hand-off is planned work: `docs/handoff-websocket.md`. A
-Unix domain socket listener, systemd socket activation, a connection limit
-and an access log are planned too: `docs/handoff-operations.md`.
+existing upgrade hand-off is planned work: `docs/handoff-websocket.md`. It
+listens on TCP or on a Unix domain socket, runs under systemd socket
+activation with readiness and watchdog notifications, and can cap the
+number of open connections; an access log and metrics are planned:
+`docs/handoff-operations.md`.
 
 ## Requirements
 

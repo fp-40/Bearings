@@ -6,7 +6,8 @@
 # runs in every test (and -dWD_STALL since step UB: TTestDispatchStall);
 # test_server is the S8 suite (sendfile, upgrade
 # detach, stop, shared listener, signals; real sockets); test_server_ops
-# covers the operations features (Unix socket listener; real sockets);
+# covers the operations features (Unix socket listener, systemd, the
+# connection limit; real sockets);
 # test_workers is the
 # S7 suite, also run under
 # valgrind --tool=drd; the S4, S5 and S7 suites also run once more
