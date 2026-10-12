@@ -1,4 +1,4 @@
-"""Interface uses graph of the bearings units (M3 design 8.1).
+"""Interface uses graph of the bearings units (the layer rules of README.md).
 
 Reads the `uses` clause of each unit's interface section (implementation
 uses cannot create a circular unit reference in FPC), prints each unit with

@@ -1,5 +1,5 @@
-{ beconf.events - SPEC 7 event lines on stdout (design m3-transport.md 6.1,
-  6.7). Test tooling, cold path: strings are allowed.
+{ beconf.events - SPEC 7 event lines on stdout (docs/design.md
+  section 9). Test tooling, cold path: strings are allowed.
 
   A line is built completely, then written with one write(1, ...) loop under
   a lock (SPEC 3.3: a line is atomic; the lock matters only when several

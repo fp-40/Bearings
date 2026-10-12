@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two-server wrk comparison with the method of design m3-transport.md 7.6.
+"""Two-server wrk comparison with the method of docs/design.md section 9 (the performance gate).
 
 Both servers must already run, pinned to the server CPUs (configuration B:
 CPUs 0-3), e.g.

@@ -1,8 +1,8 @@
-{ plaintext - the bearings side of the M3 performance gate (design
-  m3-transport.md 7.6, step S5): TServer with the TFB options of hyper's
+{ plaintext - the bearings side of the M3 performance gate (docs/design.md
+  section 9): TServer with the TFB options of hyper's
   entry (BenchmarkServerConfig: no timer, pipeline_flush on,
   serve_connection without upgrades, one SO_REUSEPORT listener per loop,
-  TCP_NODELAY, backlog 4096) and the inline service of design 3.1.
+  TCP_NODELAY, backlog 4096) and the inline service of docs/design.md 5.3.
 
   Routes, as bench/hyper-tfb/src/main.rs:
     /plaintext  200, server, content-type: text/plain, content-length: 13,
@@ -19,7 +19,7 @@
 
   S7: OFFLOAD=1 answers every request from the worker pool instead (the
   same routes and bytes; TOffloadCall + a TBlockingHandler that builds the
-  response on a worker, design 3.5), for the offload-cost measurement of
+  response on a worker, docs/design.md section 2), for the offload-cost measurement of
   bench/run_offload.sh. WORKERS=n sets the pool size (default 0:
   Min(32, DefaultLoopCount + 4), the prototype's 8 with 4 loops).
 

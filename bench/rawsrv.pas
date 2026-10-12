@@ -1,6 +1,6 @@
 { rawsrv - M3 step S1 raw loop baseline: the beproto plaintext server
-  (bench/beproto.pas) rebuilt on the M3 runtime (design m3-transport.md
-  section 9, S1): TLoop (one per thread), TListener (one SO_REUSEPORT
+  (bench/beproto.pas) rebuilt on the M3 runtime (docs/design.md
+  section 9): TLoop (one per thread), TListener (one SO_REUSEPORT
   listener per loop, TCP_NODELAY, backlog 4096), TIoTask + TTcpTransport
   with tokio's readiness rules, read and write blocks from the loop's
   TBlockPool, the per-loop date cache. No HTTP state machine, no service

@@ -1,4 +1,4 @@
-{ Step S7 (design m3-transport.md 9 S7, 7.5): end-to-end stress of the
+{ Step S7 (docs/design.md section 9): end-to-end stress of the
   worker paths through TServer + dispatcher + workers with random handler
   behaviour and random client disconnects. Written by the fourth S7
   verifier (concurrency lens, build/S7-verify4-race/evidence/s7stress.pas);

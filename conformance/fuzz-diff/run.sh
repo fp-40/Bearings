@@ -1,5 +1,5 @@
 #!/bin/sh
-# Differential stream fuzz (design m3-transport.md 7.5, step S9): builds
+# Differential stream fuzz (docs/design.md section 9): builds
 # beconf (debug profile, conformance/pascal-server/build.sh) and the fuzz
 # tool, writes its seed inputs (the conformance case inputs,
 # tests/unit/test_split_fuzz_cases.py; the M2 parser corpus with httparse's

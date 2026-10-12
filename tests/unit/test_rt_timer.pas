@@ -1,4 +1,4 @@
-{ M3 step S1 tests for bearings.rt.timer (design m3-transport.md 1.8):
+{ M3 step S1 tests for bearings.rt.timer (docs/design.md section 4):
   - tokio's tick rounding (TimeSource::deadline_to_tick / instant_to_tick)
     and the wheel's level_for / slot_for tables (tokio's own unit tests,
     ported);

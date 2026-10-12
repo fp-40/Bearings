@@ -1,5 +1,5 @@
-{ beconf.control - SPEC 3.4 stdin control commands (design m3-transport.md
-  6.1). Test tooling.
+{ beconf.control - SPEC 3.4 stdin control commands (docs/design.md
+  section 9). Test tooling.
 
   TControl (a TIoTask) owns fd 0 (non-blocking), registered level-triggered in loop
   0's epoll. Each Run reads until EAGAIN, splits lines and handles each one

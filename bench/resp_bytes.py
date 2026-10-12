@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Writes the raw response bytes of a running plaintext server for a fixed
 set of requests, with the Date header value normalized, so two servers can be
-compared with cmp (design m3-transport.md 7.6; bench/run_gate.sh runs it
+compared with cmp (docs/design.md section 9; bench/run_gate.sh runs it
 before every gate run, decision 12).
 
 Usage: resp_bytes.py <port> <out file>

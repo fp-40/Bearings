@@ -1,4 +1,4 @@
-{ M3 step S1 tests for bearings.rt.net (design m3-transport.md 1.3, 1.4):
+{ M3 step S1 tests for bearings.rt.net (docs/design.md section 3):
   - tokio PollEvented readiness rules on real TCP sockets: data + FIN in one
     event (short read clears rdRead, sticky rdReadClosed makes the next read
     call the kernel and see EOF); a full read keeps rdRead; no syscall

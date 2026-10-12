@@ -1,4 +1,4 @@
-{ M3 step S0 tests (design m3-transport.md 5.1, 5.2, 4.4):
+{ M3 step S0 tests (docs/design.md sections 8 and 7.4):
   - every validating THttpHeaders mutator raises EInvalidHeader on CR, LF,
     NUL, 0x7F in a value and on a bad name, and leaves the list unchanged;
   - Try* return the right THeaderCheck; *Trusted do not check;

@@ -1,5 +1,5 @@
-{ M3 step S4 tests for the request body channel (design m3-transport.md
-  3.3, 7.3): ports of the tests of hyper v1.12.0 src/body/chan.rs
+{ M3 step S4 tests for the request body channel (docs/design.md
+  sections 6.2 and 9): ports of the tests of hyper v1.12.0 src/body/chan.rs
   (error_queued_behind_accepted_data, trailers_follow_data_close,
   drop_wakes_only_an_open_peer) and src/body/incoming.rs (size_hint,
   channel_abort, channel_abort_when_buffer_is_full, channel_buffers_one,

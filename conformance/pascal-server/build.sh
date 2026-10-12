@@ -1,9 +1,9 @@
 #!/bin/sh
-# Builds the Pascal conformance server (design m3-transport.md 6.9).
+# Builds the Pascal conformance server (docs/design.md section 9).
 # Usage: conformance/pascal-server/build.sh
 # Env: OUT_DIR (default build/conformance; the binary is $OUT_DIR/beconf);
-#      PROFILE=debug (default: -Ci -Cr -Co -Ct -Sa -gl -dWD_DEBUG, design 7.5
-#      "debug builds for all tests") or PROFILE=release (-O2 -gl, the
+#      PROFILE=debug (default: -Ci -Cr -Co -Ct -Sa -gl -dWD_DEBUG, the debug
+#      build flags of docs/design.md section 9) or PROFILE=release (-O2 -gl, the
 #      production code path).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)

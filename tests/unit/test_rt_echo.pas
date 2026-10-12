@@ -1,6 +1,5 @@
-{ M3 step S1 echo test (design m3-transport.md section 9, S1 exit criterion:
-  "an echo test moves 1 GB with random split sizes under valgrind without
-  errors").
+{ The echo test (docs/design.md section 9): 1 GB with random split sizes
+  under valgrind without errors.
 
   test_rt_echo --server
       One TLoop on the main thread, a TListener on 127.0.0.1 (kernel port,

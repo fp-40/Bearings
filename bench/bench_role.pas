@@ -1,8 +1,7 @@
-{ bench_role - micro-benchmark of the M2 codec hot paths (M3 design 7.6,
-  step S0 gate: parse 152 ns, encode 121 ns, +-10 %).
+{ bench_role - micro-benchmark of the M2 codec hot paths (docs/design.md
+  section 9; the budget: parse 152 ns, encode 121 ns, +-10 %).
 
-  Same request and response as the design-phase bench_role (M3 design
-  measurements, section 0.2): ServerParse of a TFB-like request;
+  Same request and response as the design-phase bench_role: ServerParse of a TFB-like request;
   ServerEncode of a 200 with content-type + server, content-length 13 and
   the date. Added in S0: the TByteVec overload of ServerEncode (the one the
   M3 connection uses) and the header validation cost (R11): Clear + two

@@ -3,7 +3,7 @@
  "cases": [
   {
    "name": "response_version_HTTP_09",
-   "notes": "role.rs panics on these versions: the connection task aborts without conn_close (design 2.8)",
+   "notes": "role.rs panics on these versions: the connection task aborts without conn_close (docs/design.md 5.6)",
    "server": {
     "replies": [
      {
@@ -44,7 +44,7 @@
   },
   {
    "name": "response_version_HTTP_30",
-   "notes": "role.rs panics on these versions: the connection task aborts without conn_close (design 2.8)",
+   "notes": "role.rs panics on these versions: the connection task aborts without conn_close (docs/design.md 5.6)",
    "server": {
     "replies": [
      {

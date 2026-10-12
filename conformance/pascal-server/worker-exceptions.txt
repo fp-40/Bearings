@@ -1,5 +1,5 @@
-# Worker-executor exceptions (design m3-transport.md 7.4, S7 decision 14,
-# deviation S7-1). gate_worker.sh lets a case listed here fail in assertion
+# Worker-executor exceptions (docs/design.md sections 9
+# and 10, pipelining). gate_worker.sh lets a case listed here fail in assertion
 # mode under `beconf --executor worker`, and says so whenever it does. A
 # case is listed only when its wire assertion needs a handler that answers in
 # its first poll and reference-server (hyper) fails the same assertion when

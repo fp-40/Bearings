@@ -3,8 +3,8 @@
 > Written while this code was part of wd-40 (where "wd-40" in the text means the project of that time). The unit names were changed to `bearings.*` when the transport moved to this repository; commit hashes refer to the wd-40 history.
 
 Date: 2026-10-10. Tree: HEAD 094152c (no source change in S10). Machine: Intel i5-14400 (CPUs 0-11 =
-6 P-cores with SMT, 12-15 = 4 E-cores), kernel 7.0.0, FPC 3.2.2. Design: `m3-transport.md` 7.6 (method
-and gate), 0.3 decision 2 (only the throughput ratio is a hard gate), 9 S10 (exit). Raw outputs:
+6 P-cores with SMT, 12-15 = 4 E-cores), kernel 7.0.0, FPC 3.2.2. Design: `docs/design.md` section 9
+(method and gate; only the throughput ratio is a hard gate). Raw outputs:
 `build/m3/S10/` (not checked in): `gateB/`, `gateA/`, `p99/`, `idle/`, `syscalls/`, `micro/`, `prof/`,
 `web_gate/`, and the driver `drive.sh` / `drive.log`.
 
@@ -303,7 +303,7 @@ request, and UB/UB2 changed the framework's request path since). Against hyper (
 - `bench/p99.sh` (wrk2 fixed-rate latency), `bench/idle_rss.sh` (idle connection memory),
   `bench/syscalls.sh` (strace counts per request).
 - `tools/get-tools.sh`: the wrk2 bytecode fix (section 4.1).
-- This report; `m3-transport.md` 9 S10 status.
+- This report.
 
 ## 11. Open questions for the user
 

@@ -1,4 +1,4 @@
-"""Finds implicit exception frames in hot routines (M3 design 4.4).
+"""Finds implicit exception frames in hot routines (docs/design.md 7.4).
 
 FPC 3.2.2 on x86_64-linux gives a routine with managed locals, managed
 temporaries or a try block a frame: a call to fpc_pushexceptaddr and

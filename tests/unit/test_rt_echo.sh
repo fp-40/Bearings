@@ -1,6 +1,6 @@
 #!/bin/sh
-# M3 step S1 exit criterion: an echo test moves 1 GB with random split sizes
-# under valgrind without errors (design m3-transport.md section 9, S1).
+# The echo test: 1 GB with random split sizes under valgrind without errors
+# (docs/design.md section 9).
 # Builds tests/unit/test_rt_echo.pas with the unit-test flags, runs the echo
 # server under valgrind memcheck and the client natively, and checks: client
 # verified every byte, server exited 0, valgrind reported 0 errors.

@@ -1,5 +1,5 @@
 #!/bin/sh
-# System calls per request (design m3-transport.md 7.6, step S10).
+# System calls per request (docs/design.md section 9, the performance gate).
 # The design names `perf stat -e 'syscalls:sys_enter_*'`; on this machine
 # kernel.perf_event_paranoid is 4 and tracefs is root-only, so the count
 # comes from `strace -c -f` instead. kernel.yama.ptrace_scope is 1 (only a

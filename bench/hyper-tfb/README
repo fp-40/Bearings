@@ -1,5 +1,5 @@
 hyper TFB plaintext baseline (moved from the M3 design-phase perf prototype,
-m3-perf-proto/hyper-tfb; design m3-transport.md 7.6).
+m3-perf-proto/hyper-tfb; docs/design.md section 9).
 
 TFB frameworks/Rust/hyper/src/main.rs (57d92fb) with the DB routes removed,
 hyper pinned to rev 7f67699 (1.12.0), tokio 1.53.2 (Cargo.lock), one

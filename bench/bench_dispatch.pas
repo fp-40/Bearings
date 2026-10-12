@@ -1,6 +1,6 @@
-{ M3 S5: dispatcher micro-benchmark (design 7.6 "the dispatcher over
-  TMockTransport (ns per request for depth 1 and depth 16 pipelines;
-  budget: prototype cost + 420 ns)", 0.4 P-P1, risk R1).
+{ M3 S5: dispatcher micro-benchmark (docs/design.md section 9): the dispatcher
+  over TMockTransport, ns per request for depth 1 and depth 16 pipelines;
+  budget: prototype cost + 420 ns.
 
   Both sides run over the same in-memory transport (one batch of Depth TFB
   plaintext requests per read, then -EAGAIN; writes accept everything), so

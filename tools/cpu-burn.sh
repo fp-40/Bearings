@@ -1,6 +1,6 @@
 #!/bin/sh
-# CPU load generator for the "under stress-ng --cpu 16" runs (design
-# m3-transport.md 9, S6 exit criterion; decision 12). When stress-ng is on
+# CPU load generator for the "under stress-ng --cpu 16" runs (docs/design.md
+# section 9). When stress-ng is on
 # PATH, "stress-ng --cpu N" runs; otherwise (stress-ng is not installed on
 # this machine and has many dependencies) N busy processes run, a shell loop
 # each with no syscalls in the loop. Either way they are killed when this

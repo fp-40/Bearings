@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Step S7 evidence (design m3-transport.md 9, S7): the worker tests of
+"""Step S7 evidence (docs/design.md section 9): the worker tests of
 tests/unit/test_workers.pas fail on mutants of the code they cover.
 
 For each mutant: copy src/ and tests/ into <out>/<id>/, replace one exact
@@ -74,7 +74,7 @@ M = [
      "  HappensBefore(@FState);\n  if True then\n",
      'Cancel_while_running'),
     # S7 fix round 4: the unpark moved from CancelShared into CloseReceiverFromLoop (every
-    # loop-side close of the receiver unparks a parked reader, design 3.3)
+    # loop-side close of the receiver unparks a parked reader, docs/design.md 6.2)
     ('cancel-no-unpark-reader', EX,
      "  ReceiverOpen := False;\n  if ReceiverParks then\n  begin\n    ReceiverParks := False;\n    DeferUnpark := True;\n  end;\n",
      "  ReceiverOpen := False;\n",
@@ -152,7 +152,7 @@ M = [
      "  if InterlockedCompareExchange(State, 2, 0) <> 0 then\n  begin\n    InterlockedExchange(State, 0);\n    HappensAfter(@State);\n    Exit;\n  end;",
      "  InterlockedExchange(State, 2);",
      'Unpark_at_park_entry'),
-    # drd: a side that skips the lock is reported (design 7.5, S7 exit "drd clean")
+    # drd: a side that skips the lock is reported (docs/design.md section 9, "drd clean")
     # (an IN: snippet removes every FLock.Acquire / FLock.Release inside that routine: removing
     # only the Acquire would keep the happens-before edges of the Release annotation)
     ('drd-channel-push-unlocked', EX,

@@ -1,5 +1,5 @@
-{ Tests for bearings.rt.buf TReadBuf, TBytesView and TByteVec (design
-  m3-transport.md 2.2.1, 2.2.4, 4.2, 4.3).
+{ Tests for bearings.rt.buf TReadBuf, TBytesView and TByteVec (docs/design.md
+  sections 5.4 and 7).
 
   - Unit tests: pool-class growth, compaction of an unpinned block, pinned
     blocks (never moved, freed by their last view), idle release, Freeze,

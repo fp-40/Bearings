@@ -1,5 +1,5 @@
 { M3 step S5 tests for bearings.http1.dispatch (port of hyper dispatch.rs) and
-  bearings.server (design m3-transport.md 2.4, 2.6-2.8, 1.11, 4.3, 7.3).
+  bearings.server (docs/design.md sections 5, 7.3 and 9).
 
   Built with -dWD_DEBUG (run_all.sh): the wake-source assertion of 2.4.5 runs
   at the end of every Run that returns Pending, in every test; TearDown
@@ -85,7 +85,7 @@ type
     FirstTryRead: TBodyReadStatus;   { result of the first TryRead (prefetch check) }
     FirstTryReadSet: Boolean;
     LastPath, LastBody: RawByteString;
-    { S7 fix round 7: what Call itself does (design 3.1: it must not answer or read the body;
+    { S7 fix round 7: what Call itself does (docs/design.md 5.3: it must not answer or read the body;
       builds with assertions assert it): 0 nothing, 1 Respond, 2 TryRead, 3 Fail, 4 BeginStream }
     InCall: Integer;
     constructor Create;
@@ -228,7 +228,7 @@ type
     procedure Pipeline_flush_keep_alive_off_pipelined;
     procedure Pipeline_flush_parts_response_written;
     procedure No_pipeline_flush_unchanged_at_end;
-    { S7 fix round 7: design 3.1's rule for THttpService.Call, asserted }
+    { S7 fix round 7: the docs/design.md 5.3 rule for THttpService.Call, asserted }
     procedure Call_that_answers_asserts;
     procedure Call_that_reads_asserts;
     { user decision 2026-10-11 (option B): a call that completes without a terminal call }
@@ -780,8 +780,8 @@ var
 begin
   { tests/ready_on_poll_stream.rs: every write first pends (arming a timer)
     and is accepted on the next poll. Its poll_flush half does not apply:
-    TTransport has no flush (a TCP stream has nothing to flush, design
-    2.2.4). Same fixture as unbuffered_stream. }
+    TTransport has no flush (a TCP stream has nothing to flush, docs/design.md
+    5.4). Same fixture as unbuffered_stream. }
   SetLength(Chunk, 65536);
   FillChar(Chunk[1], 65536, 7);
   SetLength(Script, 16);
@@ -951,7 +951,7 @@ end;
 procedure TTestDispatchBehavior.Request_body_prefetched_before_first_poll;
 begin
   { want = True: poll_read fills the slot with the first chunk before the
-    handler's first poll (chan.rs; design 3.3 "the prefetch") }
+    handler's first poll (chan.rs; docs/design.md 6.2, the prefetch) }
   FSvc.ReadBody := True;
   FIo.AddRead('POST / HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Content-Length: 5' + CRLF + CRLF + 'abcde')
     .AddReadPending.AddReadEof;
@@ -1538,7 +1538,7 @@ var
   Msg: string;
 begin
   { the sixth S7 verifiers (contract lens, minor; K_call_answers_in_call):
-    design 3.1 says THttpService.Call must not answer or read the body and
+    docs/design.md 5.3 says THttpService.Call must not answer or read the body and
     that debug builds assert it, but nothing asserted it: the answer made in
     Call was sent. S7 fix round 7 (deviation S7-46): the dispatcher marks
     the exchange while Call runs, and the terminal calls and TryRead assert

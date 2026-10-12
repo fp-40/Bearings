@@ -1,5 +1,5 @@
 { bearings.test.mocktransport - a port of tokio_test::io::Builder (tokio-test
-  0.4, src/io.rs) as a TTransport (design m3-transport.md 7.1). Step S3.
+  0.4, src/io.rs) as a TTransport (docs/design.md section 9).
 
   The script is one ordered list of actions, as in tokio_test:
   - Read(bytes): reads take bytes from it (at most the caller's length per

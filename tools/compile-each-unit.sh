@@ -3,7 +3,7 @@
 # fresh, empty unit output directory, so nothing compiled for another unit
 # is reused. FPC fails with "Circular unit reference" when interface uses
 # clauses form a cycle, so a clean run shows the interface uses graph is
-# acyclic (M3 design 8.1, step S0). Also prints the interface uses graph and
+# acyclic (the layer rules of README.md). Also prints the interface uses graph and
 # checks it with a topological sort (tools/unit-graph.py).
 # Usage: tools/compile-each-unit.sh [out_dir]   (or env OUT_DIR; the argument wins)
 # Exit status 0 only when every unit compiles and the graph has no cycle.

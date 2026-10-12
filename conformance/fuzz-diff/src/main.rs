@@ -1,4 +1,4 @@
-//! Differential stream fuzz (design m3-transport.md 7.5, step S9). Test
+//! Differential stream fuzz (docs/design.md section 9). Test
 //! tooling only, never shipped.
 //!
 //! Generated request streams (src/gen.rs) are written, with random write
@@ -493,7 +493,7 @@ impl Pair {
     }
 }
 
-/// Documented deviations (docs/design/m3-transport.md, Deviations log) that
+/// Documented deviations (docs/design.md section 10) that
 /// make a difference on purpose. S6-15 (decision 14): with pipeline_flush,
 /// hyper 1.12 drops what is left in its write buffer when the connection
 /// ends while unparsed bytes are still in its read buffer (io.rs

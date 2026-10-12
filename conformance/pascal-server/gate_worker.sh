@@ -1,5 +1,5 @@
 #!/bin/sh
-# Conformance gate, worker executor (design m3-transport.md 7.4, 9 S7, T1):
+# Conformance gate, worker executor (docs/design.md section 9):
 # builds beconf and runs the wire cases against `beconf --executor worker`
 # in assertion mode.
 #   1. the 105 cases, RUNS times: every run must print

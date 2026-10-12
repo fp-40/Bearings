@@ -1,5 +1,5 @@
 { M3 step S4 tests for bearings.http1.conn (port of hyper conn.rs), bearings.http1.config
-  and bearings.http.error (design m3-transport.md 2.1, 2.3, 2.5-2.8, 7.3).
+  and bearings.http.error (docs/design.md sections 5 and 9).
 
   TTestConnRs: the server tests of hyper v1.12.0 src/proto/h1/conn.rs
   (conn_reads_request_head .. conn_writes_chunked_body; the client tests
@@ -19,7 +19,7 @@
   test_body_chan), the upgrade slot's reference count, and an error head or
   a 100 Continue written while body bytes are queued (it goes behind them).
   TTestH1Config: bearings.http1.config. TTestHyperError: bearings.http.error.
-  TTestConnBodyRate (step UB): the body rate rule (design 2.5): off by
+  TTestConnBodyRate (step UB): the body rate rule (docs/design.md 5.7): off by
   default, one wait of BodyTimeoutMs fails the body (ETIMEDOUT, Reading
   closed, the owner woken by the timer), a frame restarts the wait, time
   the server does not read is not counted, the average-rate part, the

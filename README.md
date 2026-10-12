@@ -230,9 +230,12 @@ connection. Without systemd the same program can be tried with
   `stream.pas`) and the command that builds them (`examples/README.md`).
 - The header comment of every unit under `src/` explains what the unit does
   for a reader who knows Free Pascal but not web servers.
-- `docs/design/m3-transport.md` and `docs/design/m3-perf-report.md`: the
-  design and the performance measurements (written while this code was part
-  of another project; the unit names were updated).
+- `docs/design.md`: the design: the decisions and their reasons, the
+  invariants a contributor must respect, and the deviations from what an
+  HTTP library usually does.
+- `docs/design/m3-perf-report.md`: the performance measurements and how
+  they were made (written while this code was part of another project; the
+  unit names were updated).
 
 ## Layers
 

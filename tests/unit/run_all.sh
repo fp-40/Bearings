@@ -2,7 +2,7 @@
 # Unit-test target: builds and runs every fpcunit suite with the M2 test
 # flags (-Sa assertions on; test_h1_io is the M3 S3 suite; test_h1_conn,
 # test_body_chan and test_exchange are the S4 suites; test_h1_dispatch is the
-# S5 suite, built with -dWD_DEBUG so the wake-source check of design 2.4.5
+# S5 suite, built with -dWD_DEBUG so the wake-source check of docs/design.md 5.10
 # runs in every test (and -dWD_STALL since step UB: TTestDispatchStall);
 # test_server is the S8 suite (sendfile, upgrade
 # detach, stop, shared listener, signals; real sockets); test_server_ops
@@ -16,8 +16,8 @@
 # end-to-end stress (tools/s7-stress.sh, short form), the M3 S1 echo test
 # (1 GiB with random splits, under valgrind memcheck: build/tools/bin/valgrind
 # from tools/get-tools.sh; a missing valgrind fails the run, decision 12),
-# then the M3 S9 split fuzz (test_split_fuzz, heaptrc), then the M3 design
-# 4.4 asm check (tools/check-hot-asm.sh).
+# then the M3 S9 split fuzz (test_split_fuzz, heaptrc), then the hot-path
+# asm check of docs/design.md 7.4 (tools/check-hot-asm.sh).
 # Step T1 removed the conn-level differential harness (conformance/conn-diff)
 # and the BytesMut table generator (tests/unit/test_bytesmut_rs).
 # The differentials kept (parser vs httparse, request parsing vs hyper's
@@ -92,7 +92,7 @@ for T in test_h1_conn test_body_chan test_exchange test_h1_dispatch test_workers
   fi
 done
 # S7 exit criterion: the worker stress tests under valgrind --tool=drd
-# (design 7.5), built with -dWD_DRD (bearings.rt.sync's happens-before client
+# (docs/design.md section 9), built with -dWD_DRD (bearings.rt.sync's happens-before client
 # requests), tools/drd.supp, WD_ITER=20 (loop counts at 20 %): drd must
 # report 0 errors and every test must pass. DRD_RUNS (default 3) runs.
 # --fair-sched=yes: valgrind runs one thread at a time; its default lock
@@ -137,7 +137,7 @@ else
   echo "test_rt_echo: FAILED: no valgrind at $VG (run tools/get-tools.sh, or set VALGRIND)"
   FAIL=1
 fi
-# S9 split fuzz (design 7.5; tests/unit/test_split_fuzz.pas): the
+# S9 split fuzz (docs/design.md section 9; tests/unit/test_split_fuzz.pas): the
 # conformance case inputs and the M2 parser corpus (20 000 random entries,
 # seed 1, with httparse's test inputs when found) in random reads with random EAGAIN and partial writes, compared
 # with one-read runs; built with -Ci -Cr -Co -Ct -Sa -gh -gl -dWD_DEBUG,

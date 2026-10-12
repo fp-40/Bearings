@@ -1,5 +1,5 @@
-{ test_split_fuzz - the in-process split fuzz of M3 step S9 (design
-  m3-transport.md 7.5).
+{ test_split_fuzz - the in-process split fuzz of M3 step S9 (docs/design.md
+  section 9).
 
   Each input is the byte stream a client writes on one connection: the
   conformance cases (tests/unit/test_split_fuzz_cases.py: every case of
@@ -290,8 +290,8 @@ var
   end;
 
   { one poll (Iter: a loop iteration, else the readiness edge's direct
-    Run). An exception is what TLoop.Run would catch (1.10: the task is
-    aborted); only EH1Panic (hyper's panics, design 2.8) is documented }
+    Run). An exception is what TLoop.Run would catch (docs/design.md section 2: the task is
+    aborted); only EH1Panic (hyper's panics, docs/design.md 5.6) is documented }
   procedure Poll(Iter: Boolean);
   begin
     try

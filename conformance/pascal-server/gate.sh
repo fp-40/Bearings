@@ -1,5 +1,5 @@
 #!/bin/sh
-# Conformance gate, inline executor (design m3-transport.md 7.4, 9 S6, T1):
+# Conformance gate, inline executor (docs/design.md section 9):
 # builds beconf and runs the wire cases against it in assertion mode.
 #   1. the 105 cases, RUNS times in a row: every run must print
 #      "SUMMARY passed=104 failed=0 pending=1 total=105";

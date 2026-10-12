@@ -1,4 +1,4 @@
-{ M3 step S8 tests (design m3-transport.md 1.3, 1.11, 2.2.4 DV-5, 2.7, 3.7),
+{ M3 step S8 tests (docs/design.md sections 3, 5.4, 5.8, 5.9 and 6.7),
   over real sockets through TServer. They check outcomes (bytes a client
   receives, fds, exit times), not hyper's write sizes or event order.
 

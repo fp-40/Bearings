@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fixed-rate latency (design m3-transport.md 7.6, step S10): p50 / p99 /
+# Fixed-rate latency (docs/design.md section 9, the performance gate): p50 / p99 /
 # p99.9 from wrk2 (build/tools/bin/wrk2, tools/get-tools.sh) at 50 % and 80 %
 # of hyper's measured maximum requests/s, depth 1, hyper-tfb vs plaintext.
 # Both servers as in bench/run_gate.sh (configuration B by default: 4

@@ -1,6 +1,5 @@
 { M3 step S7 tests: bearings.rt.workers and the worker parts of bearings.http.exchange
-  (design m3-transport.md 1.7, 3.2.3, 3.3-3.6, 7.3 "Exchange" and
-  "Channel", 9 S7).
+  (docs/design.md sections 2, 6 and 9).
 
   TTestPool: FIFO order, hooks, shutdown finishes the queue, an item that
   raises does not end its worker, the default thread count, QueueLength /
@@ -1700,7 +1699,7 @@ var
 begin
   { PollCatch: a connection error while the body is read reaches the
     receiver as "connection error" (an equivalent mutant for the inline
-    service, design 7.3 conn-diff README; observable with a worker) }
+    service; observable with a worker) }
   FEx := NewEx('POST /e HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Content-Length: 10' + CRLF + CRLF);
   FEx.NoResponseIsExpected;              { the handler swallows the error and gives no answer }
   StartOffload(hmReadBody);
@@ -2369,7 +2368,7 @@ var
   It, Frames, I, J: Integer;
   Deadline: Int64;
 begin
-  { design 3.5: after Share any thread may write the stream. Two threads
+  { docs/design.md 6.4: after Share any thread may write the stream. Two threads
     blocked in Write on the same full channel (HighWater = one frame) are
     both woken as the consumer frees room (the S7 verifier's TParker
     finding: one waiter only, the second could make the first miss its
@@ -4931,7 +4930,7 @@ var
   Live0: LongInt;
 begin
   { a call that answers on the loop and gives a reference to a thread of
-    another pool (an SSE-style producer, design 3.5), which releases it
+    another pool (an SSE-style producer, docs/design.md 6.4), which releases it
     300 ms later, after TServer.Free began. The hook runs in that release's
     TLoop.Post right after the push, on the holder's thread only, and
     sleeps HookSleepMs there }

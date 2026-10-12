@@ -1,6 +1,6 @@
-# valgrind --tool=drd suppressions for the S7 worker stress tests
-# (tests/unit/test_workers.pas, built with -dWD_DRD; design m3-transport.md
-# 7.5, 9 S7). Each entry names why the reported access is not a data race.
+# valgrind --tool=drd suppressions for the worker tests
+# (tests/unit/test_workers.pas, built with -dWD_DRD; docs/design.md
+# section 9). Each entry names why the reported access is not a data race.
 #
 # 1. Accesses to synchronization words. drd does not treat lock-prefixed
 #    instructions or futex calls as synchronization; it reports the atomic

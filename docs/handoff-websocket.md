@@ -33,9 +33,8 @@ Out of scope for this work:
 - Every unit has a header comment that explains what it does for a reader
   who knows FreePascal but not web servers. Keep that style for new units:
   plain sentences, no mentions of other projects or of project history.
-- The design and performance documents are `docs/design/m3-transport.md`
-  and `docs/design/m3-perf-report.md` (written in wd-40 before the
-  extraction; unit names were updated to `bearings.*`).
+- The design document is `docs/design.md`; the performance measurements
+  are in `docs/design/m3-perf-report.md`.
 - `bearings.rt.loop` has one generic per-loop hook (`LoopTickProc`, with
   state in `TLoop.Ext`), already used by `bearings.http.date` for the cached
   Date header. Do not take it for WebSocket timers; use the timer wheel.

@@ -1,4 +1,4 @@
-{ Tests for bearings.http1.io, design m3-transport.md 2.2.2-2.2.4 and 7.2.
+{ Tests for bearings.http1.io, docs/design.md sections 5.1, 5.4 and 9.
 
   TTestIoRs: the tests of hyper v1.12.0 src/proto/h1/io.rs, adapted to the
   one write path of step T1 (small pieces copied into the cursor, large
@@ -1367,7 +1367,7 @@ begin
   end;
   { pooled, max not a block size: the 16 KiB block has more spare room than
     max - len, the read is still clamped, so a head that does not fit is
-    always 431 (DV-15) }
+    always 431 (docs/design.md section 10, parsing) }
   M := TMockTransport.Create;
   H := THttpHeaders.Create;
   try

@@ -3,7 +3,7 @@
 # One wrk pass over the 4 cells (c256/c1024 x depth 1/16) against a running
 # server; prints rps, latency p50/p99, server CPU-seconds used during the run,
 # rps per server CPU-second, RSS (moved from the M3 design-phase perf prototype,
-# m3-perf-proto/bench2.sh). For the gate method of design 7.6 (alternating
+# m3-perf-proto/bench2.sh). For the gate method of docs/design.md section 9 (alternating
 # servers, 5 runs per cell, median) use bench/run_gate.sh (bench/compare.py).
 # env: WRK (wrk binary; default: build/tools/bin/wrk) WRK_CPUS (default 8-15)
 #      WRK_THREADS (default 8) CONNS ("256 1024") DEPTHS ("1 16")

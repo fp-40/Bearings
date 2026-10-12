@@ -1,10 +1,9 @@
 #!/bin/sh
 # Fetches and builds the external tools the tests and benchmarks use, at
-# pinned versions, into build/tools/ (design m3-transport.md 0.3 decision 12,
-# step H). No root needed; nothing outside build/tools/ is written.
+# pinned versions, into build/tools/ (docs/design.md section 9). No root needed; nothing outside build/tools/ is written.
 #
 #   build/tools/bin/wrk        wg/wrk at WRK_COMMIT (system OpenSSL, bundled LuaJIT)
-#   build/tools/bin/wrk2       giltene/wrk2 at WRK2_COMMIT (fixed-rate load, p99; design 7.6)
+#   build/tools/bin/wrk2       giltene/wrk2 at WRK2_COMMIT (fixed-rate load, p99; docs/design.md section 9)
 #   build/tools/bin/valgrind   wrapper: the Ubuntu valgrind package VALGRIND_DEB,
 #                              fetched with apt-get download, checked against
 #                              VALGRIND_SHA256 and unpacked with dpkg -x (no install);

@@ -1,5 +1,5 @@
 #!/bin/sh
-# M3 design 4.4 build check: no implicit exception frame (fpc_pushexceptaddr /
+# The hot-path build check of docs/design.md 7.4: no implicit exception frame (fpc_pushexceptaddr /
 # fpc_setjmp) in any hot routine.
 #
 # Compiles every unit under src/ with -al (assembler listing kept) in two
@@ -8,7 +8,7 @@
 # (tools/hot-asm.py; patterns: Name, Name*, TType.Method, TType.*).
 #
 # Usage: tools/check-hot-asm.sh [pattern ...]
-#   no patterns: the full list of design 4.4. Routines of units that are
+#   no patterns: the full list of docs/design.md 7.4. Routines of units that are
 #   still interface skeletons pass trivially (empty bodies); each step's
 #   exit criterion names the routines it has implemented (S0:
 #   tools/check-hot-asm.sh --s0; S1: --s1; S2: --s2; S3: --s3; S4: --s4;
@@ -35,7 +35,7 @@ elif [ "$#" -eq 1 ] && [ "$1" = "--s2" ]; then
     'TTimerWheel.*' TLoop.RunIteration 'TTcpTransport.*' \
     'TReadBuf.*' 'TBytesView.*'
 elif [ "$#" -eq 1 ] && [ "$1" = "--s3" ]; then
-  # S2's list plus bearings.http1.io (S3): TH1Io.* (design 4.4) and the io.rs
+  # S2's list plus bearings.http1.io (S3): TH1Io.* (docs/design.md 7.4) and the io.rs
   # types its methods call on every request
   set -- 'ServerParse*' ServerEncode EncodeHead MakeEncoder SetLengthEncoder \
     SetChunkedEncoder 'TEncoder.*' TDecoder.Decode 'TByteVec.*' \
@@ -45,7 +45,7 @@ elif [ "$#" -eq 1 ] && [ "$1" = "--s3" ]; then
     'TEncodedBuf.*' IncrPowerOfTwo PrevPowerOfTwo QueuedEncoded QueuedTrailers QueuedFile \
     ReleaseBody
 elif [ "$#" -eq 1 ] && [ "$1" = "--s4" ]; then
-  # S3's list plus the S4 routines of design 4.4 (TH1Conn.*, TBodyChan.*,
+  # S3's list plus the S4 routines of docs/design.md 7.4 (TH1Conn.*, TBodyChan.*,
   # TExchange.{Respond,TryRead,ReleaseRequest}) and TConnState.*, which
   # TH1Conn calls on every request
   set -- 'ServerParse*' ServerEncode EncodeHead MakeEncoder SetLengthEncoder \
@@ -58,7 +58,7 @@ elif [ "$#" -eq 1 ] && [ "$1" = "--s4" ]; then
     'TH1Conn.*' 'TConnState.*' 'TBodyChan.*' TExchange.Respond TExchange.TryRead \
     TExchange.ReleaseRequest
 elif [ "$#" -eq 1 ] && [ "$1" = "--s5" ]; then
-  # S4's list plus the TH1Dispatcher routines of design 4.4 (S5)
+  # S4's list plus the TH1Dispatcher routines of docs/design.md 7.4 (S5)
   set -- 'ServerParse*' ServerEncode EncodeHead MakeEncoder SetLengthEncoder \
     SetChunkedEncoder 'TEncoder.*' TDecoder.Decode 'TByteVec.*' \
     'TTimerWheel.*' TLoop.RunIteration 'TTcpTransport.*' \
@@ -90,7 +90,7 @@ elif [ "$#" -eq 1 ] && [ "$1" = "--h" ]; then
     TH1Dispatcher.PollInner TH1Dispatcher.PollCatch TH1Dispatcher.PollMsg \
     TH1Dispatcher.RecvMsg
 elif [ "$#" -eq 1 ] && [ "$1" = "--s7" ]; then
-  # also: the debug checks of design 3.2.4 (S7 decisions 16, 17) are not in
+  # also: the debug checks of docs/design.md 6.1 and 6.4 are not in
   # the production build (no TExchange.Dbg* routine, no fpc_assert call in
   # bearings.http.exchange), and they are in the test build (the check can fail)
   DBGCHECK=1

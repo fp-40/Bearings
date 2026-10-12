@@ -1,5 +1,5 @@
 #!/bin/sh
-# The M3 performance gate (design m3-transport.md 7.6, decision 12):
+# The M3 performance gate (docs/design.md section 9, the performance gate):
 # hyper-tfb (bench/hyper-tfb, hyper 1.12.0 rev 7f67699) vs bench/plaintext in
 # configuration B: both servers with 4 loops/threads pinned to CPUs 0-3, wrk
 # (build/tools/bin/wrk, tools/get-tools.sh) on CPUs 4-15 with 12 threads;

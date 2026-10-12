@@ -1,5 +1,5 @@
-{ M3 step S1 tests for bearings.rt.sync and bearings.rt.loop (design m3-transport.md
-  1.4-1.7, 1.10, 4.3):
+{ M3 step S1 tests for bearings.rt.sync and bearings.rt.loop (docs/design.md
+  sections 2, 3 and 7.3):
   - TMpscStack: 8 producer threads x 10^7 pushes, one consumer; per-producer
     FIFO order, nothing lost, and "Push found the stack empty" exactly once
     per non-empty TakeAll batch;

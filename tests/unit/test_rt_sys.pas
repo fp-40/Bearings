@@ -1,5 +1,5 @@
-{ M3 step S1 tests for bearings.rt.sys, bearings.rt.clock and bearings.rt.cpu (design
-  m3-transport.md 1.2, 1.9, 1.12):
+{ M3 step S1 tests for bearings.rt.sys, bearings.rt.clock and bearings.rt.cpu (docs/design.md
+  sections 1, 2 and 4):
   - every syscall stub is checked against its FPC RTL equivalent (BaseUnix,
     Sockets, Linux units, or Syscall.do_syscall where the RTL has no
     wrapper): same success results, and -errno where the RTL returns -1 and
