@@ -24,7 +24,7 @@
   spin lock (held for the time of the copy, never across a system call); a
   line that does not fit is dropped and counted in Dropped. The flusher
   thread of the TAccessLog wakes every FlushMs, and at once when a loop
-  filled half an area, takes each buffer's lock just long enough to swap
+  filled half an area (one wake per area), takes each buffer's lock just long enough to swap
   the two areas, and writes the full one to the sink outside the lock. So
   a slow sink (a full pipe, a slow disk) never stalls a loop: it costs
   dropped lines, which the metrics report.
@@ -98,6 +98,7 @@ type
     FOwner: TAccessLog;
     FFormat: TAccessLogFormat;
     FUserAgent: Boolean;
+    FWoke: Boolean;                  { the flusher was woken for the active area already }
   public
     Dropped: QWord;                  { lines that did not fit (loop thread) }
     constructor Create(AOwner: TAccessLog; ACap: SizeInt; AFormat: TAccessLogFormat; AUserAgent: Boolean);
@@ -587,7 +588,11 @@ begin
   N := FormatAccessLine(R, FFormat, FUserAgent, FActive.Data + FActive.Len, FCap - FActive.Len);
   if N >= 0 then
     Inc(FActive.Len, N);
-  Half := FActive.Len >= FCap div 2;
+  { the flusher is woken once per area, by the line that fills it to the
+    half (the wake is a system call) }
+  Half := (FActive.Len >= FCap div 2) and not FWoke;
+  if Half then
+    FWoke := True;
   FLock.Release;
   if N < 0 then
     Inc(Dropped)
@@ -604,6 +609,7 @@ begin
   FActive := FOther;
   FActive.Len := 0;
   FOther := Full;
+  FWoke := False;
   FLock.Release;
   if (Full.Len > 0) and (Sink <> nil) then
     Sink.Write(Full.Data, Full.Len);
