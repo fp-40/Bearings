@@ -7,3 +7,9 @@ __pycache__/
 *.ppu
 *.a
 *.compiled
+# editors and temporary files
+*~
+*.swp
+*.orig
+*.rej
+.DS_Store
