@@ -26,8 +26,9 @@ from other threads (`src/ws`, section "WebSocket" below).
 
 It has no TLS and no HTTP/2. For TLS, put a reverse proxy such as nginx in
 front of it. The WebSocket code negotiates no extension (no
-permessage-deflate compression) and its handlers run on the loop thread
-only (there is no blocking WebSocket API for worker threads). It
+permessage-deflate compression); its handlers run on the loop thread or,
+for code that blocks, on the worker pool, one event at a time per
+connection. It
 listens on TCP or on a Unix domain socket, runs under systemd socket
 activation with readiness and watchdog notifications, can cap the number
 of open connections, and can write an access log (JSON lines or the
@@ -224,14 +225,41 @@ end;
 
 `DefaultWsConfig`: messages up to 16 MiB, a ping every 25 s, a 60 s idle
 timeout (the pongs keep a live client from reaching it), a 5 s close
-timeout, and a 1 MiB send queue limit. A server that authenticates with
+timeout, and 1 MiB send and receive queue limits. A server that authenticates with
 cookies passes the allowed origins too (`CheckRequest(Ex, Protocols,
 ['https://example.com'])`): a handshake from another site's page is
 refused with 403. At a graceful stop the server sends each WebSocket a
 close frame with code 1001 and waits for it to end. To send one message
 to many connections, encode it once with `WsTextFrame` and call
 `SendFrame` on each: the connections share the frame's bytes instead of
-copying them. The unit
+copying them.
+
+A handler that blocks (a database query per message, for example) derives
+from `TWsWorkerHandler` and is accepted with the server's pool:
+
+```pascal
+type
+  TStore = class(TWsWorkerHandler)
+  public
+    procedure OnText(WS: TWebSocket; const Msg: RawByteString); override;
+  end;
+
+procedure TStore.OnText(WS: TWebSocket; const Msg: RawByteString);
+begin
+  Db.Insert(Msg);                    { blocks: this runs on a worker thread }
+  WS.PostText('stored');             { sends from any thread }
+end;
+
+  ...
+  AcceptWebSocket(Ex, R, TStore.Create, Server.Workers, DefaultWsConfig);
+```
+
+Its events run on a worker thread, one at a time per connection and in
+order, and an idle connection holds no thread: the loop queues the messages
+and hands the connection to the pool only while there is something to
+handle. The loop stops reading a connection whose unhandled messages reach
+`ReceiveHighWater` (1 MiB by default). `examples/ws_echo.pas worker` is
+the echo this way; `docs/api.md`, section 10, has the rules. The unit
 headers of `bearings.ws.conn`, `bearings.ws.frame` and
 `bearings.ws.handshake` describe the behaviour in full.
 

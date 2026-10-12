@@ -155,6 +155,28 @@ else
     I=$((I + 1))
   done
 fi
+# The WebSocket handler on the worker pool (TTestWsWorker of
+# test_ws_echo, real sockets) under drd too, once: the event queue, the
+# receive mark and the stop while a handler is busy are loop-to-worker
+# hand-offs like the ones of S7.
+DW="$DR/ws"
+mkdir -p "$DW/u"
+# shellcheck disable=SC2086
+if ! fpc -Mobjfpc -Sh -O2 -gl -Cr -Co -Ct -Sa -dWD_DRD $FU -FU"$DW/u" -FE"$DW" \
+    "$ROOT/tests/unit/test_ws_echo.pas" > "$DW/test_ws_echo.build.log" 2>&1; then
+  echo "test_ws_echo (drd): BUILD FAILED (see $DW/test_ws_echo.build.log)"
+  FAIL=1
+elif [ -x "$VG" ] || command -v "$VG" > /dev/null 2>&1; then
+  if (cd "$DW" && WD_ITER=20 "$VG" --tool=drd --fair-sched=yes --suppressions="$ROOT/tools/drd.supp" \
+      ./test_ws_echo --suite=TTestWsWorker --format=plain > "$DW/run.out" 2> "$DW/run.err"); then R=0; else R=$?; fi
+  DE=$(sed -n 's/.*ERROR SUMMARY: \([0-9]*\) errors.*/\1/p' "$DW/run.err" | tail -n 1)
+  # a --suite run prints "SuiteList Time:..." (no leading space) with the totals
+  DL=$(grep -m 1 -E 'Time:[0-9:.]+ N:[0-9]+ E:' "$DW/run.out" || echo '?')
+  echo "test_ws_echo TTestWsWorker (drd): $DL (exit $R), drd errors: ${DE:-?}"
+  if [ "$R" -ne 0 ] || [ "${DE:-x}" != "0" ] || ! echo "$DL" | grep -q ' E:0 F:0 '; then
+    FAIL=1
+  fi
+fi
 # S7 fix round 5 (deviation S7-34): the end-to-end worker stress
 # (tests/unit/stress_workers.pas through TServer), natively and under drd;
 # STRESS_SEEDS (default 3) and STRESS_DRD_RUNS (default 1) set its size

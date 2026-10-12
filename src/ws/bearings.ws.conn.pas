@@ -29,6 +29,31 @@
     handler object belongs to the TWebSocket (freed after OnClose) unless
     it was created with AOwnsHandler = False.
 
+  A handler on the worker pool (TWsWorkerHandler, AcceptWebSocket with a
+  TWorkerPool). For a handler that blocks (a database, an outgoing HTTP
+  call), the same events are run on a worker thread instead: OnOpen,
+  OnText, OnBinary, OnPong, OnWritable, OnError and OnClose, in that
+  order, one event at a time per connection. The loop thread copies each
+  message into the connection's event queue; if no worker is running the
+  connection's job, it submits one (a TWorkItem embedded in the
+  connection: no allocation). The job drains the queue, calling the
+  handler for each event, and returns when the queue is empty; so an idle
+  connection holds no thread, and the messages of one connection are
+  handled in order. The message bytes are the handler's own RawByteString,
+  valid after the call. The handler sends with PostText, PostBinary and
+  PostFrame (the any-thread sends below), closes with PostClose, and gets
+  OnWritable when a post that returned wsFull may be retried. The worker
+  is not the loop: SendText and CloseWith must not be called from it.
+  Backpressure: while the queue holds ReceiveHighWater bytes or more of
+  messages not yet handled, the connection stops reading the socket (as
+  for an unread output, below); reading resumes when the worker has
+  drained the queue below the mark. An exception from a worker handler
+  method fails the connection with 1011 (reported on stderr); the events
+  already queued, OnError and OnClose still run. When the pool refuses the
+  job (it is shut down), the connection is aborted and no further event
+  runs: the server shuts the pool down only after every loop ended, so
+  this does not happen inside TServer.
+
   Reading. Each run reads from the socket into a pooled 64 KiB block
   (bearings.rt.buf), gives the bytes to the frame reader, and delivers what
   it reports. A message that arrives whole in one read is delivered from
@@ -111,11 +136,13 @@
   Exceptions. An exception raised by a handler method is reported to
   LoopErrorProc (bearings.rt.loop) and fails the connection with 1011.
 
-  Not supported: extensions (permessage-deflate), a blocking API for worker
-  threads.
+  Not supported: extensions (permessage-deflate), a blocking receive on
+  a worker thread (a TWsWorkerHandler gets its messages delivered; it does
+  not wait for them, so no thread is held by an idle connection).
 
   Threading: everything runs on the loop thread of the TUpgraded, except
-  PostText, PostBinary, AddRef and Release. }
+  PostText, PostBinary, PostFrame, PostClose, AddRef and Release (any
+  thread), and the methods of a TWsWorkerHandler (a worker thread). }
 unit bearings.ws.conn;
 
 {$mode objfpc}{$H+}
@@ -124,8 +151,8 @@ interface
 
 uses
   SysUtils, ctypes, bearings.rt.sys, bearings.rt.sync, bearings.rt.loop, bearings.rt.timer,
-  bearings.rt.buf, bearings.rt.stream, bearings.http.exchange, bearings.ws.frame,
-  bearings.ws.handshake;
+  bearings.rt.buf, bearings.rt.stream, bearings.rt.workers, bearings.http.exchange,
+  bearings.ws.frame, bearings.ws.handshake;
 
 const
   WS_READ_BLOCK = 65536;
@@ -142,6 +169,7 @@ type
     PingIntervalMs: Int64;           { 0 = no pings }
     CloseTimeoutMs: Int64;           { must be > 0 }
     SendHighWater: SizeInt;
+    ReceiveHighWater: SizeInt;       { worker handler: bytes of messages waiting for it; 0 = SendHighWater }
   end;
 
   TWsSendResult = (wsOk, wsFull, wsClosed);
@@ -155,6 +183,38 @@ type
     procedure OnWritable(WS: TWebSocket); virtual;
     procedure OnError(WS: TWebSocket; Code: Word; const Msg: string); virtual;
     procedure OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString); virtual;
+  end;
+
+  { The same events, run on a worker thread of the pool given to
+    AcceptWebSocket, one at a time per connection, in order (the unit
+    header). Msg is the handler's own copy. Sends: PostText, PostBinary,
+    PostFrame; close: PostClose. OnWritable: a post returned wsFull and the
+    posted messages have since been moved to the output. }
+  TWsWorkerHandler = class
+  public
+    procedure OnOpen(WS: TWebSocket); virtual;
+    procedure OnText(WS: TWebSocket; const Msg: RawByteString); virtual;
+    procedure OnBinary(WS: TWebSocket; const Msg: RawByteString); virtual;
+    procedure OnPong(WS: TWebSocket; const Payload: RawByteString); virtual;
+    procedure OnWritable(WS: TWebSocket); virtual;
+    procedure OnError(WS: TWebSocket; Code: Word; const Msg: string); virtual;
+    procedure OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString); virtual;
+  end;
+
+  TWsEventKind = (weOpen, weText, weBinary, wePong, weWritable, weError, weClose);
+
+  { one queued event for a worker handler }
+  TWsEvent = record
+    Kind: TWsEventKind;
+    Code: Word;
+    Data: RawByteString;
+  end;
+
+  { the connection's work item (one per connection, created with it) }
+  TWsJob = class(TWorkItem)
+  public
+    WS: TWebSocket;
+    procedure Execute; override;
   end;
 
   TWsPosted = record
@@ -211,6 +271,23 @@ type
     FPostClosed: Boolean;
     FPostMsg: TLoopMsg;
     FPostQueued: Boolean;            { FPostMsg is in the loop's inbox }
+    FPostWritable: Boolean;          { worker handler: a post returned wsFull; OnWritable when drained }
+    { worker handler (FWorker <> nil); the event queue is under FPostLock }
+    FWorker: TWsWorkerHandler;
+    FPool: TWorkerPool;
+    FJob: TWsJob;
+    FIn: array of TWsEvent;
+    FInCount: Integer;
+    FInBytes: SizeInt;               { message bytes queued, not yet handled }
+    FInPaused: Boolean;              { reading stopped because of FInBytes (loop); the worker clears it and wakes }
+    FInClosed: Boolean;              { the close event was queued: no more events }
+    FJobActive: Boolean;             { FJob is queued or running }
+    FStopPending: Boolean;           { Shutdown came while the job ran: CloseWith when it is done }
+    FWorkerErr: string;              { a worker handler method raised: Step fails the connection }
+    procedure Enqueue(Kind: TWsEventKind; const Data: RawByteString; Code: Word = 0);
+    procedure RunJob;
+    procedure PostWake;
+    function ReadBlocked: Boolean;
     procedure Step;
     procedure ReadInput;
     procedure HandleBytes(P: PByte; L: SizeInt);
@@ -237,6 +314,9 @@ type
   public
     { AHandler belongs to the new object unless AOwnsHandler = False. }
     constructor Create(AHandler: TWebSocketHandler; const ACfg: TWsConfig; AOwnsHandler: Boolean = True);
+    { the handler's methods run on APool (the unit header) }
+    constructor CreateWorker(AHandler: TWsWorkerHandler; APool: TWorkerPool; const ACfg: TWsConfig;
+      AOwnsHandler: Boolean = True);
     destructor Destroy; override;
     { Loop thread: takes over U (attaches to it). OnOpen runs in the first
       run of the connection, right after. }
@@ -272,7 +352,8 @@ type
     { the close frame was sent or the connection ended: sends return wsClosed }
     function Closing: Boolean; inline;
     property Loop: TLoop read FLoop;
-    property Handler: TWebSocketHandler read FHandler;
+    property Handler: TWebSocketHandler read FHandler;         { nil for a worker handler }
+    property WorkerHandler: TWsWorkerHandler read FWorker;     { nil for a loop handler }
     property Config: TWsConfig read FCfg;
     property User: TObject read FUser write FUser;   { application data; not freed here }
 
@@ -280,6 +361,9 @@ type
     function PostText(const S: RawByteString): TWsSendResult;
     function PostBinary(const S: RawByteString): TWsSendResult;
     function PostFrame(const F: TWsFrame): TWsSendResult;
+    { CloseWith from another thread: the loop starts the close handshake
+      after the posts before it. False when the connection is closing. }
+    function PostClose(Code: Word = WS_CLOSE_NORMAL; const Reason: RawByteString = ''): Boolean;
     procedure AddRef;                { loop thread, or a thread that already holds a reference }
     procedure Release;               { the last reference frees the object }
   end;
@@ -290,14 +374,17 @@ type
   TWsUpgradeHandler = class(TUpgradeHandler)
   public
     Handler: TWebSocketHandler;
+    Worker: TWsWorkerHandler;
+    Pool: TWorkerPool;
     Cfg: TWsConfig;
     constructor Create(AHandler: TWebSocketHandler; const ACfg: TWsConfig);
+    constructor Create(AWorker: TWsWorkerHandler; APool: TWorkerPool; const ACfg: TWsConfig);
     procedure Upgraded(U: TUpgraded); override;
     procedure UpgradeFailed(const Msg: string); override;
   end;
 
 { MaxMessage 16 MiB, IdleTimeoutMs 60000, PingIntervalMs 25000,
-  CloseTimeoutMs 5000, SendHighWater 1 MiB. The pings make a client that
+  CloseTimeoutMs 5000, SendHighWater 1 MiB, ReceiveHighWater 1 MiB. The pings make a client that
   is alive answer with pongs, which count as received bytes, so the idle
   timeout closes only clients that are gone; they also keep proxies from
   closing a quiet connection. }
@@ -310,6 +397,10 @@ function DefaultWsConfig: TWsConfig;
   when the 101 was not sent. }
 function AcceptWebSocket(Ex: TExchange; const R: TWsHandshake; Handler: TWebSocketHandler;
   const Cfg: TWsConfig): Boolean;
+{ The same with a handler that runs on Pool (TServer.Workers, or a pool of
+  the application's own); the unit header, "A handler on the worker pool". }
+function AcceptWebSocket(Ex: TExchange; const R: TWsHandshake; Handler: TWsWorkerHandler;
+  Pool: TWorkerPool; const Cfg: TWsConfig): Boolean;
 
 var
   { TWebSocket objects alive; tests check that every connection was freed. Atomic. }
@@ -324,6 +415,7 @@ begin
   Result.PingIntervalMs := 25000;
   Result.CloseTimeoutMs := 5000;
   Result.SendHighWater := 1024 * 1024;
+  Result.ReceiveHighWater := 1024 * 1024;
 end;
 
 { ---- TWebSocketHandler ---- }
@@ -335,6 +427,24 @@ procedure TWebSocketHandler.OnPong(WS: TWebSocket; P: PByte; Len: SizeInt); begi
 procedure TWebSocketHandler.OnWritable(WS: TWebSocket); begin end;
 procedure TWebSocketHandler.OnError(WS: TWebSocket; Code: Word; const Msg: string); begin end;
 procedure TWebSocketHandler.OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString); begin end;
+
+{ ---- TWsWorkerHandler ---- }
+
+procedure TWsWorkerHandler.OnOpen(WS: TWebSocket); begin end;
+procedure TWsWorkerHandler.OnText(WS: TWebSocket; const Msg: RawByteString); begin end;
+procedure TWsWorkerHandler.OnBinary(WS: TWebSocket; const Msg: RawByteString); begin end;
+procedure TWsWorkerHandler.OnPong(WS: TWebSocket; const Payload: RawByteString); begin end;
+procedure TWsWorkerHandler.OnWritable(WS: TWebSocket); begin end;
+procedure TWsWorkerHandler.OnError(WS: TWebSocket; Code: Word; const Msg: string); begin end;
+procedure TWsWorkerHandler.OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString); begin end;
+
+procedure TWsJob.Execute;
+begin
+  { RunJob ends with the job's Release, which may free the connection and
+    this object with it: nothing may follow the call (the pool does not
+    touch an item after Execute either) }
+  WS.RunJob;
+end;
 
 { ---- timers and inbox messages ---- }
 
@@ -389,12 +499,28 @@ begin
   AtomicInc(WebSocketsLive);
 end;
 
+constructor TWebSocket.CreateWorker(AHandler: TWsWorkerHandler; APool: TWorkerPool; const ACfg: TWsConfig;
+  AOwnsHandler: Boolean);
+begin
+  Create(nil, ACfg, AOwnsHandler);
+  FWorker := AHandler;
+  FPool := APool;
+  if FCfg.ReceiveHighWater <= 0 then
+    FCfg.ReceiveHighWater := FCfg.SendHighWater;
+  FJob := TWsJob.Create;
+  FJob.WS := Self;
+end;
+
 destructor TWebSocket.Destroy;
 begin
   { Finish released the loop resources; a TWebSocket that never started
-    has none }
+    has none. A worker handler is freed here: its OnClose ran on the job,
+    which held a reference until after it. }
   if (not FFinished) and FOwnsHandler then
     FreeAndNil(FHandler);
+  if FOwnsHandler then
+    FreeAndNil(FWorker);
+  FJob.Free;
   AtomicDec(WebSocketsLive);
   inherited Destroy;
 end;
@@ -421,9 +547,24 @@ begin
 end;
 
 procedure TWebSocket.Shutdown(U: TUpgraded);
+var
+  Busy: Boolean;
 begin
-  if not Closing then
-    CloseWith(WS_CLOSE_GOING_AWAY, 'server shutdown');
+  if Closing then
+    Exit;
+  if FWorker <> nil then
+  begin
+    { a worker handler busy with a message finishes it and may answer
+      before the close frame goes (a graceful stop, as for an HTTP
+      response in progress); no further message is delivered }
+    FPostLock.Acquire;
+    Busy := FJobActive;
+    FStopPending := Busy;
+    FPostLock.Release;
+    if Busy then
+      Exit;
+  end;
+  CloseWith(WS_CLOSE_GOING_AWAY, 'server shutdown');
 end;
 
 procedure TWebSocket.Aborted(U: TUpgraded);
@@ -455,8 +596,14 @@ end;
 
 procedure TWebSocket.Release;
 begin
+  { the releasing thread's accesses come before the free (drd: the
+    reference-count edge, as in TExchange) }
+  HappensBefore(@FRefs);
   if AtomicDec(FRefs) = 0 then
+  begin
+    HappensAfter(@FRefs);
     Free;
+  end;
 end;
 
 function TWebSocket.Queued: SizeInt;
@@ -484,6 +631,9 @@ end;
 { One run of the connection: everything happens here, so that the object
   is freed (Finish) only here, after every callback returned. }
 procedure TWebSocket.Step;
+var
+  Err: string;
+  Busy: Boolean;
 begin
   if FFinished then
     Exit;
@@ -492,17 +642,44 @@ begin
     if not FOpened then
     begin
       FOpened := True;
-      FHandler.OnOpen(Self);
+      if FWorker <> nil then
+        Enqueue(weOpen, '')
+      else
+        FHandler.OnOpen(Self);
+    end;
+    if FWorker <> nil then
+    begin
+      { a worker handler method raised (RunJob): fail the connection here }
+      FPostLock.Acquire;
+      Err := FWorkerErr;
+      FWorkerErr := '';
+      FPostLock.Release;
+      if Err <> '' then
+        Fail(WS_CLOSE_INTERNAL_ERROR, Err);
     end;
     if FPostedCount > 0 then
       DrainPosted;
+    if FStopPending then
+    begin
+      { Shutdown waited for the job: close once it is done }
+      FPostLock.Acquire;
+      Busy := FJobActive;
+      FPostLock.Release;
+      if not Busy then
+      begin
+        FStopPending := False;
+        if not Closing then
+          CloseWith(WS_CLOSE_GOING_AWAY, 'server shutdown');
+      end;
+    end;
     HandleTimers;
     if not FEnded then
       ReadInput;
     Flush;
-    if FReadPaused and not FEnded and (Queued < FCfg.SendHighWater) then
+    if FReadPaused and not FEnded and not ReadBlocked then
     begin
-      { the queue drained below the mark in this run: read what waited }
+      { the output queue, or the worker's event queue, drained below the
+        mark in this run: read what waited }
       ReadInput;
       Flush;
     end;
@@ -567,8 +744,9 @@ begin
   Reads := 0;
   while not FEnded do
   begin
-    { backpressure: the client does not read what we send }
-    FReadPaused := (not Ending) and (Queued >= FCfg.SendHighWater);
+    { backpressure: the client does not read what we send, or the worker
+      handler has not handled what it sent }
+    FReadPaused := (not Ending) and ReadBlocked;
     if FReadPaused then
       Exit;
     if FReadBlk = nil then
@@ -620,6 +798,8 @@ begin
 end;
 
 procedure TWebSocket.Deliver(Opcode: Byte; P: PByte; Len: SizeInt);
+var
+  Msg: RawByteString;
 begin
   if not (FReader.MsgFirst and FReader.MsgEnd) then
   begin
@@ -632,7 +812,17 @@ begin
     Len := FMsg.Len;
   end;
   try
-    if Opcode = WS_OP_TEXT then
+    if FWorker <> nil then
+    begin
+      if FStopPending then
+        Exit;                        { the server stops: not delivered (as after the close frame) }
+      SetString(Msg, PAnsiChar(P), Len);
+      if Opcode = WS_OP_TEXT then
+        Enqueue(weText, Msg)
+      else
+        Enqueue(weBinary, Msg);
+    end
+    else if Opcode = WS_OP_TEXT then
       FHandler.OnText(Self, P, Len)
     else
       FHandler.OnBinary(Self, P, Len);
@@ -655,7 +845,13 @@ begin
       if not FCloseSent then
         QueueFrame(WS_OP_PONG, @FReader.Ctl[0], FReader.CtlLen, True);
     WS_OP_PONG:
-      FHandler.OnPong(Self, @FReader.Ctl[0], FReader.CtlLen);
+      if FWorker <> nil then
+      begin
+        SetString(Reason, PAnsiChar(@FReader.Ctl[0]), FReader.CtlLen);
+        Enqueue(wePong, Reason);
+      end
+      else
+        FHandler.OnPong(Self, @FReader.Ctl[0], FReader.CtlLen);
     WS_OP_CLOSE:
       begin
         FCloseReceived := True;
@@ -713,6 +909,11 @@ begin
   if not FCloseSent and not FEnded then
     QueueClose(Code, '');
   ArmClose;
+  if FWorker <> nil then
+  begin
+    Enqueue(weError, Msg, Code);
+    Exit;
+  end;
   try
     FHandler.OnError(Self, Code, Msg);
   except
@@ -1003,6 +1204,7 @@ procedure TWebSocket.DrainPosted;
 var
   Items: array of TWsPosted;
   N, I: Integer;
+  WantWritable: Boolean;
 begin
   FPostLock.Acquire;
   Items := FPosted;
@@ -1010,12 +1212,19 @@ begin
   FPosted := nil;
   FPostedCount := 0;
   FPostedBytes := 0;
+  WantWritable := FPostWritable;
+  FPostWritable := False;
   FPostLock.Release;
   for I := 0 to N - 1 do
     if Items[I].Opcode = 0 then
       QueuePrepared(Items[I].Data, True)
+    else if Items[I].Opcode = WS_OP_CLOSE then
+      { PostClose: the code in the first two bytes, then the reason }
+      CloseWith((Word(Items[I].Data[1]) shl 8) or Word(Items[I].Data[2]), Copy(Items[I].Data, 3, MaxInt))
     else
       QueueFrame(Items[I].Opcode, PByte(Items[I].Data), Length(Items[I].Data), True);
+  if WantWritable and (FWorker <> nil) then
+    Enqueue(weWritable, '');
 end;
 
 function TWebSocket.Post(Opcode: Byte; const Data: RawByteString): TWsSendResult;
@@ -1028,8 +1237,9 @@ begin
     FPostLock.Release;
     Exit(wsClosed);
   end;
-  if FPostedBytes >= FCfg.SendHighWater then
+  if (FPostedBytes >= FCfg.SendHighWater) and (Opcode <> WS_OP_CLOSE) then
   begin
+    FPostWritable := True;           { a worker handler gets OnWritable when the list drains }
     FPostLock.Release;
     Exit(wsFull);
   end;
@@ -1047,6 +1257,159 @@ begin
   if NeedPost then
     FLoop.Post(@FPostMsg);
   Result := wsOk;
+end;
+
+{ Any thread: asks the loop for a run (WsPostProc wakes the connection),
+  with the reference and the one-message-at-a-time rule of Post. Nothing
+  after Finish (FPostClosed). }
+procedure TWebSocket.PostWake;
+var
+  NeedPost: Boolean;
+begin
+  FPostLock.Acquire;
+  NeedPost := (not FPostClosed) and (not FPostQueued);
+  if NeedPost then
+  begin
+    FPostQueued := True;
+    AtomicInc(FRefs);
+  end;
+  FPostLock.Release;
+  if NeedPost then
+    FLoop.Post(@FPostMsg);
+end;
+
+function TWebSocket.PostClose(Code: Word; const Reason: RawByteString): Boolean;
+var
+  R: RawByteString;
+begin
+  if (Code <> 0) and not WsCloseCodeValid(Code) then
+    Exit(False);
+  R := Copy(Reason, 1, WS_MAX_CONTROL - 2);
+  Result := Post(WS_OP_CLOSE, AnsiChar(Code shr 8) + AnsiChar(Code and $FF) + R) = wsOk;
+end;
+
+{ ---- the worker handler's event queue ---- }
+
+{ Loop thread. Queues an event for the worker handler and submits the
+  connection's job when none is queued or running. }
+procedure TWebSocket.Enqueue(Kind: TWsEventKind; const Data: RawByteString; Code: Word);
+var
+  NeedSubmit: Boolean;
+begin
+  FPostLock.Acquire;
+  if FInClosed then
+  begin
+    FPostLock.Release;
+    Exit;
+  end;
+  if FInCount = Length(FIn) then
+    SetLength(FIn, 4 + 2 * Length(FIn));
+  FIn[FInCount].Kind := Kind;
+  FIn[FInCount].Code := Code;
+  FIn[FInCount].Data := Data;
+  Inc(FInCount);
+  Inc(FInBytes, Length(Data));
+  if Kind = weClose then
+    FInClosed := True;
+  NeedSubmit := not FJobActive;
+  FJobActive := True;
+  FPostLock.Release;
+  if not NeedSubmit then
+    Exit;
+  AtomicInc(FRefs);                  { the job holds a reference until it returns }
+  if not FPool.TrySubmit(FJob) then
+  begin
+    { the pool is shut down: no event will run; the connection ends }
+    FPostLock.Acquire;
+    FJobActive := False;
+    FIn := nil;
+    FInCount := 0;
+    FInBytes := 0;
+    FInClosed := True;
+    FPostLock.Release;
+    Release;
+    if not FFinished then
+      Abort;
+  end;
+end;
+
+{ Reading must stop: the output queue is over its mark (the client does
+  not read), or the worker's event queue is over its mark (the handler
+  has not caught up). The second case is remembered (FInPaused) so that
+  the worker wakes the loop when it drained the queue. }
+function TWebSocket.ReadBlocked: Boolean;
+begin
+  Result := Queued >= FCfg.SendHighWater;
+  if FWorker = nil then
+    Exit;
+  FPostLock.Acquire;
+  FInPaused := FInBytes >= FCfg.ReceiveHighWater;
+  Result := Result or FInPaused;
+  FPostLock.Release;
+end;
+
+{ Worker thread (TWsJob.Execute): runs the queued events, in order, until
+  the queue is empty; then gives the job's reference back. One job at a
+  time per connection (FJobActive), so the handler is never entered by two
+  threads. }
+procedure TWebSocket.RunJob;
+var
+  Items: array of TWsEvent;
+  N, I: Integer;
+  Wake, Done: Boolean;
+  Err: string;
+begin
+  repeat
+    FPostLock.Acquire;
+    Items := FIn;
+    N := FInCount;
+    FIn := nil;
+    FInCount := 0;
+    FInBytes := 0;
+    Wake := FInPaused;               { the loop stopped reading for this queue: it is empty now }
+    FInPaused := False;
+    FPostLock.Release;
+    if Wake then
+      PostWake;
+    for I := 0 to N - 1 do
+    begin
+      try
+        case Items[I].Kind of
+          weOpen: FWorker.OnOpen(Self);
+          weText: FWorker.OnText(Self, Items[I].Data);
+          weBinary: FWorker.OnBinary(Self, Items[I].Data);
+          wePong: FWorker.OnPong(Self, Items[I].Data);
+          weWritable: FWorker.OnWritable(Self);
+          weError: FWorker.OnError(Self, Items[I].Code, Items[I].Data);
+          weClose: FWorker.OnClose(Self, Items[I].Code, Items[I].Data);
+        end;
+      except
+        on E: Exception do
+        begin
+          Err := E.ClassName + ': ' + E.Message;
+          WriteLn(StdErr, 'bearings.ws.conn: worker handler raised ', Err);
+          if Items[I].Kind <> weClose then
+          begin
+            FPostLock.Acquire;
+            if FWorkerErr = '' then
+              FWorkerErr := Err;
+            FPostLock.Release;
+            PostWake;                { Step fails the connection with 1011 }
+          end;
+        end;
+      end;
+      Items[I].Data := '';
+    end;
+    FPostLock.Acquire;
+    Done := FInCount = 0;
+    if Done then
+      FJobActive := False;
+    Wake := Done and FStopPending;
+    FPostLock.Release;
+    if Wake then
+      PostWake;                      { Step sends the close frame now }
+  until Done;
+  Release;
 end;
 
 function TWebSocket.PostText(const S: RawByteString): TWsSendResult;
@@ -1126,6 +1489,14 @@ begin
   FPostLock.Release;
   if CloseStream then
     FU.Close;                        { the TUpgraded is freed by the loop after this batch }
+  if FWorker <> nil then
+  begin
+    { OnClose runs on the job, after the events before it; the handler is
+      freed with the object (Destroy), after the job's reference went }
+    Enqueue(weClose, FPeerReason, FPeerCode);
+    Release;                         { the loop's reference }
+    Exit;
+  end;
   H := FHandler;
   try
     H.OnClose(Self, FPeerCode, FPeerReason);
@@ -1151,12 +1522,24 @@ begin
   Cfg := ACfg;
 end;
 
+constructor TWsUpgradeHandler.Create(AWorker: TWsWorkerHandler; APool: TWorkerPool; const ACfg: TWsConfig);
+begin
+  inherited Create;
+  Worker := AWorker;
+  Pool := APool;
+  Cfg := ACfg;
+end;
+
 procedure TWsUpgradeHandler.Upgraded(U: TUpgraded);
 var
   WS: TWebSocket;
 begin
-  WS := TWebSocket.Create(Handler, Cfg);
+  if Worker <> nil then
+    WS := TWebSocket.CreateWorker(Worker, Pool, Cfg)
+  else
+    WS := TWebSocket.Create(Handler, Cfg);
   Handler := nil;
+  Worker := nil;
   Free;
   WS.Start(U);
 end;
@@ -1164,6 +1547,7 @@ end;
 procedure TWsUpgradeHandler.UpgradeFailed(const Msg: string);
 begin
   Handler.Free;
+  Worker.Free;
   Free;
 end;
 
@@ -1171,6 +1555,14 @@ function AcceptWebSocket(Ex: TExchange; const R: TWsHandshake; Handler: TWebSock
   const Cfg: TWsConfig): Boolean;
 begin
   Result := Respond101(Ex, R, TWsUpgradeHandler.Create(Handler, Cfg));
+end;
+
+function AcceptWebSocket(Ex: TExchange; const R: TWsHandshake; Handler: TWsWorkerHandler;
+  Pool: TWorkerPool; const Cfg: TWsConfig): Boolean;
+begin
+  if Pool = nil then
+    raise EArgumentException.Create('AcceptWebSocket: a worker handler needs a pool');
+  Result := Respond101(Ex, R, TWsUpgradeHandler.Create(Handler, Pool, Cfg));
 end;
 
 end.

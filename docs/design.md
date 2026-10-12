@@ -957,7 +957,46 @@ a reference (`AddRef` on the loop thread, for example in `OnOpen`); the loop
 holds one until the connection ends, and the last `Release` frees the
 object. A broadcast from another thread is cheaper as one `TLoop.Post` per
 loop whose procedure calls `SendFrame` for that loop's connections than as
-one `PostFrame` per connection. There is no blocking API for worker threads.
+one `PostFrame` per connection.
+
+**A handler on the worker pool** (`TWsWorkerHandler`, `AcceptWebSocket`
+with a `TWorkerPool`). The same events run on a worker thread for a
+handler that blocks, without holding a thread per connection: the loop
+copies each message into the connection's event queue (under the same spin
+lock as the posted sends) and, when no job is queued or running for the
+connection (`FJobActive`), takes a reference and submits the connection's
+`TWsJob` (a `TWorkItem` created with the connection, so a submit allocates
+nothing). The job takes the whole queue, calls the handler for each event
+in order, repeats while events arrived meanwhile, clears `FJobActive` under
+the lock and releases its reference. One job at a time per connection
+gives in-order delivery and a handler never entered by two threads, and the
+cost of the pool is proportional to the messages in flight, not to the
+connections open. `OnOpen`, `OnPong`, `OnWritable`, `OnError` and `OnClose`
+are events of the same queue; the close event is the last one queued
+(`FInClosed`), and the handler object is freed with the connection, after
+the job's reference went. Backpressure: the loop stops reading a socket
+while the queue holds `ReceiveHighWater` bytes or more of unhandled
+messages (`ReadBlocked`, the same pause as for an unread output, with
+`FInPaused` remembered under the lock); the worker clears `FInPaused` when
+it took the queue and asks the loop for a run through the posted-sends
+message (`PostWake`, one message in flight at a time, a reference per
+message). An exception from the handler is written to stderr and recorded
+under the lock; the loop fails the connection with 1011 on its next run
+(`FWorkerErr`). Server stop: `Shutdown` with a job active sets
+`FStopPending` instead of sending the close frame; no further message is
+delivered; the job wakes the loop when done and the loop then sends the
+close frame (1001). A pool that refuses the job (shut down) aborts the
+connection and no further event runs; `TServer` shuts its pool down only
+after every loop ended (section 2), so inside the server this does not
+happen. A blocking receive (a worker that waits for the next message) is
+deliberately not offered: it would hold a pool thread for the life of a
+connection, and the pool is small by design. Autobahn against the echo on
+the pool (`WS_ECHO_MODE=worker conformance/autobahn/run.sh`): no case
+fails; seven are NON-STRICT (3.2, 3.3, 4.1.3, 4.1.4, 4.2.3, 4.2.4, 5.15)
+where the loop handler is OK: a valid message followed by a protocol error
+in the same read is still echoed by the worker before the close frame goes,
+because the echo is posted from another thread; the strict expectation is
+that nothing follows the error.
 
 ## 7. Memory
 
@@ -1109,9 +1148,10 @@ server on real sockets). The script prints the total (`unit tests run: N`;
 `test_ws_echo`) run once more under heaptrc (`-gh`) and must report 0
 unfreed blocks. `test_workers` also runs three times under
 `valgrind --tool=drd` (built with `-dWD_DRD` and the C heap, with
-`tools/drd.supp` and `--fair-sched=yes`) and must report 0 errors; what the
-suppressions hide and what "drd clean" does not cover is stated in that
-file. The test doubles are `tests/support/bearings.test.mocktransport`
+`tools/drd.supp` and `--fair-sched=yes`) and must report 0 errors, and so
+does the WebSocket worker-handler suite (`test_ws_echo --suite=TTestWsWorker`,
+once, with `WD_ITER=20`); what the suppressions hide and what "drd clean"
+does not cover is stated in that file. The test doubles are `tests/support/bearings.test.mocktransport`
 (scripted reads and exact expected writes), `bearings.test.scriptio`
 (scripted answers, recorded writes, for the dispatcher and the fuzz) and
 `bearings.test.ws` (masked client frames, a log of `TWsReader` events, a
@@ -1280,7 +1320,7 @@ observable.
 | No TLS | plain TCP only | a reverse proxy in front; a transport without `writev` and `sendfile` already has a defined behaviour (`IsWriteVectored = False`, `SendFile = -ENOSYS`) |
 | No HTTP/2 | HTTP/1.1 only | the service types are protocol-neutral in content (6.9) |
 | No WebSocket extensions | no permessage-deflate | none planned |
-| No blocking WebSocket API for worker threads | a worker must use `PostText`, `PostBinary` or `PostFrame` with `AddRef`/`Release` | the post path is bounded by `SendHighWater` like the loop's sends |
+| No blocking WebSocket receive for worker threads | a handler that blocks uses `TWsWorkerHandler` (events delivered on the pool, section 6.10), not a receive call | by design: a waiting receive would hold a pool thread per connection; the event queue is bounded by `ReceiveHighWater` and the posts by `SendHighWater` |
 | `src/ws` is not covered by `tools/check-hot-asm.sh` | a managed local or `try` in a per-frame routine would go unnoticed | none yet; the check would need `src/ws` in its unit path and the per-frame routines (`TWsReader`, `TUtf8Check`) on its list |
 | The Autobahn run is not automated | a WebSocket conformance regression shows up only when someone runs it | `conformance/autobahn/run.sh` by hand; the unit suites cover the frame reader, the handshake and the connection |
 | Throughput at pipeline depth 16 is 0.85 to 0.88 of hyper (depth 1: 0.96 to 0.98) | the gate (0.80) is met, parity is not | the instruction count per request equals hyper's within 3 %; the difference is CPU time per instruction (`docs/perf-report.md` section 8) |

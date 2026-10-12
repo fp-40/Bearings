@@ -7,6 +7,9 @@
 # build/autobahn/reports/ (index.html for a browser).
 # Usage: conformance/autobahn/run.sh [cases]   (default: every case; for
 #        example '1.*,2.*' runs groups 1 and 2)
+# Env: WS_ECHO_MODE=worker runs the echo on the worker pool (ws_echo's
+#      third argument: the TWsWorkerHandler path). Seven cases are then
+#      NON-STRICT instead of OK (docs/design.md 6.10); none fails.
 # Exit status 0 when no case has the result FAILED.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -23,7 +26,8 @@ c["cases"] = [x.strip() for x in sys.argv[3].split(",")]
 json.dump(c, open(sys.argv[2], "w"), indent=2)
 PY
 rm -f "$OUT"/reports/*
-"$OUT/ws_echo" 9001 1 2> "$OUT/server.log" &
+# shellcheck disable=SC2086
+"$OUT/ws_echo" 9001 1 ${WS_ECHO_MODE:-} 2> "$OUT/server.log" &
 PID=$!
 trap 'kill $PID 2>/dev/null || true' EXIT
 sleep 0.5

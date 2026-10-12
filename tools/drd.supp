@@ -140,3 +140,39 @@
    drd:ConflictingAccess
    fun:CTHREADS_$$_CBEGINTHREAD*
 }
+#    A block freed by a thread other than the one that allocated it goes
+#    to the owner's wait-free list (fpc-heap-waitfree above: an atomic
+#    exchange drd does not see) and is later reused by the owner. drd then
+#    reports the owner's writes to the block's header (a fresh string or
+#    a split of the var block) and the freeing thread's reads of it as
+#    unordered. Seen with the WebSocket worker handler (test_ws_echo
+#    TTestWsWorker): the loop allocates a message, a worker frees it, and
+#    the posted answer goes the other way.
+{
+   fpc-heap-free-foreign-block
+   drd:ConflictingAccess
+   fun:SYSTEM_$$_SYSFREEMEM_*
+}
+{
+   fpc-heap-split-block
+   drd:ConflictingAccess
+   fun:SYSTEM_$$_SPLIT_BLOCK*
+}
+{
+   fpc-heap-fresh-string
+   drd:ConflictingAccess
+   fun:SYSTEM_$$_NEWANSISTRING*
+}
+#    TThread (rtl/unix/tthread.inc): the thread function sets the
+#    object's finished flag and WaitFor reads it before joining; FPC's
+#    own synchronization. The test client threads of test_ws_echo.
+{
+   fpc-tthread-finished
+   drd:ConflictingAccess
+   fun:CLASSES$_$TTHREAD_$__$$_WAITFOR*
+}
+{
+   fpc-tthread-threadfunc
+   drd:ConflictingAccess
+   fun:CLASSES_$$_THREADFUNC*
+}

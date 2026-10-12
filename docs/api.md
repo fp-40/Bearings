@@ -981,8 +981,36 @@ the loop thread (for example in `OnOpen`); `Release` gives it back.
 `TWsConfig` (`DefaultWsConfig`): `MaxMessage` 16 MiB, `IdleTimeoutMs` 60000
 (then `CloseWith(1001)`), `PingIntervalMs` 25000 (the client's pongs reset
 the idle timer, so only a client that is gone reaches it), `CloseTimeoutMs`
-5000, `SendHighWater` 1 MiB. No extension is negotiated (no permessage-deflate).
+5000, `SendHighWater` 1 MiB, `ReceiveHighWater` 1 MiB (worker handlers,
+below). No extension is negotiated (no permessage-deflate).
 `examples/ws_echo.pas` is a complete server.
+
+A handler on the worker pool. A handler that blocks (a database, an
+outgoing HTTP call) derives from `TWsWorkerHandler` instead and is
+accepted with `AcceptWebSocket(Ex, R, Handler, Pool, Cfg)`, `Pool` being
+`TServer.Workers` (the server's pool, so `Cfg.Workers` must not be
+`NO_WORKER_POOL`) or a pool of the application's own. Its methods are the
+same events, run on a worker thread, one at a time per connection and in
+order: `OnOpen`, `OnText(WS, Msg)` and `OnBinary(WS, Msg)` (`Msg` is the
+handler's own copy, valid after the call), `OnPong`, `OnWritable`,
+`OnError` and `OnClose`. An idle connection holds no thread: the loop
+queues each message and submits the connection's job to the pool only when
+no worker is running it; the job handles what is queued and returns. From
+the worker the handler sends with `PostText`, `PostBinary` and
+`PostFrame`, and closes with `PostClose(Code, Reason)`; `SendText` and
+`CloseWith` are loop-thread calls and must not be used there. A post
+returns `wsFull` when `SendHighWater` bytes are already posted and not
+yet moved to the output; `OnWritable` then runs on the worker once they
+were. Backpressure on the way in: when the connection's queued, unhandled
+messages reach `ReceiveHighWater` bytes the loop stops reading that socket
+until the worker has drained the queue, so a client cannot fill memory
+faster than the handler works. An exception from a handler method fails
+the connection with 1011 (reported on stderr); `OnError` and `OnClose`
+still run. At a server stop, a connection whose handler is busy sends its
+close frame after the handler returned, so an answer in progress still goes
+out; no further message is delivered to it. `examples/ws_echo.pas` with
+the argument `worker` is the echo on the pool;
+`tests/unit/test_ws_echo.pas` (`TTestWsWorker`) covers it, also under drd.
 
 Server shutdown: `TServer.Stop` calls `Shutdown` on every upgraded
 connection (each loop keeps them in a list from the hand-off on). A

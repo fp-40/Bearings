@@ -8,8 +8,13 @@
   service, the subprotocol header, 16 clients on 2 loops at once, a client
   that floods without reading (backpressure; every echo arrives in order),
   and a client that disconnects in the middle of a frame (the connection
-  object is freed).
-  Run: test_ws_echo --all --format=plain }
+  object is freed). TTestWsWorker covers the handler on the worker pool
+  (TWsWorkerHandler, path /worker): echo in order from a worker thread,
+  the receive mark (reading pauses and resumes), an exception (1011),
+  PostClose, 16 clients on 2 loops, and a server stop while a handler is
+  busy. tests/unit/run_all.sh also runs TTestWsWorker under valgrind drd.
+  Run: test_ws_echo --all --format=plain
+       test_ws_echo --suite=TTestWsWorker --format=plain }
 program test_ws_echo;
 
 {$mode objfpc}{$H+}
@@ -17,8 +22,8 @@ program test_ws_echo;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   Classes, SysUtils, StrUtils, BaseUnix, Sockets, ctypes, fpcunit, testregistry, consoletestrunner,
-  bearings.rt.loop, bearings.rt.buf, bearings.http.headers, bearings.http.exchange, bearings.http1.config,
-  bearings.server,
+  bearings.rt.loop, bearings.rt.sync, bearings.rt.workers, bearings.rt.buf, bearings.http.headers,
+  bearings.http.exchange, bearings.http1.config, bearings.server,
   bearings.ws.frame, bearings.ws.handshake, bearings.ws.conn, bearings.test.ws;
 
 type
@@ -47,6 +52,23 @@ type
     Msg: TLoopMsg;
     Frame: TWsFrame;
     Index: Integer;
+  end;
+
+  { the echo on the worker pool: every event runs on a worker thread;
+    'raise' raises, 'close' closes with PostClose; WorkerDelayMs sleeps
+    per message (a handler that blocks) }
+  TWorkerEcho = class(TWsWorkerHandler)
+  private
+    FBacklog: array of record Text: Boolean; Data: RawByteString; end;
+    FCount: Integer;
+    procedure Echo(WS: TWebSocket; Text: Boolean; const Msg: RawByteString);
+  public
+    procedure OnOpen(WS: TWebSocket); override;
+    procedure OnText(WS: TWebSocket; const Msg: RawByteString); override;
+    procedure OnBinary(WS: TWebSocket; const Msg: RawByteString); override;
+    procedure OnWritable(WS: TWebSocket); override;
+    procedure OnError(WS: TWebSocket; Code: Word; const Msg: string); override;
+    procedure OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString); override;
   end;
 
   TEchoCall = class(TServiceCall)
@@ -83,6 +105,7 @@ type
     Port: Word;
     N: Integer;
     Id: Integer;
+    Path: RawByteString;
     Error: string;
     procedure Execute; override;
   end;
@@ -95,15 +118,17 @@ type
     procedure Execute; override;
   end;
 
-  TTestWsEcho = class(TTestCase)
-  private
+  TTestWsBase = class(TTestCase)
+  protected
     Srv: TServer;
     Live0: LongInt;
-    procedure StartServer(Loops: Integer);
+    procedure StartServer(Loops: Integer; Workers: Integer = NO_WORKER_POOL);
     procedure WaitFreed;
-  protected
     procedure SetUp; override;
     procedure TearDown; override;
+  end;
+
+  TTestWsEcho = class(TTestWsBase)
   published
     procedure Handshake_echo_and_close;
     procedure Refusals_and_plain_requests;
@@ -117,6 +142,16 @@ type
     procedure Broadcast_to_a_room_on_two_loops;
   end;
 
+  TTestWsWorker = class(TTestWsBase)
+  published
+    procedure Echo_in_order_from_a_worker_thread;
+    procedure Receive_mark_pauses_and_resumes_reading;
+    procedure Handler_exception_closes_with_1011;
+    procedure PostClose_from_the_worker;
+    procedure Many_clients_on_two_loops;
+    procedure Server_stop_while_a_handler_is_busy;
+  end;
+
 const
   CRLF = #13#10;
   KEY = 'dGhlIHNhbXBsZSBub25jZQ==';
@@ -126,6 +161,105 @@ var
   RoomLoops: array[0..7] of TLoop;   { set by NewService, one per loop }
   Rooms: array[0..7] of TList;       { the members on each loop; that loop's thread only }
   RoomMembers: LongInt;
+  ServerForPool: TServer;            { set before Start: /worker uses its Workers }
+  IterPct: Integer;                  { WD_ITER: loop counts in percent (the drd run lowers it) }
+  WorkerDelayMs: Integer;            { TWorkerEcho sleeps this long per message }
+  WorkerOnLoop: LongInt;             { TWorkerEcho events that ran on their loop's thread (must stay 0) }
+  WorkerOpens, WorkerCloses: LongInt;
+  WorkerCloseCode, WorkerErrCode: LongInt;
+  WorkerCloseThread: TThreadID;
+
+{ ---- TWorkerEcho ---- }
+
+procedure NoteThread(WS: TWebSocket);
+begin
+  if GetCurrentThreadId = AtomicLoadThreadId(WS.Loop.ThreadId) then
+    AtomicInc(WorkerOnLoop);
+end;
+
+procedure TWorkerEcho.OnOpen(WS: TWebSocket);
+begin
+  NoteThread(WS);
+  AtomicInc(WorkerOpens);
+end;
+
+procedure TWorkerEcho.Echo(WS: TWebSocket; Text: Boolean; const Msg: RawByteString);
+var
+  R: TWsSendResult;
+begin
+  NoteThread(WS);
+  if WorkerDelayMs > 0 then
+    Sleep(WorkerDelayMs);
+  if Msg = 'raise' then
+    raise Exception.Create('on purpose');
+  if Msg = 'close' then
+  begin
+    WS.PostClose(WS_CLOSE_NORMAL, 'bye');
+    Exit;
+  end;
+  R := wsFull;
+  if FCount = 0 then
+    if Text then
+      R := WS.PostText(Msg)
+    else
+      R := WS.PostBinary(Msg);
+  if R <> wsFull then
+    Exit;
+  if FCount = Length(FBacklog) then
+    SetLength(FBacklog, 4 + 2 * FCount);
+  FBacklog[FCount].Text := Text;
+  FBacklog[FCount].Data := Msg;
+  Inc(FCount);
+end;
+
+procedure TWorkerEcho.OnText(WS: TWebSocket; const Msg: RawByteString);
+begin
+  Echo(WS, True, Msg);
+end;
+
+procedure TWorkerEcho.OnBinary(WS: TWebSocket; const Msg: RawByteString);
+begin
+  Echo(WS, False, Msg);
+end;
+
+procedure TWorkerEcho.OnWritable(WS: TWebSocket);
+var
+  I, Sent: Integer;
+  R: TWsSendResult;
+begin
+  NoteThread(WS);
+  Sent := 0;
+  while Sent < FCount do
+  begin
+    if FBacklog[Sent].Text then
+      R := WS.PostText(FBacklog[Sent].Data)
+    else
+      R := WS.PostBinary(FBacklog[Sent].Data);
+    if R = wsFull then
+      Break;
+    Inc(Sent);
+  end;
+  for I := Sent to FCount - 1 do
+    FBacklog[I - Sent] := FBacklog[I];
+  for I := FCount - Sent to FCount - 1 do
+    FBacklog[I].Data := '';
+  Dec(FCount, Sent);
+end;
+
+procedure TWorkerEcho.OnError(WS: TWebSocket; Code: Word; const Msg: string);
+begin
+  NoteThread(WS);
+  AtomicStore(WorkerErrCode, Code);
+end;
+
+procedure TWorkerEcho.OnClose(WS: TWebSocket; Code: Word; const Reason: RawByteString);
+begin
+  NoteThread(WS);
+  AtomicStoreThreadId(WorkerCloseThread, GetCurrentThreadId);
+  AtomicStore(WorkerCloseCode, Code);
+  HappensBefore(@WorkerCloses);      { the test reads the counters after WaitFreed }
+  AtomicInc(WorkerCloses);
+end;
 
 procedure TRoomHandler.OnOpen(WS: TWebSocket);
 begin
@@ -233,6 +367,8 @@ begin
     R := CheckRequest(Ex, ['chat'], ['http://localhost']);
     if R.Ok and PathIs(Ex, '/room') then
       AcceptWebSocket(Ex, R, TRoomHandler.Create, WsCfg)
+    else if R.Ok and PathIs(Ex, '/worker') then
+      AcceptWebSocket(Ex, R, TWorkerEcho.Create, ServerForPool.Workers, WsCfg)
     else if R.Ok then
       AcceptWebSocket(Ex, R, TEchoHandler.Create, WsCfg)
     else
@@ -372,7 +508,9 @@ begin
   try
     try
       C := TClient.Connect(Port);
-      if not AnsiStartsStr('HTTP/1.1 101', C.Handshake) then
+      if Path = '' then
+        Path := '/echo';
+      if not AnsiStartsStr('HTTP/1.1 101', C.Handshake('', '', Path)) then
         raise Exception.Create('no 101');
       for I := 1 to N do
       begin
@@ -397,15 +535,23 @@ end;
 
 { ---- the tests ---- }
 
-procedure TTestWsEcho.SetUp;
+procedure TTestWsBase.SetUp;
 begin
-  Live0 := WebSocketsLive;
+  Live0 := AtomicLoad(WebSocketsLive);
   WsCfg := DefaultWsConfig;
   WsCfg.IdleTimeoutMs := 0;
   WsCfg.SendHighWater := 256 * 1024;
+  IterPct := StrToIntDef(GetEnvironmentVariable('WD_ITER'), 100);
+  WorkerDelayMs := 0;
+  WorkerOnLoop := 0;
+  WorkerOpens := 0;
+  WorkerCloses := 0;
+  WorkerCloseCode := 0;
+  WorkerErrCode := 0;
+  WorkerCloseThread := 0;
 end;
 
-procedure TTestWsEcho.TearDown;
+procedure TTestWsBase.TearDown;
 var
   I: Integer;
 begin
@@ -415,11 +561,12 @@ begin
     Srv.Wait;
     FreeAndNil(Srv);
   end;
+  ServerForPool := nil;
   for I := 0 to High(RoomLoops) do
     RoomLoops[I] := nil;
 end;
 
-procedure TTestWsEcho.StartServer(Loops: Integer);
+procedure TTestWsBase.StartServer(Loops: Integer; Workers: Integer);
 var
   Cfg: TServerConfig;
 begin
@@ -427,24 +574,26 @@ begin
   Cfg.Listen.Host := '127.0.0.1';
   Cfg.Listen.Port := 0;
   Cfg.Loops := Loops;
-  Cfg.Workers := NO_WORKER_POOL;
+  Cfg.Workers := Workers;
   Cfg.H1.Mode := cmWithUpgrades;
   Cfg.GraceMs := 1000;
   Srv := TServer.CreateWithProc(Cfg, @NewService);
+  ServerForPool := Srv;
   Srv.Start;
 end;
 
-procedure TTestWsEcho.WaitFreed;
+procedure TTestWsBase.WaitFreed;
 var
   I: Integer;
 begin
   for I := 1 to 400 do
   begin
-    if WebSocketsLive = Live0 then
+    if AtomicLoad(WebSocketsLive) = Live0 then
       Break;
     Sleep(5);
   end;
-  AssertEquals('every TWebSocket freed', Live0, WebSocketsLive);
+  AssertEquals('every TWebSocket freed', Live0, AtomicLoad(WebSocketsLive));
+  HappensAfter(@WorkerCloses);       { the worker handler's counters are read after this }
 end;
 
 function HeadHas(const Head, Line: RawByteString): Boolean;
@@ -778,12 +927,237 @@ begin
   AssertEquals(0, RoomMembers);
 end;
 
+{ ---- the worker handler ---- }
+
+{ a close frame as its code and reason; another frame as its first bytes }
+function FrameText(const F: TServerFrame): string;
+begin
+  if (F.Opcode = WS_OP_CLOSE) and (Length(F.Payload) >= 2) then
+    Result := 'close ' + IntToStr(Ord(F.Payload[1]) * 256 + Ord(F.Payload[2])) + ' ' + Copy(F.Payload, 3, 60)
+  else
+    Result := Copy(F.Payload, 1, 60);
+end;
+
+procedure TTestWsWorker.Echo_in_order_from_a_worker_thread;
+var
+  C: TClient;
+  H, Msg: RawByteString;
+  F: TServerFrame;
+  I: Integer;
+begin
+  StartServer(1, 2);
+  C := TClient.Connect(Srv.Port);
+  try
+    H := C.Handshake('', CFrame(WS_OP_TEXT, 'first'), '/worker');
+    AssertTrue(H, AnsiStartsStr('HTTP/1.1 101', H));
+    AssertTrue(C.Frame(F));
+    AssertEquals('first', F.Payload);
+    for I := 1 to 200 do
+    begin
+      if Odd(I) then
+      begin
+        { text must be UTF-8: ASCII here; Pattern has any byte }
+        Msg := IntToStr(I) + ':' + StringOfChar(AnsiChar(Ord('a') + I mod 26), I * 37 mod 70000);
+        C.SendAll(CFrame(WS_OP_TEXT, Msg));
+      end
+      else
+      begin
+        Msg := IntToStr(I) + ':' + Pattern(I * 37 mod 70000);
+        C.SendAll(CFrame(WS_OP_BINARY, Msg));
+      end;
+    end;
+    for I := 1 to 200 do
+    begin
+      AssertTrue('echo ' + IntToStr(I), C.Frame(F));
+      if Odd(I) then
+        AssertEquals('opcode of ' + IntToStr(I) + ': ' + FrameText(F), WS_OP_TEXT, F.Opcode)
+      else
+        AssertEquals('opcode of ' + IntToStr(I) + ': ' + FrameText(F), WS_OP_BINARY, F.Opcode);
+      AssertTrue('in order: ' + IntToStr(I), AnsiStartsStr(IntToStr(I) + ':', F.Payload));
+      AssertEquals(Length(IntToStr(I)) + 1 + I * 37 mod 70000, Length(F.Payload));
+    end;
+    { a fragmented message arrives whole, after the pong }
+    C.SendAll(CFrame(WS_OP_TEXT, 'frag', False) + CFrame(WS_OP_PING, 'p') + CFrame(WS_OP_CONT, 'mented'));
+    AssertTrue(C.Frame(F));
+    AssertEquals(WS_OP_PONG, F.Opcode);
+    AssertTrue(C.Frame(F));
+    AssertEquals('fragmented', F.Payload);
+    C.SendAll(CFrame(WS_OP_CLOSE, #3#232'bye'));
+    AssertTrue(C.Frame(F));
+    AssertEquals(WS_OP_CLOSE, F.Opcode);
+    AssertEquals(#3#232, F.Payload);
+    AssertTrue(C.AtEof);
+  finally
+    C.Free;
+  end;
+  WaitFreed;
+  AssertEquals('OnOpen ran', 1, WorkerOpens);
+  AssertEquals('OnClose ran', 1, WorkerCloses);
+  AssertEquals('the client''s close code', 1000, WorkerCloseCode);
+  AssertEquals('no event on the loop thread', 0, WorkerOnLoop);
+  AssertTrue('OnClose on a worker, not the main thread', AtomicLoadThreadId(WorkerCloseThread) <> GetCurrentThreadId);
+end;
+
+procedure TTestWsWorker.Receive_mark_pauses_and_resumes_reading;
+var
+  C: TClient;
+  R: TFloodReader;
+  F: TServerFrame;
+  I: Integer;
+const
+  Size = 1000;                       { 600 KiB sent at once; the mark is 16 KiB }
+var
+  N: Integer;
+begin
+  N := 600 * IterPct div 100;
+  WsCfg.ReceiveHighWater := 16 * 1024;
+  WorkerDelayMs := 1;                { the handler is slower than the client }
+  StartServer(1, 2);
+  C := TClient.Connect(Srv.Port);
+  try
+    C.Handshake('', '', '/worker');
+    R := TFloodReader.Create(True);
+    R.C := C;
+    R.N := N;
+    R.Size := Size;
+    R.Start;
+    for I := 1 to N do
+      C.SendAll(CFrame(WS_OP_BINARY, IntToStr(I) + ':' + Pattern(Size)));
+    R.WaitFor;
+    AssertEquals('reader', '', R.Error);
+    AssertEquals(N, R.Got);
+    R.Free;
+    C.SendAll(CFrame(WS_OP_CLOSE, #3#232));
+    AssertTrue(C.Frame(F));
+    AssertEquals(WS_OP_CLOSE, F.Opcode);
+    AssertTrue(C.AtEof);
+  finally
+    C.Free;
+  end;
+  WaitFreed;
+  AssertEquals(0, WorkerOnLoop);
+  AssertEquals(1, WorkerCloses);
+end;
+
+procedure TTestWsWorker.Handler_exception_closes_with_1011;
+var
+  C: TClient;
+  F: TServerFrame;
+begin
+  StartServer(1, 2);
+  C := TClient.Connect(Srv.Port);
+  try
+    C.Handshake('', '', '/worker');
+    C.SendAll(CFrame(WS_OP_TEXT, 'before'));
+    AssertTrue(C.Frame(F));
+    AssertEquals('before', F.Payload);
+    C.SendAll(CFrame(WS_OP_TEXT, 'raise'));
+    AssertTrue('a close frame', C.Frame(F));
+    AssertEquals(WS_OP_CLOSE, F.Opcode);
+    AssertEquals(#3#243, F.Payload);  { 1011 }
+    C.SendAll(CFrame(WS_OP_CLOSE, #3#243));
+    AssertTrue(C.AtEof);
+  finally
+    C.Free;
+  end;
+  WaitFreed;
+  AssertEquals('OnError with 1011', 1011, WorkerErrCode);
+  AssertEquals('OnClose ran', 1, WorkerCloses);
+  AssertEquals(0, WorkerOnLoop);
+end;
+
+procedure TTestWsWorker.PostClose_from_the_worker;
+var
+  C: TClient;
+  F: TServerFrame;
+begin
+  StartServer(1, 2);
+  C := TClient.Connect(Srv.Port);
+  try
+    C.Handshake('', '', '/worker');
+    C.SendAll(CFrame(WS_OP_TEXT, 'one') + CFrame(WS_OP_TEXT, 'close') + CFrame(WS_OP_TEXT, 'dropped'));
+    AssertTrue(C.Frame(F));
+    AssertEquals('one', F.Payload);
+    AssertTrue('the close frame', C.Frame(F));
+    AssertEquals(WS_OP_CLOSE, F.Opcode);
+    AssertEquals(#3#232'bye', F.Payload);
+    C.SendAll(CFrame(WS_OP_CLOSE, #3#232));
+    AssertTrue(C.AtEof);
+  finally
+    C.Free;
+  end;
+  WaitFreed;
+  AssertEquals(1, WorkerCloses);
+  AssertEquals('the client''s answer code', 1000, WorkerCloseCode);
+end;
+
+procedure TTestWsWorker.Many_clients_on_two_loops;
+var
+  Th: array[0..15] of TClientThread;
+  I: Integer;
+begin
+  StartServer(2, 3);
+  for I := 0 to High(Th) do
+  begin
+    Th[I] := TClientThread.Create(True);
+    Th[I].Port := Srv.Port;
+    Th[I].N := 300 * IterPct div 100;
+    Th[I].Id := I;
+    Th[I].Path := '/worker';
+    Th[I].Start;
+  end;
+  for I := 0 to High(Th) do
+  begin
+    Th[I].WaitFor;
+    AssertEquals('client ' + IntToStr(I), '', Th[I].Error);
+    Th[I].Free;
+  end;
+  WaitFreed;
+  AssertEquals(16, WorkerOpens);
+  AssertEquals(16, WorkerCloses);
+  AssertEquals(0, WorkerOnLoop);
+end;
+
+procedure TTestWsWorker.Server_stop_while_a_handler_is_busy;
+var
+  C: TClient;
+  F: TServerFrame;
+begin
+  WorkerDelayMs := 300;
+  StartServer(1, 2);
+  C := TClient.Connect(Srv.Port);
+  try
+    C.Handshake('', '', '/worker');
+    C.SendAll(CFrame(WS_OP_TEXT, 'slow'));
+    Sleep(50);                       { the handler is inside its Sleep }
+    Srv.Stop(5000);
+    AssertTrue('the echo, from the busy handler', C.Frame(F));
+    AssertEquals('slow', F.Payload);
+    AssertTrue('a close frame', C.Frame(F));
+    AssertEquals(WS_OP_CLOSE, F.Opcode);
+    AssertEquals(#3#233'server shutdown', F.Payload);
+    C.SendAll(CFrame(WS_OP_CLOSE, #3#233));
+    AssertTrue(C.AtEof);
+    fpClose(C.Fd);
+    C.Fd := -1;
+    Srv.Wait;
+  finally
+    C.Free;
+  end;
+  FreeAndNil(Srv);
+  AssertEquals('every TWebSocket freed', Live0, AtomicLoad(WebSocketsLive));
+  HappensAfter(@WorkerCloses);
+  AssertEquals('OnClose ran', 1, WorkerCloses);
+  AssertEquals(1001, WorkerCloseCode);
+end;
+
 var
   RI: Integer;
 begin
   for RI := 0 to High(Rooms) do
     Rooms[RI] := TList.Create;
   RegisterTest(TTestWsEcho);
+  RegisterTest(TTestWsWorker);
   with TTestRunner.Create(nil) do
   try
     Initialize;
