@@ -77,6 +77,9 @@ type
     RespVersion: THttpVersion;
     Stream: TBodySource;             { RespondStream when set }
     FailMsg: RawByteString;          { Fail when set }
+    { cpReady without a terminal call (a program error in the call); NoAnswerExpected: Call
+      opts the exchange out of the -Sa raise (NoResponseIsExpected) }
+    NoAnswer, NoAnswerExpected: Boolean;
     Upgrade: TUpgradeHandler;        { Ex.OnUpgrade in the first poll }
     Headers: TStringList;            { name=value }
     FirstTryRead: TBodyReadStatus;   { result of the first TryRead (prefetch check) }
@@ -153,6 +156,10 @@ type
     FCfg: TH1Config;
     FLog: TStringList;
     FWakeFailures0: Integer;
+    FNoResponse0: LongInt;
+    { how many completions without a terminal call the test drives on purpose
+      (TearDown checks NoResponseFailures against it; default 0) }
+    ExpectedNoResponses: Integer;
     FRuns: Integer;
     procedure SetUp; override;
     procedure TearDown; override;
@@ -224,6 +231,9 @@ type
     { S7 fix round 7: design 3.1's rule for THttpService.Call, asserted }
     procedure Call_that_answers_asserts;
     procedure Call_that_reads_asserts;
+    { user decision 2026-10-11 (option B): a call that completes without a terminal call }
+    procedure Call_without_answer_closes_with_user_error;
+    procedure Call_without_answer_asserts;
   end;
 
   TTestDispatchServer = class(TTestCase)
@@ -284,6 +294,8 @@ begin
     3: Ex.Fail('in call');
     4: Ex.BeginStream(1024);
   end;
+  if NoAnswerExpected then
+    Ex.NoResponseIsExpected;
   Inc(Calls);
   Call_.Polls := 0;
   Call_.Body := '';
@@ -341,6 +353,8 @@ begin
       end;
     end;
   Svc.LastBody := Body;
+  if Svc.NoAnswer then
+    Exit(cpReady);
   if Svc.FailMsg <> '' then
   begin
     Ex.Fail(Svc.FailMsg);
@@ -538,6 +552,8 @@ begin
   FD := nil;
   FRuns := 0;
   FWakeFailures0 := WakeAssertFailures;
+  FNoResponse0 := NoResponseFailures;
+  ExpectedNoResponses := 0;
 end;
 
 procedure TDispCase.TearDown;
@@ -557,6 +573,8 @@ begin
   FLog.Free;
   WF := WakeAssertFailures - FWakeFailures0;
   AssertEquals('wake-source assertion failures (2.4.5)', 0, WF);
+  AssertEquals('completions without a terminal call', ExpectedNoResponses,
+    NoResponseFailures - FNoResponse0);
 end;
 
 procedure TDispCase.Start;
@@ -1548,6 +1566,61 @@ end;
 procedure TTestDispatchBehavior.Call_that_reads_asserts;
 begin
   CallInCallCase(Self, 2, 'TryRead');
+end;
+
+procedure TTestDispatchBehavior.Call_without_answer_closes_with_user_error;
+begin
+  { the production behaviour (every build): the exchange is failed, nothing
+    is written and the connection closes with a user error. The service
+    opts the exchange out of the -Sa raise with NoResponseIsExpected }
+  FSvc.NoAnswer := True;
+  FSvc.NoAnswerExpected := True;
+  ExpectedNoResponses := 1;
+  FIo.AddRead('GET /unanswered HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
+  Start;
+  Drive;
+  AssertTrue('done', Done);
+  AssertEquals('nothing written', '', FIo.Written);
+  AssertTrue('outcome user', FObs.Outcome = coUser);
+  AssertTrue('detail (got "' + FObs.Detail + '")', Pos('handler returned no response', FObs.Detail) > 0);
+  AssertEquals('the call was dropped as completed', 1, FSvc.DropsDone);
+  AssertEquals('exchange back in the pool', 1, FPool.FreeCount);
+end;
+
+procedure TTestDispatchBehavior.Call_without_answer_asserts;
+var
+  Msg: string;
+begin
+  { without the opt-out the -Sa build raises from CompleteCall, inside the
+    dispatcher's PollMsg (after Drop and after the exchange was left done
+    and failed). The fixture runs the task directly, so the exception
+    arrives here; under TLoop.Run it is AbortCurrent that catches it and
+    calls Abort and Close on the task, done below by hand: the connection
+    closes without a response and nothing leaks (the heaptrc run) }
+  FSvc.NoAnswer := True;
+  ExpectedNoResponses := 1;
+  FIo.AddRead('POST /unanswered?q=1 HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Content-Length: 2'
+    + CRLF + CRLF + 'ab');
+  Start;
+  Msg := '';
+  try
+    Drive;
+  except
+    on E: EAssertionFailed do
+      Msg := E.Message;
+  end;
+  AssertTrue('raised (got "' + Msg + '")', Pos('without a terminal call', Msg) > 0);
+  AssertTrue('names the request (got "' + Msg + '")', Pos('POST /unanswered', Msg) > 0);
+  AssertEquals('nothing written', '', FIo.Written);
+  AssertEquals('the call was dropped once, as completed, before the raise', 1, FSvc.DropsDone);
+  AssertEquals('and not dropped again', 0, FSvc.DropsAbandoned);
+  AssertFalse('the task is still open when the loop takes over', FD.Closed);
+  FD.Abort;                            { as TLoop.AbortCurrent does }
+  FD.Close;
+  AssertTrue('closed', FD.Closed);
+  AssertEquals('no close event: an aborted task reports none', 0, FObs.Closes);
+  AssertEquals('exchange back in the pool', 1, FPool.FreeCount);
+  AssertTrue('the transport was closed', FIo.Closed);
 end;
 
 procedure TTestDispatchBehavior.Cancelled_call_dropped_once;

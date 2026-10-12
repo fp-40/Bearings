@@ -104,6 +104,7 @@ type
     procedure Wake_after_recycle_is_ignored;
     procedure Timer_of_earlier_request_does_not_wake;
     procedure Complete_without_answer_fails;
+    procedure Complete_without_answer_asserts;
     procedure Pool_reuses_exchanges;
   end;
 
@@ -458,11 +459,57 @@ begin
 end;
 
 procedure TTestExchangeLifetime.Complete_without_answer_fails;
+var
+  N0: LongInt;
 begin
+  { the production behaviour: the completion counts and fails the exchange;
+    NoResponseIsExpected keeps this -Sa build from raising }
+  N0 := NoResponseFailures;
   StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+  FEx.NoResponseIsExpected;
   FEx.CompleteCall;
   AssertTrue('failed', FEx.Resp.Failed);
   AssertEquals('handler returned no response', FEx.Resp.FailText);
+  AssertEquals('counted once', 1, NoResponseFailures - N0);
+end;
+
+procedure TTestExchangeLifetime.Complete_without_answer_asserts;
+var
+  N0: LongInt;
+  Msg: string;
+begin
+  { user decision 2026-10-11 (option B): a build with assertions raises for a
+    completion without a terminal call, after the exchange was left
+    consistent (done, failed, request released) }
+  N0 := NoResponseFailures;
+  StartRequest('GET /no-answer?x=1 HTTP/1.1' + CRLF + CRLF);
+  Msg := '';
+  try
+    FEx.CompleteCall;
+  except
+    on E: EAssertionFailed do
+      Msg := E.Message;
+  end;
+  AssertTrue('raised (got "' + Msg + '")', Pos('without a terminal call', Msg) > 0);
+  AssertTrue('names the request', Pos('GET /no-answer', Msg) > 0);
+  AssertEquals('counted once', 1, NoResponseFailures - N0);
+  AssertTrue('failed', FEx.Resp.Failed);
+  AssertEquals('handler returned no response', FEx.Resp.FailText);
+  AssertTrue('request released', FEx.Head.Released);
+  { the opt-out is per request: cleared by BeginRequest }
+  StartRequest('GET /2 HTTP/1.1' + CRLF + CRLF, 2);
+  FEx.NoResponseIsExpected;
+  FEx.CompleteCall;
+  StartRequest('GET /3 HTTP/1.1' + CRLF + CRLF, 3);
+  Msg := '';
+  try
+    FEx.CompleteCall;
+  except
+    on E: EAssertionFailed do
+      Msg := E.Message;
+  end;
+  AssertTrue('raises again for the next request', Pos('GET /3', Msg) > 0);
+  AssertEquals('counted three times', 3, NoResponseFailures - N0);
 end;
 
 procedure TTestExchangeLifetime.Pool_reuses_exchanges;

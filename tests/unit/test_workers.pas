@@ -785,6 +785,7 @@ type
     procedure Stream_backpressure_frames_and_trailers;
     procedure Stream_ends_when_last_producer_releases;
     procedure Handler_exception_and_no_answer_fail;
+    procedure No_answer_from_worker_asserts;
     procedure Exception_after_stream_aborts_body;
     procedure Body_copy_on_worker_uses_heap;
     procedure Share_release_balance_16_threads;
@@ -1672,9 +1673,12 @@ end;
 procedure TTestOffload.Body_error_raises_body_error;
 var
   Closed: Boolean;
+  N0: LongInt;
 begin
   FEx := NewEx('POST /e HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Transfer-Encoding: chunked'
     + CRLF + CRLF);
+  N0 := NoResponseFailures;
+  FEx.NoResponseIsExpected;              { the handler swallows the error and gives no answer }
   StartOffload(hmReadBody);
   AssertTrue('line 1122', FEx.Chan.PollReady(Closed));
   FEx.Chan.SendError(NewBodyDecode(deInvalidSize));
@@ -1686,6 +1690,7 @@ begin
   FEx.CompleteCall;
   AssertTrue('line 1130', FEx.Resp.Failed);
   AssertEquals('handler returned no response', FEx.Resp.FailText);
+  AssertEquals('the no-response counted once', 1, NoResponseFailures - N0);
   FinishExchange;
 end;
 
@@ -1697,6 +1702,7 @@ begin
     receiver as "connection error" (an equivalent mutant for the inline
     service, design 7.3 conn-diff README; observable with a worker) }
   FEx := NewEx('POST /e HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Content-Length: 10' + CRLF + CRLF);
+  FEx.NoResponseIsExpected;              { the handler swallows the error and gives no answer }
   StartOffload(hmReadBody);
   AssertTrue('line 1144', FEx.Chan.PollReady(Closed));
   AssertTrue('line 1145', Until_(@CondParkedInRead, 5000));
@@ -1867,6 +1873,8 @@ begin
 end;
 
 procedure TTestOffload.Handler_exception_and_no_answer_fail;
+var
+  N0: LongInt;
 begin
   FEx := NewEx('GET /x HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   StartOffload(hmRaise);
@@ -1878,11 +1886,37 @@ begin
   FreeAndNil(FCall);
   FreeAndNil(FH);
   FEx := NewEx('GET /y HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
+  N0 := NoResponseFailures;
+  FEx.NoResponseIsExpected;              { the production behaviour, without the -Sa raise }
   StartOffload(hmNoAnswer);
   AssertTrue('line 1321', Until_(@CondAnswered, 5000));
   FEx.CompleteCall;
   AssertTrue('line 1323', FEx.Resp.Failed);
   AssertEquals('handler returned no response', FEx.Resp.FailText);
+  AssertEquals('the no-response counted once', 1, NoResponseFailures - N0);
+  FinishExchange;
+end;
+
+procedure TTestOffload.No_answer_from_worker_asserts;
+var
+  N0: LongInt;
+begin
+  { user decision 2026-10-11 (option B): without NoResponseIsExpected the -Sa
+    build raises on the worker, after the job's own Fail answer. The
+    exception leaves Execute through its finally (the worker's reference
+    goes back) and ends in the worker pool's safety net (one stderr line,
+    "item raised: EAssertionFailed"), so it cannot be caught here: the
+    counter, the answer and the reference count show it ran }
+  FEx := NewEx('GET /no-answer HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
+  N0 := NoResponseFailures;
+  StartOffload(hmNoAnswer);
+  AssertTrue('the job answered with its error', Until_(@CondAnswered, 5000));
+  AssertTrue('the worker''s reference went back', Until_(@CondRef1, 5000));
+  AssertEquals('the no-response counted once', 1, NoResponseFailures - N0);
+  FEx.CompleteCall;
+  AssertTrue('failed', FEx.Resp.Failed);
+  AssertEquals('handler returned no response', FEx.Resp.FailText);
+  AssertEquals('the completion did not count it again', 1, NoResponseFailures - N0);
   FinishExchange;
 end;
 
@@ -2036,6 +2070,7 @@ begin
   end;
   AssertTrue('a blocking read on the loop thread raises instead of waiting for itself', Raised);
   FEx.Chan.CloseSender;
+  FEx.NoResponseIsExpected;              { the test completes the call without an answer }
   FEx.CompleteCall;
   FinishExchange;
 end;

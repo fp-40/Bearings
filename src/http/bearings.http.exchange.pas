@@ -116,8 +116,15 @@
   call; THttpService.Call neither answers nor reads the body; a recycled
   exchange is never woken. They also overwrite a released request head
   with $DD bytes, so code that reads it after the release sees that
-  pattern instead of the next request's bytes. Release builds contain none
-  of these checks.
+  pattern instead of the next request's bytes. And they catch a call that
+  completes, or a worker handler that returns, without a terminal call: a
+  program error that every build counts (NoResponseFailures) and treats as
+  the handler failing (the connection closes with no response); a build
+  with assertions also raises EAssertionFailed naming the request, after
+  the exchange was left consistent (on the loop the exception aborts the
+  connection task; on a worker it ends in the pool's safety net). A test
+  that drives this path on purpose calls NoResponseIsExpected first.
+  Release builds contain none of these checks.
 
   TConnParts and TConnObserver are declared here and not in bearings.server: the
   dispatcher uses them and bearings.server uses the dispatcher, so declaring them
@@ -336,9 +343,21 @@ type
     FHeadWriter: Pointer;           { shared: the thread that wrote the response head }
     FWakeGen: LongWord;             { FGen when WakeMsg was posted; checked when it is dispatched }
     FInServiceCall: Boolean;        { THttpService.Call is running }
+    { NoResponseIsExpected was called for this request: a build with assertions does not raise
+      for a completion without a terminal call (cleared by BeginRequest) }
+    FExpectNoResponse: Boolean;
+    FNoResponseMsg: RawByteString;  { builds with assertions: NoResponse's text for DbgNoResponse
+                                      (loop thread only) }
     FAttachment: TExchangeAttachment;   { detached at Recycle / BeginRequest }
     procedure DetachAttachment;     { cold }
-    procedure NoResponse;           { cold: CompleteCall without a terminal call }
+    procedure NoResponse;           { cold, loop: CompleteCall without a terminal call }
+    procedure NoResponseFromWorker; { cold, worker: the handler returned without a terminal call }
+    {$ifopt C+}
+    { cold: the assertion's message: What ("the call completed" / "the handler returned") plus
+      the request's method and path while the head is still pinned }
+    function NoResponseText(const What: RawByteString): RawByteString;
+    procedure DbgNoResponse;        { cold, loop: raises after NoResponse unless opted out }
+    {$endif}
     function OnOwnLoop: Boolean;    { the calling thread is FLoop's thread (or no loop) }
     procedure SyncShared;           { loop: hand-backs (ToRelease, released head) are unpinned }
     procedure CloseBodyFromLoop;    { loop, shared: the receiver is closed for the handler }
@@ -412,6 +431,13 @@ type
       the head. Automatic at call completion (unshared exchange) or at the Release of the last
       holder (shared exchange). The head accessors are invalid afterwards. }
     procedure ReleaseRequest;
+    { A call that completes, or a worker handler that returns, without a terminal call is a
+      program error: every build counts it (NoResponseFailures) and fails the exchange (the
+      connection closes with no response); a build with assertions also raises EAssertionFailed.
+      This call, made before the completion, keeps that build from raising for this request
+      (tests that drive the error path on purpose). Loop thread, or the worker before it
+      returns. Cleared by BeginRequest. }
+    procedure NoResponseIsExpected;
 
     { ---- request body ---- }
     { never blocks; brPending asks for more, and the call is polled again when it arrives }
@@ -715,6 +741,10 @@ var
   { TExchange objects alive (created and not yet freed); tests check that every exchange a
     worker released reached its pool and was freed with it. Atomic. }
   ExchangesLive: LongInt = 0;
+  { How often a call completed, or a worker handler returned, without a terminal call (a
+    program error; see NoResponseIsExpected). Every build counts; a build with assertions also
+    raises EAssertionFailed. Atomic. }
+  NoResponseFailures: LongInt = 0;
 
 {$ifopt C+}
 type
@@ -2454,6 +2484,8 @@ begin
 end;
 
 procedure TExchange.CompleteShared;
+var
+  NoAnswer: Boolean;
 begin
   { the call completed on a shared exchange: it gives up its holder of the
     request. The request is released here only when no reference Share
@@ -2465,11 +2497,16 @@ begin
   SyncShared;
   if (FUpgrade <> nil) and (FUpgrade.Handler = nil) then
     FUpgrade.RxAlive := False;
-  if InterlockedCompareExchange(FState, Ord(xsDone), Ord(xsCalled)) = Ord(xsCalled) then
-    NoResponse
+  NoAnswer := InterlockedCompareExchange(FState, Ord(xsDone), Ord(xsCalled)) = Ord(xsCalled);
+  if NoAnswer then
+    NoResponse                             { before DropHolder: the head may still be read }
   else if AtomicLoad(FState) = Ord(xsAnswered) then
     InterlockedExchange(FState, Ord(xsDone));
   DropHolder;
+  {$ifopt C+}
+  if NoAnswer then
+    DbgNoResponse;                         { last: the exchange is consistent when it raises }
+  {$endif}
 end;
 
 procedure TExchange.CancelShared;
@@ -2517,6 +2554,32 @@ begin
     AbortStream(Msg);
 end;
 
+procedure TExchange.NoResponseFromWorker;
+{$ifopt C+}
+var
+  Msg: RawByteString;
+  Expected: Boolean;
+{$endif}
+begin
+  { worker thread: the handler returned without a terminal call (a program
+    error in the handler; see NoResponse). Counted first, then the job's own
+    error answer (FailShared: the claim, the state, the wake; a canceled
+    exchange refuses it, and the count stands). A build with assertions
+    raises only after that, so the exchange is consistent: the exception
+    leaves Execute through its finally (the worker's Release) and ends in
+    the worker pool's safety net, which reports it on stderr. }
+  InterlockedIncrement(NoResponseFailures);
+  {$ifopt C+}
+  Msg := NoResponseText('the handler returned');
+  Expected := FExpectNoResponse;           { read before the answer: the loop may move on }
+  {$endif}
+  FailShared('handler returned no response', False);
+  {$ifopt C+}
+  if not Expected then
+    Assert(False, Msg);
+  {$endif}
+end;
+
 procedure TExchange.RunHandler;
 begin
   try
@@ -2526,7 +2589,7 @@ begin
       HandlerRaised(E);
   end;
   if AtomicLoad(FState) = Ord(xsCalled) then
-    FailShared('handler returned no response', False);
+    NoResponseFromWorker;
 end;
 
 {$ifopt C+}
@@ -2573,6 +2636,7 @@ begin
     FLoop := AOwner.Loop;
   FState := Ord(xsCalled);
   FAnswerClaim := 0;
+  FExpectNoResponse := False;
   Inc(FGen);
   {$ifopt C+}
   FHeadWriter := nil;
@@ -2676,13 +2740,69 @@ end;
 
 procedure TExchange.NoResponse;
 begin
-  { a call that returned cpReady without a terminal call (a program error
-    in the call): treated as the handler failing }
+  { loop thread: a call that returned cpReady without a terminal call (a
+    program error in the call). Every build treats it as the handler failing
+    (the connection closes with no response) and counts it; a build with
+    assertions also raises, from DbgNoResponse, once CompleteCall or
+    CompleteShared has left the exchange consistent. Runs while the head is
+    still pinned, so the message can name the request }
   Resp.Failed := True;
   Resp.FailText := 'handler returned no response';
+  InterlockedIncrement(NoResponseFailures);
+  {$ifopt C+}
+  FNoResponseMsg := NoResponseText('the call completed');
+  {$endif}
 end;
 
+procedure TExchange.NoResponseIsExpected;
+begin
+  FExpectNoResponse := True;
+end;
+
+{$ifopt C+}
+function TExchange.NoResponseText(const What: RawByteString): RawByteString;
+var
+  M, P: RawByteString;
+  S: TByteSlice;
+  Named: Boolean;
+begin
+  { the request's method and path, when the head is still pinned. On a
+    shared exchange another holder may release the head meanwhile
+    (ReleaseRequestShared writes Head.Released under Chan.Lock), so the
+    head is read under the lock and only copied there }
+  Result := 'TExchange: ' + What + ' without a terminal call (Respond, RespondStream, '
+    + 'BeginStream or Fail)';
+  if FShared then
+    Chan.Lock.Acquire;
+  Named := (not Head.Released) and (Head.View.P <> nil);
+  if Named then
+  begin
+    SetString(M, PAnsiChar(Head.View.P + Head.MethodSlice.Off), Head.MethodSlice.Len);
+    Head.Uri.GetPath(Head.View.P, S.P, S.Len);
+    if S.Len > 120 then
+      S.Len := 120;                        { Assert's message is a ShortString }
+    SetString(P, PAnsiChar(S.P), S.Len);
+  end;
+  if FShared then
+    Chan.Lock.Release;
+  if Named then
+    Result := Result + ': ' + M + ' ' + P;
+end;
+
+procedure TExchange.DbgNoResponse;
+var
+  Msg: RawByteString;
+begin
+  Msg := FNoResponseMsg;
+  FNoResponseMsg := '';
+  if not FExpectNoResponse then
+    Assert(False, Msg);
+end;
+{$endif}
+
 procedure TExchange.CompleteCall;
+var
+  NoAnswer: Boolean;
 begin
   { the call completed: the request it held is released }
   Assert(OnOwnLoop, 'TExchange.CompleteCall: not on the loop thread');
@@ -2691,10 +2811,11 @@ begin
     CompleteShared;
     Exit;
   end;
+  NoAnswer := FState = Ord(xsCalled);
+  if NoAnswer then
+    NoResponse;                            { before ReleaseRequest: the message names the request }
   if not Head.Released then
     ReleaseRequest;
-  if FState = Ord(xsCalled) then
-    NoResponse;
   FState := Ord(xsDone);
   { the call was the stream's only producer (nobody may write to an
     unshared exchange after its completion): a stream it began and did not
@@ -2702,6 +2823,10 @@ begin
     AutoFinish leaves a finished, aborted or inactive channel alone }
   if FChannel <> nil then
     FChannel.AutoFinish;
+  {$ifopt C+}
+  if NoAnswer then
+    DbgNoResponse;                         { last: the exchange is consistent when it raises }
+  {$endif}
 end;
 
 procedure TExchange.Cancel;

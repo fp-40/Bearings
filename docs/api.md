@@ -115,7 +115,11 @@ the head to pick a call object, and may write a log line.
 
 - `Poll(Ex): TCallPoll` runs on the loop thread every time the connection
   runs while the call is in flight. It returns `cpReady` only after a
-  terminal call was made on `Ex`. It returns `cpPending` when the answer is
+  terminal call was made on `Ex`; `cpReady` without one is a program
+  error: the exchange is failed (`handler returned no response`, the
+  connection closes with a user error) and `NoResponseFailures` is
+  incremented, and a build with assertions also raises (section 12). It
+  returns `cpPending` when the answer is
   not ready yet; then something must call `Ex.Wake` later, otherwise the
   connection stays stuck until a timeout. Sources of a later wake: a
   `TryRead` that returned `brPending` (the call is polled again when body
@@ -360,12 +364,18 @@ Rules:
 - One `Offload` per request. A second one raises `EExchangeState`.
   `Offload` with the pool shut down raises `EWorkerPoolStopped`; either
   exception aborts the connection task.
-- `Run` must make exactly one terminal call. If it returns without one, the
-  exchange is failed with the message `handler returned no response`
-  (the connection closes with a user error, section 9). If `Run` raises,
-  the exception is caught: the exchange is failed with `handler raised
+- `Run` must make exactly one terminal call. If it returns without one,
+  that is a program error: the exchange is failed with the message
+  `handler returned no response` (the connection closes with a user error,
+  section 9) and `NoResponseFailures` is incremented, in every build; a
+  build with assertions (`-Sa`) then also raises `EAssertionFailed` on the
+  worker, naming the request, after the exchange was failed and before the
+  worker's reference goes back, so the exception ends in the worker pool's
+  safety net (one line on stderr). A test that drives this on purpose
+  calls `Ex.NoResponseIsExpected` first (section 12). If `Run` raises, the
+  exception is caught: the exchange is failed with `handler raised
   <class>: <message>`, or, when a stream was already begun, the stream is
-  aborted (`AbortStream`). Nothing reaches the worker pool's own safety
+  aborted (`AbortStream`), and nothing reaches the worker pool's safety
   net.
 - On a worker the blocking body reads are allowed (section 6), and `Write`
   parks while the stream queue is full (section 5).
@@ -813,7 +823,19 @@ the program that compiles it. They keep the `WD_` prefix.
   neither answers nor reads the body; a recycled exchange is never woken),
   the encoders assert every header name and value they write, and a
   released request head is overwritten with `$DD` bytes so code that reads
-  it late sees that pattern. Release builds contain none of these checks
+  it late sees that pattern. A call that completes (`Poll` returned
+  `cpReady`) or a worker handler that returns without a terminal call
+  raises `EAssertionFailed` naming the request (method and path), after
+  the exchange was left consistent: on the loop the exception leaves
+  `TExchange.CompleteCall` inside the connection task's run, so the loop
+  aborts and closes the connection (no response, nothing leaks); on a
+  worker it leaves the job after its `Fail` answer and ends in the pool's
+  safety net. Every build counts these in `NoResponseFailures`
+  (`bearings.http.exchange`, atomic) and closes the connection with a user
+  error; only the raise needs `-Sa` (it is not tied to `WD_DEBUG`). A test
+  that drives this path on purpose calls `Ex.NoResponseIsExpected` before
+  the completion; the opt-out is per request. Release builds contain none
+  of these checks
   (`tools/check-hot-asm.sh --s7` verifies that no `Dbg*` routine and no
   assertion call is in a production build of `bearings.http.exchange`).
 - `-dWD_DEBUG`: the connection task checks, at the end of every run that
@@ -993,6 +1015,8 @@ methods are internal and are left out.
 | `TConnParts` | `Transport`, `Rest`, `Src` handed over by `OnParts` | loop |
 | `BodyCopy(Ex, P, Len): TBodyData` | a body that is a copy of `P^` in a pooled or heap block | any |
 | `UpgradeSlotsLive`, `ExchangesLive` | object counters for tests | any (atomic) |
+| `NoResponseFailures` | completions without a terminal call (section 12) | any (atomic) |
+| `TExchange.NoResponseIsExpected` | keeps a `-Sa` build from raising for this request's completion without a terminal call (tests) | loop, or the worker before it returns |
 | `TBodyChan`, `TChanItemKind`, `TChanPoll`, `TResponseSlot` | the body channel record and the response slot | internal |
 
 ### bearings.rt.buf (the body API)
