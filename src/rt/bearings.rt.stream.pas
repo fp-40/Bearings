@@ -49,6 +49,17 @@
   when it is closed or detached (after Detach the caller owns the socket and
   the stream knows nothing more about it).
 
+  Shutdown and abort. A server that stops keeps its upgraded connections
+  in a TUpgradedList per loop (Track). At a graceful stop it calls
+  Shutdown on each one: the listener's Shutdown method ends the protocol
+  politely (for example a WebSocket close frame) and closes the stream
+  later; the default closes it at once, since code that does not know the
+  protocol cannot do better. When the stream is closed by force (Abort: an
+  exception escaped a callback, or the stop's deadline passed), the
+  listener's Aborted method runs first, so the listener can release what it
+  holds; the stream is closed right after it. The list's OnEmpty runs when
+  its last stream is closed or detached.
+
   Ownership: the upgrade handler owns U from the moment Upgraded(U) is
   called. If Upgraded raises while U is still open and not taken (Taken =
   False), bearings.http.exchange closes U before the exception goes on to the
@@ -70,14 +81,30 @@ type
   TUpgraded = class;
   TUpgradedCloseProc = procedure(Arg: Pointer);
 
+  { The upgraded streams of one loop, a doubly linked list through the
+    streams' own fields. Loop thread only. }
+  PUpgradedList = ^TUpgradedList;
+  TUpgradedList = record
+    Head: TUpgraded;
+    Count: Integer;
+    OnEmpty: procedure(List: PUpgradedList) of object;   { called when Count drops to 0 }
+  end;
+
   { Callbacks of an attached TUpgraded, called on the loop thread. Readable:
     the task ran (socket event or Wake); try TryRead. Writable: called after
     Readable; try TryWrite if there is pending output. The defaults do
-    nothing. }
+    nothing.
+    Shutdown(U): the server stops gracefully; end the protocol and close U
+    when done. Default: U.Close.
+    Aborted(U): U is being closed by force (TUpgraded.Abort); release what
+    the listener holds and do not use U after it returns (U closes itself
+    right after). Default: nothing. }
   TRawListener = class
   public
     procedure Readable(U: TUpgraded); virtual;
     procedure Writable(U: TUpgraded); virtual;
+    procedure Shutdown(U: TUpgraded); virtual;
+    procedure Aborted(U: TUpgraded); virtual;
   end;
 
   { The connection after an upgrade: the transport plus the leftover bytes
@@ -88,7 +115,10 @@ type
     FRest: TBytesView;               { leftover bytes; pinned view into a pooled block }
     FListener: TRawListener;
     FOwnsTransport: Boolean;
+    FList: PUpgradedList;            { Track's list; nil when not tracked }
+    FPrevUp, FNextUp: TUpgraded;
     procedure NotifyClosed;
+    procedure Untrack;
   public
     { called once, with CloseArg, when the stream is closed or detached (nil = none) }
     CloseProc: TUpgradedCloseProc;
@@ -102,7 +132,14 @@ type
       FromSrc: PIoSource; AOwnsTransport: Boolean);
     property Transport: TTransport read FTransport;
     procedure Run; override;
+    { closed by force: the listener's Aborted, then Close }
     procedure Abort; override;
+    { Adds the stream to List (a server's per-loop list). Loop thread. }
+    procedure Track(List: PUpgradedList);
+    { the server stops gracefully: the listener's Shutdown, or Close when
+      no listener is attached }
+    procedure Shutdown;
+    property NextTracked: TUpgraded read FNextUp;
     { The leftover bytes, in place (valid until consumed or the stream is
       closed or detached). }
     procedure Leftover(out P: PByte; out Len: SizeInt);
@@ -133,6 +170,15 @@ begin
 end;
 
 procedure TRawListener.Writable(U: TUpgraded);
+begin
+end;
+
+procedure TRawListener.Shutdown(U: TUpgraded);
+begin
+  U.Close;
+end;
+
+procedure TRawListener.Aborted(U: TUpgraded);
 begin
 end;
 
@@ -190,8 +236,58 @@ begin
 end;
 
 procedure TUpgraded.Abort;
+var
+  L: TRawListener;
 begin
+  L := FListener;
+  FListener := nil;
+  if L <> nil then
+    L.Aborted(Self);
   Close;
+end;
+
+procedure TUpgraded.Track(List: PUpgradedList);
+begin
+  if (FList <> nil) or Closed then
+    Exit;
+  FList := List;
+  FPrevUp := nil;
+  FNextUp := List^.Head;
+  if FNextUp <> nil then
+    FNextUp.FPrevUp := Self;
+  List^.Head := Self;
+  Inc(List^.Count);
+end;
+
+procedure TUpgraded.Untrack;
+var
+  L: PUpgradedList;
+begin
+  L := FList;
+  if L = nil then
+    Exit;
+  if FPrevUp <> nil then
+    FPrevUp.FNextUp := FNextUp
+  else
+    L^.Head := FNextUp;
+  if FNextUp <> nil then
+    FNextUp.FPrevUp := FPrevUp;
+  FPrevUp := nil;
+  FNextUp := nil;
+  FList := nil;
+  Dec(L^.Count);
+  if (L^.Count = 0) and Assigned(L^.OnEmpty) then
+    L^.OnEmpty(L);
+end;
+
+procedure TUpgraded.Shutdown;
+begin
+  if Closed then
+    Exit;
+  if FListener <> nil then
+    FListener.Shutdown(Self)
+  else
+    Close;
 end;
 
 procedure TUpgraded.Leftover(out P: PByte; out Len: SizeInt);
@@ -289,6 +385,7 @@ begin
     end;
   if not Closed then
     inherited Close;
+  Untrack;
   NotifyClosed;
   Result := True;
 end;
@@ -326,6 +423,7 @@ begin
   end;
   if not Closed then
     inherited Close;
+  Untrack;
   NotifyClosed;
 end;
 

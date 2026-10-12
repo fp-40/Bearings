@@ -44,7 +44,7 @@ type
   TRecHandler = class(TWebSocketHandler)
   public
     Log: RawByteString;
-    Echo, RaiseOnText, CloseOnText: Boolean;
+    Echo, RaiseOnText, CloseOnText, AbortOnText: Boolean;
     procedure OnOpen(WS: TWebSocket); override;
     procedure OnText(WS: TWebSocket; P: PByte; Len: SizeInt); override;
     procedure OnBinary(WS: TWebSocket; P: PByte; Len: SizeInt); override;
@@ -102,6 +102,11 @@ type
     procedure Periodic_ping;
     procedure Posts_from_another_thread;
     procedure Sends_after_close_are_refused;
+    procedure Abort_from_a_callback;
+    procedure Abort_with_a_backlog_sends_nothing_more;
+    procedure Server_shutdown_closes_with_1001;
+    procedure Forced_abort_releases_everything;
+    procedure Default_config_pings;
   end;
 
 { ---- TMemTransport ---- }
@@ -213,6 +218,8 @@ begin
     raise Exception.Create('handler failed on purpose');
   if CloseOnText then
     WS.CloseWith(4000, 'app');
+  if AbortOnText then
+    WS.Abort;
   if Echo then
     WS.SendText(P, Len);
 end;
@@ -716,6 +723,70 @@ begin
     WS.Release;
   end;
   AssertFreed;
+end;
+
+procedure TTestWsConn.Abort_from_a_callback;
+begin
+  H.AbortOnText := True;
+  H.Echo := True;
+  Open(Cfg0);
+  Send(CFrame(WS_OP_TEXT, 'stop') + CFrame(WS_OP_TEXT, 'never'));
+  AssertEquals('no echo, no close frame', '', Frames);
+  AssertFalse('no shutdown: no close handshake', T.ShutDown);
+  AssertEquals('open|text:stop|close:1006:|', H.Log);
+  AssertFreed;
+end;
+
+procedure TTestWsConn.Abort_with_a_backlog_sends_nothing_more;
+begin
+  Open(Cfg0);
+  T.Budget := 0;
+  AssertTrue(WS.SendBinary(Pattern(5000)) = wsOk);
+  AssertTrue(WS.Queued > 0);
+  WS.Abort;
+  AssertTrue('refused after Abort', WS.SendText('x') = wsClosed);
+  AssertTrue(WS.Closing);
+  T.Budget := -1;
+  Spin;
+  AssertEquals('the backlog was dropped', '', T.Outp);
+  AssertEquals('open|close:1006:|', H.Log);
+  AssertFreed;
+end;
+
+procedure TTestWsConn.Server_shutdown_closes_with_1001;
+begin
+  Open(Cfg0);
+  U.Shutdown;                        { what bearings.server does at a graceful stop }
+  Spin;
+  AssertEquals('8:' + CloseP(1001, 'server shutdown') + '|', Frames);
+  Send(CFrame(WS_OP_CLOSE, CloseP(1001, '')));
+  AssertTrue(T.ShutDown);
+  T.Eof := True;
+  Send('');
+  AssertEquals('open|close:1001:|', H.Log);
+  AssertFreed;
+end;
+
+procedure TTestWsConn.Forced_abort_releases_everything;
+begin
+  Open(Cfg0);
+  Send(CFrame(WS_OP_TEXT, 'abc', False));   { a message in the reassembly buffer }
+  T.Budget := 0;
+  WS.SendBinary(Pattern(3000));           { and a queued send }
+  U.Abort;                                { what the stop deadline does }
+  AssertEquals('open|close:1006:|', H.Log);
+  AssertFreed;
+  Spin;
+end;
+
+procedure TTestWsConn.Default_config_pings;
+var
+  C: TWsConfig;
+begin
+  C := DefaultWsConfig;
+  AssertEquals(25000, C.PingIntervalMs);
+  AssertEquals(60000, C.IdleTimeoutMs);
+  AssertTrue('a ping comes well before the idle timeout', 2 * C.PingIntervalMs <= C.IdleTimeoutMs);
 end;
 
 begin

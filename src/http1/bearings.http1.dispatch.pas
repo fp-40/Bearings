@@ -219,6 +219,9 @@ type
     Observer: TConnObserver;         { nil in production }
     ObsData: Pointer;                { what Observer.OnAccept returned }
     Hooks: TConnHooks;               { nil = none (the server sets it when a feature needs it) }
+    { where an upgraded stream of this connection is tracked (TUpgraded.Track);
+      nil = not tracked. bearings.server sets its loop's list. }
+    UpgradedList: PUpgradedList;
     Outcome: TConnOutcome;           { set by Finish before the release; coOther until then (an abort) }
     { the current request, for the hooks: the loop clock when its head was
       read (set only with Hooks), the head's bytes, the request body bytes
@@ -1343,6 +1346,9 @@ begin
         U.CloseProc := @UpgradedCloseProc;
         U.CloseArg := Hooks;
       end;
+      { the server's list of upgraded streams (its graceful stop) }
+      if UpgradedList <> nil then
+        U.Track(UpgradedList);
       FUpgraded := True;
       Slot.Fulfill(U);
       FPendingUpgrade.Active := False;

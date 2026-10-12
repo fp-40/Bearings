@@ -27,11 +27,23 @@
   application's list. No extension is negotiated, so
   Sec-WebSocket-Extensions is ignored.
 
+  Origin. A browser sends the Origin header (the scheme, host and port of
+  the page that opens the WebSocket), and it sends the site's cookies with
+  the handshake whatever page asked for it. A server that relies on
+  cookies must therefore refuse handshakes from pages of other sites
+  (cross-site WebSocket hijacking). The CheckRequest overload with an
+  Origins list does that: a request whose Origin is not in the list
+  (compared ignoring ASCII case), or that has more than one Origin field,
+  is refused with 403 Forbidden. A request without Origin is not from a
+  browser and passes. The overload without the list does not look at
+  Origin.
+
   On success the application calls Respond101 (or AcceptWebSocket in
   bearings.ws.conn, which also creates the connection object); on failure
   RespondHandshakeError answers 426 Upgrade Required with
-  "Sec-WebSocket-Version: 13" when only the version was wrong, and 400 Bad
-  Request otherwise.
+  "Sec-WebSocket-Version: 13" when only the version was wrong, 403
+  Forbidden for an origin that is not allowed, and 400 Bad Request
+  otherwise.
 
   SHA-1 comes from Free Pascal's sha1 unit (the hash package). The base64
   encoder and decoder are here: the handshake needs the standard alphabet
@@ -55,24 +67,29 @@ const
 
 type
   TWsHandshakeStatus = (whOk, whNotGet, whNotHttp11, whNotUpgrade, whNoUpgradeWebsocket,
-    whNoConnectionUpgrade, whBadKey, whBadVersion);
+    whNoConnectionUpgrade, whBadKey, whBadVersion, whBadOrigin);
 
   TWsHandshake = record
     Status: TWsHandshakeStatus;
     Accept: RawByteString;           { the Sec-WebSocket-Accept value (whOk) }
     Protocol: RawByteString;         { the chosen subprotocol; '' none }
     function Ok: Boolean; inline;
-    function HttpStatus: Word;       { 101 for whOk, 426 for whBadVersion, else 400 }
+    function HttpStatus: Word;       { 101 for whOk, 426 for whBadVersion, 403 for whBadOrigin, else 400 }
     function Text: RawByteString;    { what was wrong, for the error body }
   end;
 
 { Checks the request of Ex (loop thread). Protocols: the subprotocols the
   application supports. }
-function CheckRequest(Ex: TExchange; const Protocols: array of RawByteString): TWsHandshake;
+function CheckRequest(Ex: TExchange; const Protocols: array of RawByteString): TWsHandshake; overload;
+{ The same, and the Origin check against Origins (for example
+  'https://example.com'; see the unit header). }
+function CheckRequest(Ex: TExchange; const Protocols, Origins: array of RawByteString): TWsHandshake; overload;
 { The same checks on the parts of a request (for tests and other front ends).
   IsUpgrade: the HTTP layer treats the request as an upgrade request. }
 function CheckHandshake(Method: THttpMethod; Version: THttpVersion; IsUpgrade: Boolean;
-  Headers: THttpHeaders; const Protocols: array of RawByteString): TWsHandshake;
+  Headers: THttpHeaders; const Protocols: array of RawByteString): TWsHandshake; overload;
+function CheckHandshake(Method: THttpMethod; Version: THttpVersion; IsUpgrade: Boolean;
+  Headers: THttpHeaders; const Protocols, Origins: array of RawByteString): TWsHandshake; overload;
 { base64(SHA-1(Key + WS_GUID)) }
 function AcceptValue(const Key: RawByteString): RawByteString;
 { Registers H with Ex.OnUpgrade and answers 101 with the handshake headers.
@@ -222,6 +239,7 @@ begin
   case Status of
     whOk: Result := 101;
     whBadVersion: Result := 426;
+    whBadOrigin: Result := 403;
   else
     Result := 400;
   end;
@@ -238,6 +256,7 @@ begin
     whNoConnectionUpgrade: Result := 'the Connection header does not list upgrade';
     whBadKey: Result := 'Sec-WebSocket-Key must be one base64 value of 16 bytes';
     whBadVersion: Result := 'unsupported Sec-WebSocket-Version (13 is supported)';
+    whBadOrigin: Result := 'the page''s origin is not allowed';
   end;
 end;
 
@@ -336,10 +355,55 @@ begin
   end;
 end;
 
+{ True when Headers has no Origin field, or one whose value is in Origins
+  (ignoring ASCII case) }
+function OriginAllowed(Headers: THttpHeaders; const Origins: array of RawByteString): Boolean;
+var
+  I, J: SizeInt;
+  P: PByte;
+  L: SizeInt;
+begin
+  I := Headers.IndexOf('origin');
+  if I < 0 then
+    Exit(True);
+  if Headers.IndexOf('origin', I + 1) >= 0 then
+    Exit(False);
+  P := Headers.ValuePtr(I);
+  L := Headers.ValueLen(I);
+  while (L > 0) and (P^ in [9, 32]) do
+  begin
+    Inc(P);
+    Dec(L);
+  end;
+  while (L > 0) and (P[L - 1] in [9, 32]) do
+    Dec(L);
+  for J := 0 to High(Origins) do
+    if AsciiEqualIgnoreCaseStr(P, L, Origins[J]) then
+      Exit(True);
+  Result := False;
+end;
+
+function CheckHandshake(Method: THttpMethod; Version: THttpVersion; IsUpgrade: Boolean;
+  Headers: THttpHeaders; const Protocols, Origins: array of RawByteString): TWsHandshake;
+begin
+  Result := CheckHandshake(Method, Version, IsUpgrade, Headers, Protocols);
+  if Result.Ok and not OriginAllowed(Headers, Origins) then
+  begin
+    Result := Default(TWsHandshake);
+    Result.Status := whBadOrigin;
+  end;
+end;
+
 function CheckRequest(Ex: TExchange; const Protocols: array of RawByteString): TWsHandshake;
 begin
   Result := CheckHandshake(Ex.Method, Ex.Version, Ex.WantsUpgrade and (Ex.UpgradeSlot <> nil),
     Ex.Headers, Protocols);
+end;
+
+function CheckRequest(Ex: TExchange; const Protocols, Origins: array of RawByteString): TWsHandshake;
+begin
+  Result := CheckHandshake(Ex.Method, Ex.Version, Ex.WantsUpgrade and (Ex.UpgradeSlot <> nil),
+    Ex.Headers, Protocols, Origins);
 end;
 
 function Respond101(Ex: TExchange; const R: TWsHandshake; H: TUpgradeHandler): Boolean;

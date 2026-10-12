@@ -123,10 +123,15 @@
     2. calls GracefulShutdown on every connection, the ones just accepted
        included: keep-alive is turned off, so an idle connection closes now
        and a connection in the middle of a request closes after its
-       response.
-    3. leaves its Run when its last connection closed, or when GraceMs
-       passed. The connections still open then are aborted
-       (TH1Dispatcher.Abort: closed without completion events).
+       response. Upgraded connections (TUpgraded, kept in the loop's
+       Upgraded list from the hand-off on) get Shutdown: their listener
+       ends its protocol (a WebSocket sends a close frame with 1001) and
+       closes them; a stream without a listener is closed at once.
+    3. leaves its Run when its last connection and its last upgraded
+       connection closed, or when GraceMs passed. The connections still
+       open then are aborted (TH1Dispatcher.Abort: closed without
+       completion events; TUpgraded.Abort: the listener's Aborted, then
+       the stream is closed).
   Wait joins the loop threads and then shuts the worker pool down (queued
   items still run, for up to WorkerWaitMs).
 
@@ -176,7 +181,7 @@ interface
 
 uses
   SysUtils, ctypes, bearings.rt.sys, bearings.rt.cpu, bearings.rt.timer, bearings.rt.loop, bearings.rt.net, bearings.rt.buf,
-  bearings.rt.sync, bearings.rt.workers, bearings.rt.sd, bearings.http.error, bearings.http.exchange, bearings.http1.config, bearings.http1.dispatch,
+  bearings.rt.sync, bearings.rt.workers, bearings.rt.sd, bearings.rt.stream, bearings.http.error, bearings.http.exchange, bearings.http1.config, bearings.http1.dispatch,
   bearings.server.metrics, bearings.server.accesslog;
 
 type
@@ -239,6 +244,8 @@ type
     procedure OnAccept(ALoop: TLoop; var Fd: cint; const Peer: TSockAddrStorage);
     procedure ResumeListeners;       { loop thread: ResumeFromLimit on every listener }
     procedure ConnsEmpty(List: PConnList);
+    procedure UpgradedEmpty(List: PUpgradedList);
+    procedure AbortUpgraded;
     function GetListener: TListener;
   public
     Server: TServer;
@@ -251,6 +258,9 @@ type
     Service: THttpService;
     Pool: TExchangePool;
     Conns: TConnList;
+    { the upgraded connections (for example WebSockets) of this loop: Stop
+      asks them to shut down and waits for them like for Conns }
+    Upgraded: TUpgradedList;
     Thread: TThreadID;
     Running: Boolean;
     Stopping: Boolean;
@@ -437,6 +447,7 @@ begin
     if not D.Closed then
       D.Close;
   end;
+  AbortUpgraded;
 end;
 
 destructor TServerLoop.Destroy;
@@ -459,6 +470,7 @@ begin
       if not D.Closed then
         D.Close;
     end;
+    AbortUpgraded;
     for I := 0 to High(Listeners) do
       if Listeners[I] <> nil then
       begin
@@ -503,6 +515,7 @@ begin
     Id := ALoop.NextConnId;
     D := TH1Dispatcher.Create(ALoop, F);
     D.Hooks := Server.FHooks;      { first: an exception below must still release the slot }
+    D.UpgradedList := @Upgraded;
     D.Peer := Peer;
     T := NewTcpTransport(@D.Src);
     Tr := T;
@@ -543,8 +556,22 @@ end;
 
 procedure TServerLoop.ConnsEmpty(List: PConnList);
 begin
-  if Stopping then
+  if Stopping and (Upgraded.Count = 0) then
     Loop.StopNow;
+end;
+
+procedure TServerLoop.UpgradedEmpty(List: PUpgradedList);
+begin
+  if Stopping and (Conns.Count = 0) then
+    Loop.StopNow;
+end;
+
+{ closes the upgraded connections left, by force (their listeners' Aborted) }
+procedure TServerLoop.AbortUpgraded;
+begin
+  Upgraded.OnEmpty := nil;
+  while Upgraded.Head <> nil do
+    Upgraded.Head.Abort;             { unlinks }
 end;
 
 procedure TServerLoop.ResumeListeners;
@@ -756,6 +783,7 @@ begin
     if not D.Closed then
       D.Close;
   end;
+  SL.AbortUpgraded;
   SL.Loop.StopNow;
 end;
 
@@ -787,6 +815,7 @@ procedure StopProc(Loop: TLoop; Arg: Pointer);
 var
   SL: TServerLoop;
   D: TH1Dispatcher;
+  U, UNext: TUpgraded;
   I: Integer;
 begin
   SL := TServerLoop(Arg);
@@ -809,7 +838,16 @@ begin
     D.GracefulShutdown;
     D := D.NextConn;
   end;
-  if SL.Conns.Count = 0 then
+  { the upgraded connections end their protocol (a WebSocket sends its
+    close frame); a stream may close and unlink itself in the call }
+  U := SL.Upgraded.Head;
+  while U <> nil do
+  begin
+    UNext := U.NextTracked;
+    U.Shutdown;
+    U := UNext;
+  end;
+  if (SL.Conns.Count = 0) and (SL.Upgraded.Count = 0) then
     Loop.StopNow
   else
   begin
@@ -1357,6 +1395,7 @@ begin
     SL.Pool := TExchangePool.Create;
     SL.Loop.Exchanges := SL.Pool;
     SL.Conns.OnEmpty := @SL.ConnsEmpty;
+    SL.Upgraded.OnEmpty := @SL.UpgradedEmpty;
     SL.FGsMsg.Kind := lmCall;
     SL.FGsMsg.Proc := @GsProc;
     SL.FGsMsg.Arg := SL;

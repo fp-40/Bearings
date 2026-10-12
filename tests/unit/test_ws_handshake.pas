@@ -36,6 +36,7 @@ type
     procedure Refuses_bad_keys;
     procedure Refuses_other_versions_with_426;
     procedure Subprotocol_choice;
+    procedure Origin_check;
   end;
 
 const
@@ -232,6 +233,39 @@ begin
   H.Add('Sec-WebSocket-Protocol', 'chat');
   AssertEquals('the application supports none', '',
     CheckHandshake(hmGet, hv11, True, H, []).Protocol);
+end;
+
+procedure TTestHandshake.Origin_check;
+const
+  Allowed: array[0..1] of RawByteString = ('https://example.com', 'http://localhost:8080');
+
+  function WithOrigin(const V: RawByteString): TWsHandshake;
+  begin
+    Good;
+    if V <> '-' then
+      H.Add('Origin', V);
+    Result := CheckHandshake(hmGet, hv11, True, H, [], Allowed);
+  end;
+
+begin
+  AssertTrue('allowed', WithOrigin('https://example.com').Ok);
+  AssertTrue('second entry', WithOrigin('http://localhost:8080').Ok);
+  AssertTrue('ASCII case ignored', WithOrigin('HTTPS://Example.COM').Ok);
+  AssertTrue('no Origin: not a browser', WithOrigin('-').Ok);
+  AssertTrue('other site', WithOrigin('https://evil.example').Status = whBadOrigin);
+  AssertEquals(403, WithOrigin('https://evil.example').HttpStatus);
+  AssertTrue('other port', WithOrigin('https://example.com:8443').Status = whBadOrigin);
+  AssertTrue('other scheme', WithOrigin('http://example.com').Status = whBadOrigin);
+  AssertTrue('null origin', WithOrigin('null').Status = whBadOrigin);
+  Good;
+  H.Add('Origin', 'https://example.com');
+  H.Add('Origin', 'https://example.com');
+  AssertTrue('two Origin fields',
+    CheckHandshake(hmGet, hv11, True, H, [], Allowed).Status = whBadOrigin);
+  Good;
+  H.Add('Origin', 'https://evil.example');
+  AssertTrue('the overload without a list ignores Origin', CheckHandshake(hmGet, hv11, True, H, []).Ok);
+  AssertTrue('other refusals come first', CheckHandshake(hmPost, hv11, True, H, [], Allowed).Status = whNotGet);
 end;
 
 begin

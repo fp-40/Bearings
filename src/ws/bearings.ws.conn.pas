@@ -78,17 +78,27 @@
 
   Timers (bearings.rt.timer, on the loop's wheel): IdleTimeoutMs (no byte
   received for that long: CloseWith(1001)), PingIntervalMs (a ping every
-  interval; 0 = off), CloseTimeoutMs (the close handshake and the end of
-  the connection may take at most that long).
+  interval; 0 = off; the client's pongs reset the idle timer, so with the
+  defaults, 25 s and 60 s, only a client that is gone hits the idle
+  timeout), CloseTimeoutMs (the close handshake and the end of the
+  connection may take at most that long).
+
+  Ending a connection from the application: CloseWith runs the close
+  handshake; Abort closes the socket without it (for a client that does
+  not read: a close frame would wait behind its unsent backlog). Abort
+  sends nothing more; OnClose follows with 1006.
+
+  Server shutdown (bearings.server): a graceful stop calls Shutdown on each
+  upgraded stream, and TWebSocket answers with CloseWith(1001, 'server
+  shutdown'); the server waits for these connections to end like for its
+  HTTP connections. At the stop's deadline the stream is aborted: Aborted
+  releases everything and OnClose runs with 1006.
 
   Exceptions. An exception raised by a handler method is reported to
   LoopErrorProc (bearings.rt.loop) and fails the connection with 1011.
 
   Not supported: extensions (permessage-deflate), a blocking API for worker
-  threads. Server shutdown (bearings.server) waits for the HTTP connections
-  only: a TWebSocket still open when its loop exits gets no close frame and
-  is not freed, so an application closes its WebSockets before it stops
-  the server.
+  threads.
 
   Threading: everything runs on the loop thread of the TUpgraded, except
   PostText, PostBinary, AddRef and Release. }
@@ -186,7 +196,7 @@ type
     function Post(Opcode: Byte; const Data: RawByteString): TWsSendResult;
     procedure ArmClose;
     function Ending: Boolean; inline;
-    procedure Finish;
+    procedure Finish(CloseStream: Boolean);
   public
     { AHandler belongs to the new object unless AOwnsHandler = False. }
     constructor Create(AHandler: TWebSocketHandler; const ACfg: TWsConfig; AOwnsHandler: Boolean = True);
@@ -196,6 +206,10 @@ type
     procedure Start(U: TUpgraded);
     procedure Readable(U: TUpgraded); override;
     procedure Writable(U: TUpgraded); override;
+    { the server stops: CloseWith(1001, 'server shutdown') }
+    procedure Shutdown(U: TUpgraded); override;
+    { the stream is closed by force: everything is released, OnClose(1006) }
+    procedure Aborted(U: TUpgraded); override;
 
     { ---- loop thread ---- }
     function SendText(P: PByte; Len: SizeInt): TWsSendResult;
@@ -209,6 +223,10 @@ type
       UTF-8 (cut to 123). False when the close frame was already sent or
       the code is not valid. }
     function CloseWith(Code: Word = WS_CLOSE_NORMAL; const Reason: RawByteString = ''): Boolean;
+    { Closes the socket without the close handshake, in this run of the
+      connection or the next one (nothing queued is sent). OnClose follows
+      with 1006, or with the client's code if its close frame had arrived. }
+    procedure Abort;
     { bytes in the output queue }
     function Queued: SizeInt; inline;
     { the close frame was sent or the connection ended: sends return wsClosed }
@@ -237,8 +255,11 @@ type
     procedure UpgradeFailed(const Msg: string); override;
   end;
 
-{ MaxMessage 16 MiB, IdleTimeoutMs 60000, PingIntervalMs 0 (off),
-  CloseTimeoutMs 5000, SendHighWater 1 MiB. }
+{ MaxMessage 16 MiB, IdleTimeoutMs 60000, PingIntervalMs 25000,
+  CloseTimeoutMs 5000, SendHighWater 1 MiB. The pings make a client that
+  is alive answer with pongs, which count as received bytes, so the idle
+  timeout closes only clients that are gone; they also keep proxies from
+  closing a quiet connection. }
 function DefaultWsConfig: TWsConfig;
 
 { Answers the handshake R (from CheckRequest) with 101 and arranges for a
@@ -259,7 +280,7 @@ function DefaultWsConfig: TWsConfig;
 begin
   Result.MaxMessage := 16 * 1024 * 1024;
   Result.IdleTimeoutMs := 60000;
-  Result.PingIntervalMs := 0;
+  Result.PingIntervalMs := 25000;
   Result.CloseTimeoutMs := 5000;
   Result.SendHighWater := 1024 * 1024;
 end;
@@ -358,6 +379,34 @@ begin
   { Step did the writing too }
 end;
 
+procedure TWebSocket.Shutdown(U: TUpgraded);
+begin
+  if not Closing then
+    CloseWith(WS_CLOSE_GOING_AWAY, 'server shutdown');
+end;
+
+procedure TWebSocket.Aborted(U: TUpgraded);
+begin
+  if FFinished then
+    Exit;
+  FEnded := True;
+  if FReadBlk <> nil then
+  begin
+    FLoop.Blocks.Give(FReadBlk);
+    FReadBlk := nil;
+  end;
+  Finish(False);                     { U closes itself after this returns }
+end;
+
+procedure TWebSocket.Abort;
+begin
+  if FFinished or FEnded then
+    Exit;
+  FEnded := True;
+  if not FInStep then
+    FU.Wake;                         { Step finishes the connection }
+end;
+
 procedure TWebSocket.AddRef;
 begin
   InterLockedIncrement(FRefs);
@@ -376,7 +425,7 @@ end;
 
 function TWebSocket.Closing: Boolean;
 begin
-  Result := FCloseSent or FFailed or FFinished;
+  Result := FCloseSent or FFailed or FEnded or FFinished;
 end;
 
 { the connection is on its way out: no more frames are parsed }
@@ -441,7 +490,7 @@ begin
     FReadBlk := nil;
   end;
   if FEnded then
-    Finish;                          { frees Self when no other reference is held }
+    Finish(True);                    { frees Self when no other reference is held }
 end;
 
 procedure TWebSocket.HandleTimers;
@@ -829,7 +878,7 @@ begin
   Result := True;
 end;
 
-procedure TWebSocket.Finish;
+procedure TWebSocket.Finish(CloseStream: Boolean);
 var
   H: TWebSocketHandler;
 begin
@@ -847,7 +896,8 @@ begin
   FPosted := nil;
   FPostedCount := 0;
   FPostLock.Release;
-  FU.Close;                          { the TUpgraded is freed by the loop after this batch }
+  if CloseStream then
+    FU.Close;                        { the TUpgraded is freed by the loop after this batch }
   H := FHandler;
   try
     H.OnClose(Self, FPeerCode, FPeerReason);

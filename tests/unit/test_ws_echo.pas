@@ -94,6 +94,9 @@ type
     procedure Many_clients_on_two_loops;
     procedure Flood_without_reading;
     procedure Disconnect_mid_frame_frees_the_connection;
+    procedure Server_stop_closes_websockets;
+    procedure Server_stop_aborts_at_the_deadline;
+    procedure Origin_refused_with_403;
   end;
 
 const
@@ -163,7 +166,7 @@ var
 begin
   if Ex.WantsUpgrade then
   begin
-    R := CheckRequest(Ex, ['chat']);
+    R := CheckRequest(Ex, ['chat'], ['http://localhost']);
     if R.Ok then
       AcceptWebSocket(Ex, R, TEchoHandler.Create, WsCfg)
     else
@@ -577,6 +580,83 @@ begin
     C.SendAll(Copy(S, 1, 50000));
   finally
     C.Free;                          { closes the socket in the middle of the frame }
+  end;
+  WaitFreed;
+end;
+
+procedure TTestWsEcho.Server_stop_closes_websockets;
+var
+  C: TClient;
+  F: TServerFrame;
+  T0: QWord;
+begin
+  StartServer(1);
+  C := TClient.Connect(Srv.Port);
+  try
+    C.Handshake;
+    C.SendAll(CFrame(WS_OP_TEXT, 'hi'));
+    AssertTrue(C.Frame(F));
+    T0 := GetTickCount64;
+    Srv.Stop(5000);
+    AssertTrue('a close frame', C.Frame(F));
+    AssertEquals(WS_OP_CLOSE, F.Opcode);
+    AssertEquals(#3#233'server shutdown', F.Payload);
+    C.SendAll(CFrame(WS_OP_CLOSE, #3#233));
+    AssertTrue('end of stream', C.AtEof);
+    fpClose(C.Fd);                   { as a client does after the end of stream }
+    C.Fd := -1;
+    Srv.Wait;
+    AssertTrue('stopped long before the grace period', GetTickCount64 - T0 < 2000);
+  finally
+    C.Free;
+  end;
+  FreeAndNil(Srv);
+  AssertEquals('every TWebSocket freed', Live0, WebSocketsLive);
+end;
+
+procedure TTestWsEcho.Server_stop_aborts_at_the_deadline;
+var
+  C: TClient;
+  F: TServerFrame;
+begin
+  StartServer(1);
+  C := TClient.Connect(Srv.Port);
+  try
+    C.Handshake;
+    C.SendAll(CFrame(WS_OP_TEXT, 'hi'));
+    AssertTrue(C.Frame(F));
+    Srv.Stop(300);                   { shorter than the 5 s close timeout }
+    AssertTrue(C.Frame(F));
+    AssertEquals('a close frame, never answered', WS_OP_CLOSE, F.Opcode);
+    Srv.Wait;
+    AssertTrue('the socket was closed', C.AtEof);
+  finally
+    C.Free;
+  end;
+  FreeAndNil(Srv);
+  AssertEquals('every TWebSocket freed', Live0, WebSocketsLive);
+end;
+
+procedure TTestWsEcho.Origin_refused_with_403;
+var
+  C: TClient;
+  H: RawByteString;
+begin
+  StartServer(1);
+  C := TClient.Connect(Srv.Port);
+  try
+    H := C.Handshake('Origin: https://evil.example' + CRLF);
+    AssertTrue(H, AnsiStartsStr('HTTP/1.1 403', H));
+  finally
+    C.Free;
+  end;
+  C := TClient.Connect(Srv.Port);
+  try
+    H := C.Handshake('Origin: http://localhost' + CRLF);
+    AssertTrue(H, AnsiStartsStr('HTTP/1.1 101', H));
+    C.SendAll(CFrame(WS_OP_CLOSE, ''));
+  finally
+    C.Free;
   end;
   WaitFreed;
 end;

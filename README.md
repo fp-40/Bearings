@@ -204,8 +204,13 @@ begin
 end;
 ```
 
-`DefaultWsConfig`: messages up to 16 MiB, a 60 s idle timeout, no
-periodic ping, a 5 s close timeout, and a 1 MiB send queue limit. The unit
+`DefaultWsConfig`: messages up to 16 MiB, a ping every 25 s, a 60 s idle
+timeout (the pongs keep a live client from reaching it), a 5 s close
+timeout, and a 1 MiB send queue limit. A server that authenticates with
+cookies passes the allowed origins too (`CheckRequest(Ex, Protocols,
+['https://example.com'])`): a handshake from another site's page is
+refused with 403. At a graceful stop the server sends each WebSocket a
+close frame with code 1001 and waits for it to end. The unit
 headers of `bearings.ws.conn`, `bearings.ws.frame` and
 `bearings.ws.handshake` describe the behaviour in full.
 

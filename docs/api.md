@@ -935,13 +935,17 @@ call that sees `Ex.WantsUpgrade`:
    HTTP/1.1, `Upgrade: websocket`, `Connection: upgrade`, a
    `Sec-WebSocket-Key` of 16 bytes in base64, `Sec-WebSocket-Version: 13`)
    and picks the subprotocol: the first one the client lists that is in
-   `Protocols`.
+   `Protocols`. `CheckRequest(Ex, Protocols, Origins)` also refuses (403)
+   a browser handshake whose `Origin` is not in `Origins`; a server that
+   relies on cookies needs it, because a browser sends the cookies with a
+   handshake opened by any site's page.
 2. If `R.Ok`: `AcceptWebSocket(Ex, R, Handler, Cfg)` answers 101 with the
    handshake headers and arranges for a `TWebSocket` to take the connection
    over with the application's `TWebSocketHandler`. It owns `Handler` from
    then on (freed without callbacks if the upgrade does not happen).
-   Otherwise `RespondHandshakeError(Ex, R)` answers 400, or 426 with
-   `Sec-WebSocket-Version: 13` when only the version was wrong.
+   Otherwise `RespondHandshakeError(Ex, R)` answers 400, 403 for an
+   origin that is not allowed, or 426 with `Sec-WebSocket-Version: 13`
+   when only the version was wrong.
 
 The handler's methods run on the loop thread: `OnOpen`, `OnText` and
 `OnBinary` (a complete message; the bytes are valid during the call only),
@@ -953,21 +957,28 @@ code; 1005 when its close frame had none; 1006 when no close frame came).
 The `TWebSocket` and, by default, its handler are freed after `OnClose`.
 
 Sending on the loop thread: `SendText`, `SendBinary`, `Ping`, `CloseWith(Code,
-Reason)`. A send returns `wsOk`, `wsFull` (the output queue holds
+Reason)`. `Abort` closes the socket without the close handshake (for a
+client that does not read, whose close frame would wait behind its
+backlog); `OnClose` follows with 1006. A send returns `wsOk`, `wsFull` (the output queue holds
 `SendHighWater` bytes or more; nothing was queued) or `wsClosed`. While the
 queue is at the mark the connection also stops reading. From another
 thread: `PostText`, `PostBinary`, after taking a reference with `AddRef` on
 the loop thread (for example in `OnOpen`); `Release` gives it back.
 
 `TWsConfig` (`DefaultWsConfig`): `MaxMessage` 16 MiB, `IdleTimeoutMs` 60000
-(then `CloseWith(1001)`), `PingIntervalMs` 0 (off), `CloseTimeoutMs` 5000,
-`SendHighWater` 1 MiB. No extension is negotiated (no permessage-deflate).
+(then `CloseWith(1001)`), `PingIntervalMs` 25000 (the client's pongs reset
+the idle timer, so only a client that is gone reaches it), `CloseTimeoutMs`
+5000, `SendHighWater` 1 MiB. No extension is negotiated (no permessage-deflate).
 `examples/ws_echo.pas` is a complete server.
 
-Server shutdown does not close WebSocket connections: `TServer.Stop`
-waits for the HTTP connections only, and a WebSocket still open when the
-loop exits is neither closed with a close frame nor freed. An application
-closes its WebSockets (`CloseWith(1001)`) before it stops the server.
+Server shutdown: `TServer.Stop` calls `Shutdown` on every upgraded
+connection (each loop keeps them in a list from the hand-off on). A
+`TWebSocket` answers with `CloseWith(1001, 'server shutdown')`, and the loop
+waits for these connections to end as it does for its HTTP connections.
+At the deadline the ones left are aborted: `TRawListener.Aborted` runs
+(a `TWebSocket` releases everything and calls `OnClose` with 1006), then
+the stream is closed. A `TRawListener` of another protocol overrides
+`Shutdown` to end that protocol; the default closes the stream at once.
 
 ## 11. The connection observer
 
@@ -1253,6 +1264,9 @@ methods are internal and are left out.
 | Member | Description | Thread |
 |--------|-------------|--------|
 | `TRawListener.Readable(U)`, `Writable(U)` | callbacks of an attached stream | loop |
+| `TRawListener.Shutdown(U)` | the server stops gracefully; default `U.Close` | loop |
+| `TRawListener.Aborted(U)` | the stream is closed by force; release and do not use `U` after it | loop |
+| `TUpgraded.Track(List)`, `Shutdown`, `TUpgradedList` | the server's per-loop list of upgraded streams and its graceful stop | loop |
 | `TUpgraded.CreateFrom(Loop, Transport, Rest, FromSrc, OwnsTransport)` | the hand-off constructor (the dispatcher, or an `OnParts` receiver) | loop |
 | `TUpgraded.Transport` | the transport | loop |
 | `TUpgraded.Run`, `Abort` | the loop task's entry points | internal |
@@ -1268,12 +1282,13 @@ methods are internal and are left out.
 | Member | Description | Thread |
 |--------|-------------|--------|
 | `CheckRequest(Ex, Protocols): TWsHandshake` | checks the opening handshake; `Ok`, `Accept`, `Protocol`, `HttpStatus`, `Text` | loop |
+| `CheckRequest(Ex, Protocols, Origins)` | the same, and refuses (403) an `Origin` not in `Origins` | loop |
 | `CheckHandshake(Method, Version, IsUpgrade, Headers, Protocols)` | the same on the parts of a request | any |
 | `AcceptValue(Key)` | base64(SHA-1(Key + GUID)) | any |
 | `Respond101(Ex, R, H)`, `RespondHandshakeError(Ex, R)` | the answers | loop |
 | `AcceptWebSocket(Ex, R, Handler, Cfg): Boolean` | 101 plus a `TWebSocket` for the connection | loop |
 | `TWebSocketHandler.OnOpen`, `OnText`, `OnBinary`, `OnPong`, `OnWritable`, `OnError`, `OnClose` | the application's callbacks | loop |
-| `TWebSocket.SendText`, `SendBinary`, `Ping`, `CloseWith`, `Queued`, `Closing`, `User` | sending and state | loop |
+| `TWebSocket.SendText`, `SendBinary`, `Ping`, `CloseWith`, `Abort`, `Queued`, `Closing`, `User` | sending and state | loop |
 | `TWebSocket.PostText`, `PostBinary`, `AddRef`, `Release` | sending from another thread | any (`AddRef`: loop, or a holder) |
 | `TWebSocket.Create(Handler, Cfg, OwnsHandler)`, `Start(U)`, `TWsUpgradeHandler` | for an application with its own `TUpgradeHandler` | loop |
 | `TWsConfig`, `DefaultWsConfig` | limits and timeouts | any |
