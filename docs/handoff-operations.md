@@ -112,9 +112,25 @@ noted.
 - With several loops, one inherited socket is shared like
   `amSharedExclusive` (a dup per loop). Several inherited sockets (for
   example TCP and Unix): decide whether each loop listens on all of them.
-- Optional, small: tell systemd the service is ready (`Type=notify`) by
-  sending `READY=1` to the datagram socket named in `NOTIFY_SOCKET`, after
-  `Start`; and `STOPPING=1` at `Stop`. Ask the user whether this is wanted.
+- sd_notify (decided by the user, 2026-10-11): when `NOTIFY_SOCKET` is
+  set (a service with `Type=notify`), send short datagrams to that Unix
+  socket (an abstract address when the path starts with `@`), with no
+  libsystemd dependency:
+  - `READY=1` once `Start` has opened every listener and started the loops;
+  - `STOPPING=1` when `Stop` begins;
+  - optional `STATUS=...` (for example the open connection count);
+  - the watchdog, as an option: when `WATCHDOG_USEC` is set (and
+    `WATCHDOG_PID`, if present, equals the process id), send `WATCHDOG=1`
+    about every half of that interval, but only while every loop is making
+    progress (each loop records the time of its last iteration; a loop
+    that has not iterated within the interval stops the heartbeat, so
+    systemd restarts the service). The heartbeat must not run on a loop
+    thread it is checking. A loop that is merely idle in `epoll_wait` must
+    still count as alive: wake it with its timer or check it differently.
+  Tests: a test creates a Unix datagram socket, sets `NOTIFY_SOCKET` for a
+  child process (or for the server in-process), and checks the messages;
+  a loop blocked on purpose (in a test hook, not a crash) stops the
+  watchdog messages.
 - Tests without systemd: a test starts a child process with a listening
   socket on fd 3 and the variables set, and connects to it (fork/exec with
   the fd kept open, or a small helper program). Manual check with
@@ -220,8 +236,7 @@ noted.
 
 1. Unix socket: the configuration form (a path field or `unix:` in Host),
    and the default file mode.
-2. Socket activation: also support `sd_notify` (`READY=1`, `STOPPING=1`)?
-3. Connection limit: stop accepting or accept-and-close at the limit? Is
+2. Connection limit: stop accepting or accept-and-close at the limit? Is
    the per-IP limit wanted?
-4. Access log format (Common/Combined or JSON lines) and the default
+3. Access log format (Common/Combined or JSON lines) and the default
    destination (stderr or a file).
