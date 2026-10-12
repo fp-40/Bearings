@@ -175,6 +175,10 @@ noted.
     Option: the Combined Log Format
     (`host - - [time] "request line" status bytes "referer" "user agent"`)
     for people and classic log tools.
+  - Destination (decided by the user, 2026-10-11): stdout by default,
+    where containers, systemd's journal and log agents collect it;
+    diagnostic and error messages stay on stderr. A file, or anything
+    else, through the sink class.
   - Write the JSON by hand into the loop's log buffer (escape `"`, `\` and
     control bytes, and bytes over 0x7F as UTF-8 or `\u` escapes when they
     are not valid UTF-8); no JSON library and no allocation per line.
@@ -250,4 +254,3 @@ noted.
    and the default file mode.
 2. Connection limit: stop accepting or accept-and-close at the limit? Is
    the per-IP limit wanted?
-3. The access log's default destination (stderr or a file).
