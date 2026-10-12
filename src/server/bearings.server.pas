@@ -805,7 +805,7 @@ begin
   Result.Listen.NoDelay := True;
   Result.Loops := 0;
   Result.PinLoops := False;
-  Result.H1 := WdProductionH1Config;
+  Result.H1 := ProductionH1Config;
   Result.Workers := 0;
   Result.WorkerQueueLimit := 0;
   Result.GraceMs := 30000;
@@ -825,7 +825,7 @@ begin
   Result.Listen.NoDelay := True;
   Result.Loops := 0;
   Result.PinLoops := False;
-  Result.H1 := HyperDefaultH1Config;
+  Result.H1 := ConformanceH1Config;
   Result.H1.PipelineFlush := True;
   Result.H1.Timer := False;
   Result.H1.Mode := cmPlain;

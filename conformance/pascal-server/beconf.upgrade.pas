@@ -1,4 +1,4 @@
-{ wdconf.upgrade - SPEC 6.3 upgrade tasks and the signal latches (design
+{ beconf.upgrade - SPEC 6.3 upgrade tasks and the signal latches (design
   m3-transport.md 6.6). Test tooling.
 
   The reference server's run_upgrade, on the loop that served the
@@ -27,7 +27,7 @@
   waiters of the name out of the list and posts an lmCall to each one's
   loop; the upgrader goes on only when that message arrives (FSignaled),
   so it is never touched by another thread. }
-unit wdconf.upgrade;
+unit beconf.upgrade;
 
 {$mode objfpc}{$H+}
 
@@ -35,7 +35,7 @@ interface
 
 uses
   SysUtils, Classes, ctypes, bearings.rt.sys, bearings.rt.loop, bearings.rt.stream, bearings.http.exchange,
-  wdconf.spec, wdconf.events;
+  beconf.spec, beconf.events;
 
 type
   TUpStep = (upSignal, upWrite, upRead, upDone);

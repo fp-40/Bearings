@@ -1,4 +1,4 @@
-{ wdproto - M3 performance prototype: the reactor/connection loop design of
+{ beproto - M3 performance prototype: the reactor/connection loop design of
   docs/design/m3-candidates/perf.md, reduced to the TFB plaintext path.
 
   - one loop thread per allowed CPU (sched_getaffinity), optional pinning
@@ -13,8 +13,8 @@
     (hyper pipeline_flush(true) behaviour, which the TFB entry enables)
   - Date: per-loop TDateCache, checked once per epoll_wait iteration with
     libc (vDSO) clock_gettime
-  Usage: wdproto <port>   env: THREADS=n PIN=1 LISTEN=exclusive READSZ=8192 }
-program wdproto;
+  Usage: beproto <port>   env: THREADS=n PIN=1 LISTEN=exclusive READSZ=8192 }
+program beproto;
 
 {$mode objfpc}{$H+}
 
@@ -441,7 +441,7 @@ begin
   BufPool := GetEnvironmentVariable('POOL') = '1';
   s := '';
   for i := 0 to High(Cpus) do s := s + IntToStr(Cpus[i]) + ' ';
-  WriteLn(StdErr, 'wdproto: ', NThreads, ' loops, cpus [', s, '] pin=', Pin,
+  WriteLn(StdErr, 'beproto: ', NThreads, ' loops, cpus [', s, '] pin=', Pin,
     ' listen=', GetEnvironmentVariable('LISTEN'), ' port ', Port,
     ' GetCPUCount=', GetCPUCount);
   fpSignal(SIGPIPE, SignalHandler(SIG_IGN));

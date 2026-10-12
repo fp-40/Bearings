@@ -3,9 +3,9 @@
 
 Both servers must already run, pinned to the server CPUs (configuration B:
 CPUs 0-3), e.g.
-    THREADS=4 POOL=1 taskset -c 0-3 build/.../wdproto 18081 &
+    THREADS=4 POOL=1 taskset -c 0-3 build/.../beproto 18081 &
     THREADS=4        taskset -c 0-3 build/.../rawsrv  18082 &
-    bench/compare.py wdproto 18081 <pid> rawsrv 18082 <pid>
+    bench/compare.py beproto 18081 <pid> rawsrv 18082 <pid>
 
 For every cell (c256/c1024 x depth 1/16): a warm-up run per server
 (discarded), then RUNS runs of DUR seconds per server, alternating servers

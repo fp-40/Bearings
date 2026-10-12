@@ -346,8 +346,8 @@ begin
   if Content <> '' then
     Exit;
   Dir := IncludeTrailingPathDelimiter(GetTempDir(False));
-  SmallPath := Dir + 'wd-s8-small-' + IntToStr(FpGetPid);
-  BigPath := Dir + 'wd-s8-big-' + IntToStr(FpGetPid);
+  SmallPath := Dir + 'be-s8-small-' + IntToStr(FpGetPid);
+  BigPath := Dir + 'be-s8-big-' + IntToStr(FpGetPid);
   Content := PatternBytes(20000, 3);
   BigContent := PatternBytes(BIG_LEN, 11);
   WriteFileBytes(SmallPath, Content);

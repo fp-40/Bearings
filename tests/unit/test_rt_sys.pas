@@ -348,7 +348,7 @@ var
   Buf: array[0..63] of AnsiChar;
   N: SizeInt;
 begin
-  Path := GetTempFileName('', 'wdsf');
+  Path := GetTempFileName('', 'besf');
   AssignFile(F, Path);
   Rewrite(F);
   Write(F, '0123456789abcdef');
@@ -531,7 +531,7 @@ procedure TTestCpu.Cgroup_quota_parser_fixtures;
 var
   D: string;
 begin
-  D := IncludeTrailingPathDelimiter(GetTempDir) + 'wdcg' + IntToStr(GetProcessID);
+  D := IncludeTrailingPathDelimiter(GetTempDir) + 'becg' + IntToStr(GetProcessID);
   { v2: the process cgroup /app under the cgroup2 mount at D/mnt }
   WriteText(D + '/v2/cgroup', '0::/app' + #10);
   WriteText(D + '/v2/mountinfo',

@@ -1,4 +1,4 @@
-{ wdconf.control - SPEC 3.4 stdin control commands (design m3-transport.md
+{ beconf.control - SPEC 3.4 stdin control commands (design m3-transport.md
   6.1). Test tooling.
 
   TControl (a TIoTask) owns fd 0 (non-blocking), registered level-triggered in loop
@@ -22,15 +22,15 @@
   When epoll refuses fd 0 (a regular file or /dev/null: EPERM), a reader
   thread does blocking reads and posts each chunk to loop 0 (lmCall); the
   loop handles it like the task's own reads. }
-unit wdconf.control;
+unit beconf.control;
 
 {$mode objfpc}{$H+}
 
 interface
 
 uses
-  SysUtils, ctypes, bearings.rt.sys, bearings.rt.loop, bearings.http1.dispatch, bearings.server, wdconf.events,
-  wdconf.upgrade;
+  SysUtils, ctypes, bearings.rt.sys, bearings.rt.loop, bearings.http1.dispatch, bearings.server, beconf.events,
+  beconf.upgrade;
 
 { Creates the control task on Server's loop 0 (before the loop runs). }
 procedure StartControl(Server: TServer);

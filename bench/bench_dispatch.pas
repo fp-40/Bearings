@@ -7,7 +7,7 @@
   the difference is CPU in user space, without syscalls:
 
   proto     the per-request work of the raw-loop prototype (bench/rawsrv.pas,
-            itself wdproto on the M3 runtime): read into a pooled block,
+            itself beproto on the M3 runtime): read into a pooled block,
             ServerParse each buffered request, three response headers
             (THttpHeaders.Add), ServerEncode (TByteVec overload) and
             TEncoder.Encode of the 13-byte body, one write per batch, the

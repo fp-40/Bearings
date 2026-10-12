@@ -1,10 +1,10 @@
 {
- "description": "S7 probe: chunk2::pipeline_enabled depends on the second handler answering in its first poll (inline execution). Run in assertion mode against reference-server (expected to fail the same wire assertion) and in diff mode against wdconf --executor worker (expected SAME).",
+ "description": "S7 probe: chunk2::pipeline_enabled depends on the second handler answering in its first poll (inline execution). Run in assertion mode against reference-server (expected to fail the same wire assertion) and in diff mode against beconf --executor worker (expected SAME).",
  "cases": [
   {
    "name": "pipeline_enabled_second_handler_pending_1ms",
    "source": "probe for S7 (worker executor); derived from chunk2::pipeline_enabled",
-   "notes": "pipeline_enabled with the second reply delayed 1 ms (delay_ms), so the second handler is Pending at its first poll, as every handler is under --executor worker. hyper flushes the first response once the read buffer is empty (io.rs poll_flush with pipeline_flush), so the first read_once gets only the first response and the wire assertions of pipeline_enabled fail for the reference server too. Diff mode: wdconf (inline or worker) must be SAME as the reference.",
+   "notes": "pipeline_enabled with the second reply delayed 1 ms (delay_ms), so the second handler is Pending at its first poll, as every handler is under --executor worker. hyper flushes the first response once the read buffer is empty (io.rs poll_flush with pipeline_flush), so the first read_once gets only the first response and the wire assertions of pipeline_enabled fail for the reference server too. Diff mode: beconf (inline or worker) must be SAME as the reference.",
    "server": {
     "config": {
      "pipeline_flush": true
@@ -73,7 +73,7 @@
   {
    "name": "pipeline_enabled_second_handler_pending_50ms",
    "source": "probe for S7 (worker executor); derived from chunk2::pipeline_enabled",
-   "notes": "pipeline_enabled with the second reply delayed 50 ms (delay_ms), so the second handler is Pending at its first poll, as every handler is under --executor worker. hyper flushes the first response once the read buffer is empty (io.rs poll_flush with pipeline_flush), so the first read_once gets only the first response and the wire assertions of pipeline_enabled fail for the reference server too. Diff mode: wdconf (inline or worker) must be SAME as the reference.",
+   "notes": "pipeline_enabled with the second reply delayed 50 ms (delay_ms), so the second handler is Pending at its first poll, as every handler is under --executor worker. hyper flushes the first response once the read buffer is empty (io.rs poll_flush with pipeline_flush), so the first read_once gets only the first response and the wire assertions of pipeline_enabled fail for the reference server too. Diff mode: beconf (inline or worker) must be SAME as the reference.",
    "server": {
     "config": {
      "pipeline_flush": true

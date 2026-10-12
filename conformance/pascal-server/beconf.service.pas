@@ -1,4 +1,4 @@
-{ wdconf.service - SPEC 5 handlers, replies and bodies, the connection
+{ beconf.service - SPEC 5 handlers, replies and bodies, the connection
   observer and the byte-counting transport (design m3-transport.md 6.2-6.7).
   Test tooling: a thin wrapper, everything on the wire comes from bearings.http1.*.
 
@@ -38,7 +38,7 @@
   emitted by Drop(Ex, False) on the loop only when the cancel won
   (Ex.IsCanceled). Each call emits exactly one of them. The call object is
   shared by the loop (Drop) and the worker (Run) and freed by the last. }
-unit wdconf.service;
+unit beconf.service;
 
 {$mode objfpc}{$H+}
 
@@ -48,7 +48,7 @@ uses
   SysUtils, ctypes, bearings.rt.sys, bearings.rt.loop, bearings.rt.net, bearings.rt.buf, bearings.rt.stream, bearings.http.error,
   bearings.http1.encode,
   bearings.http.headers, bearings.http.uri, bearings.http1.role, bearings.http.exchange, bearings.http1.config,
-  bearings.http1.dispatch, bearings.rt.workers, wdconf.spec, wdconf.events, wdconf.upgrade;
+  bearings.http1.dispatch, bearings.rt.workers, beconf.spec, beconf.events, beconf.upgrade;
 
 type
   { per connection (TConnObserver data) }
@@ -330,7 +330,7 @@ begin
   if Outcome <> coOk then
   begin
     Line := Line + ',"detail":' + JText(Detail);
-    WriteLn(StdErr, 'wdconf: conn ', D.Conn, ' closed: ', NAMES[Outcome], ': ', Detail);
+    WriteLn(StdErr, 'beconf: conn ', D.Conn, ' closed: ', NAMES[Outcome], ': ', Detail);
   end;
   EmitLine(Line + '}');
   { without_shutdown and Ok: OnParts follows and frees the data }

@@ -8,8 +8,8 @@
   - TH1ConnMode: how the dispatcher (bearings.http1.dispatch) ends a connection.
   - TTimeoutSetting: the three states of the header read timeout option.
 
-  Use: the server builds a TH1Config once (usually from WdProductionH1Config
-  or HyperDefaultH1Config, then changes some fields), checks it with
+  Use: the server builds a TH1Config once (usually from ProductionH1Config
+  or ConformanceH1Config, then changes some fields), checks it with
   ValidateH1Config, and calls ApplyH1Config on the TH1Conn of every accepted
   connection. ApplyH1Config must run before the connection reads anything.
 
@@ -27,7 +27,7 @@
   TH1Conn (bearings.http1.conn): a body read may wait at most BodyReadTimeoutMs
   for a byte, and after that much waiting the client must have sent at
   least BodyMinRate bytes per second. They are off (0) in
-  HyperDefaultH1Config and 30 s / 1 KiB/s in WdProductionH1Config. They
+  ConformanceH1Config and 30 s / 1 KiB/s in ProductionH1Config. They
   need the timer.
 
   This unit uses bearings.http1.conn (ApplyH1Config takes a TH1Conn);
@@ -58,7 +58,7 @@ type
   TH1ConnMode = (cmPlain, cmWithUpgrades, cmWithoutShutdown);
   TTimeoutSetting = (tsDefault, tsDisabled, tsMs);          { absent / null / number }
 
-  { The defaults named below are those of HyperDefaultH1Config. }
+  { The defaults named below are those of ConformanceH1Config. }
   TH1Config = record
     { True: the connection serves more requests after the first one
       (HTTP/1.1 keep-alive). False: it closes after one response. }
@@ -107,11 +107,11 @@ type
 { The base defaults: keep-alive on, no timer (so no timeouts), no pipeline
   batching, upgrades not handed over (cmPlain), the body rate rule off.
   The conformance server uses this profile. }
-function HyperDefaultH1Config: TH1Config;
+function ConformanceH1Config: TH1Config;
 { The profile for production: the base defaults plus a timer with the 30 s
   header read timeout, PipelineFlush, cmWithUpgrades and the body rate
   rule (30 s, 1 KiB/s). }
-function WdProductionH1Config: TH1Config;
+function ProductionH1Config: TH1Config;
 { False with a message in Msg for an invalid combination: MaxBufSize below
   8192, a tsMs header timeout or a body timeout without a timer, negative
   timeouts or rates, BodyMinRate without BodyReadTimeoutMs. A tsDefault
@@ -137,7 +137,7 @@ begin
   Str(V, Result);
 end;
 
-function HyperDefaultH1Config: TH1Config;
+function ConformanceH1Config: TH1Config;
 begin
   Result := Default(TH1Config);
   Result.KeepAlive := True;
@@ -158,11 +158,11 @@ begin
   Result.Mode := cmPlain;
 end;
 
-function WdProductionH1Config: TH1Config;
+function ProductionH1Config: TH1Config;
 begin
   { a timer with the 30 s default header read timeout, pipeline batching
     on, upgrades handed over }
-  Result := HyperDefaultH1Config;
+  Result := ConformanceH1Config;
   Result.Timer := True;
   Result.HeaderReadTimeout := tsDefault;
   Result.PipelineFlush := True;

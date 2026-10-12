@@ -5,7 +5,7 @@
 //! splits, 0-5 ms gaps and (in 30 % of the streams) a half-close after the
 //! last byte, to two conformance servers started with the same spec (SPEC.md
 //! 3): `--a` (default: target/release/reference-server, hyper 1.12) and
-//! `--b` (wdconf). Each job owns one pair of server processes and runs its
+//! `--b` (beconf). Each job owns one pair of server processes and runs its
 //! streams one at a time on a fresh connection, so connection k of both
 //! servers is the job's k-th stream; both servers get the stream at the same
 //! time (two client threads).

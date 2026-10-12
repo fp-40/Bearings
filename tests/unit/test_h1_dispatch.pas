@@ -533,7 +533,7 @@ begin
   FSvc := TTestService.Create;
   FObs := TRecObserver.Create;
   FObs.Log := FLog;
-  FCfg := HyperDefaultH1Config;
+  FCfg := ConformanceH1Config;
   FCfg.AutoDateHeader := False;
   FD := nil;
   FRuns := 0;

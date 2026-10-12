@@ -107,7 +107,7 @@ blocking worker pool halves non-pipelined throughput and cuts pipelined throughp
 | wrk script | TFB `pipeline.lua` (depth argument), TFB headers: `Host: tfb-server`, the TFB `Accept` line, `Connection: keep-alive` |
 | runs | 2 s warm-up, then 10 s per cell, `--latency` |
 | hyper baseline | `scratchpad/m3-perf-proto/hyper-tfb`: TFB `frameworks/Rust/hyper/src/main.rs` with the DB routes removed; hyper pinned to rev `7f67699` (1.12.0, same as the conformance oracle), tokio 1.53.2, hyper-util 0.1.21; one current-thread runtime per thread, `SO_REUSEPORT`, `TCP_NODELAY`, backlog 4096, `pipeline_flush(true)`, LTO, codegen-units 1. Response bytes are identical to the prototype's (checked with `cmp`, date normalized) |
-| prototype | `scratchpad/m3-perf-proto/loop/wdproto.pas`, FPC 3.2.2 `-O3`, uses the M2 units unchanged: `ServerParse` (with `THttpHeaders` external slices), `ServerEncode`, `TEncoder.Encode` |
+| prototype | `scratchpad/m3-perf-proto/loop/beproto.pas`, FPC 3.2.2 `-O3`, uses the M2 units unchanged: `ServerParse` (with `THttpHeaders` external slices), `ServerEncode`, `TEncoder.Encode` |
 | metrics | Requests/sec; wrk p50/p99; server CPU seconds from `/proc/<pid>/stat` (utime+stime); RSS from `ps` in the middle of the run |
 
 The prototype implements the loop design of section 2 for the plaintext path only: per-loop
@@ -127,17 +127,17 @@ budget.
 | hyper | 256 | 16 | 6 300 583 | 383 us | (wrk 0.00) | 80.8 | 787 572 | 8 292 |
 | hyper | 1024 | 1 | 1 130 511 | 410 us | 1.11 ms | 70.0 | 163 842 | 16 224 |
 | hyper | 1024 | 16 | 5 769 340 | 1.55 ms | 3.14 ms | 80.1 | 721 167 | 21 592 |
-| wdproto | 256 | 1 | 1 179 032 | 103 us | 263 us | 67.4 | 175 974 | 8 380 |
-| wdproto | 256 | 16 | 6 687 141 | 348 us | (wrk 0.00) | 80.7 | 835 892 | 10 232 |
-| wdproto | 1024 | 1 | 1 094 973 | 414 us | 1.13 ms | 64.4 | 171 089 | 20 160 |
-| wdproto | 1024 | 16 | 6 275 380 | 1.66 ms | (wrk 0.00) | 80.0 | 784 422 | 22 252 |
-| wdproto POOL=1 | 256 | 1 | 1 189 190 | 103 us | 256 us | 68.1 | 174 880 | 5 572 |
-| wdproto POOL=1 | 256 | 16 | 6 796 241 | 401 us | (wrk 0.00) | 80.8 | 849 530 | 5 596 |
-| wdproto POOL=1 | 1024 | 1 | 1 143 633 | 403 us | 1.06 ms | 66.0 | 175 943 | 6 580 |
-| wdproto POOL=1 | 1024 | 16 | 6 454 070 | 1.38 ms | 2.78 ms | 80.0 | 806 758 | 4 832 |
+| beproto | 256 | 1 | 1 179 032 | 103 us | 263 us | 67.4 | 175 974 | 8 380 |
+| beproto | 256 | 16 | 6 687 141 | 348 us | (wrk 0.00) | 80.7 | 835 892 | 10 232 |
+| beproto | 1024 | 1 | 1 094 973 | 414 us | 1.13 ms | 64.4 | 171 089 | 20 160 |
+| beproto | 1024 | 16 | 6 275 380 | 1.66 ms | (wrk 0.00) | 80.0 | 784 422 | 22 252 |
+| beproto POOL=1 | 256 | 1 | 1 189 190 | 103 us | 256 us | 68.1 | 174 880 | 5 572 |
+| beproto POOL=1 | 256 | 16 | 6 796 241 | 401 us | (wrk 0.00) | 80.8 | 849 530 | 5 596 |
+| beproto POOL=1 | 1024 | 1 | 1 143 633 | 403 us | 1.06 ms | 66.0 | 175 943 | 6 580 |
+| beproto POOL=1 | 1024 | 16 | 6 454 070 | 1.38 ms | 2.78 ms | 80.0 | 806 758 | 4 832 |
 
 A first hyper run gave 1 192 546 / 6 197 672 / 1 127 358 / 5 780 011 req/s (same order as the
-table). Ratio wdproto / hyper in configuration A: 0.98 / 1.06 / 0.97 / 1.09 (plain prototype),
+table). Ratio beproto / hyper in configuration A: 0.98 / 1.06 / 0.97 / 1.09 (plain prototype),
 0.99 / 1.08 / 1.01 / 1.12 (with buffer pooling). In the depth-1 cells both servers use only 6.4-7.2
 of their 8 CPUs, so the client side (wrk on 2 P-cores + 4 E-cores, plus the loopback TCP stack)
 sets the limit. Configuration A cannot rank the servers at depth 1.
@@ -148,15 +148,15 @@ sets the limit. Configuration A cannot rank the servers at depth 1.
 |---|---|---|---|---|
 | hyper (run 1) | 678 986 (p99 421 us) | 3 127 171 | 629 074 (p99 1.77 ms) | 2 950 866 (p99 5.86 ms) |
 | hyper (run 2) | 679 772 (p99 431 us) | 3 091 180 | 628 941 (p99 1.77 ms) | 2 858 551 (p99 6.21 ms) |
-| wdproto | 715 101 (p99 385 us) | 3 339 184 | 678 873 (p99 1.56 ms) | 3 179 399 |
-| wdproto POOL=1 | 715 873 (p99 376 us) | 3 380 719 | 680 014 (p99 1.70 ms) | 3 126 942 (p99 6.05 ms) |
-| wdproto LISTEN=exclusive | 716 150 | 3 342 416 | 677 171 | 3 197 665 |
-| wdproto PIN=1 | 719 019 | 3 355 018 | 673 270 | 3 198 347 |
-| wdproto READSZ=4096 | 715 704 | 3 351 865 | 672 804 | 3 173 792 |
+| beproto | 715 101 (p99 385 us) | 3 339 184 | 678 873 (p99 1.56 ms) | 3 179 399 |
+| beproto POOL=1 | 715 873 (p99 376 us) | 3 380 719 | 680 014 (p99 1.70 ms) | 3 126 942 (p99 6.05 ms) |
+| beproto LISTEN=exclusive | 716 150 | 3 342 416 | 677 171 | 3 197 665 |
+| beproto PIN=1 | 719 019 | 3 355 018 | 673 270 | 3 198 347 |
+| beproto READSZ=4096 | 715 704 | 3 351 865 | 672 804 | 3 173 792 |
 
-All server rows used 40.0-40.4 CPU-seconds per 10 s run (4 CPUs saturated). Ratio wdproto /
+All server rows used 40.0-40.4 CPU-seconds per 10 s run (4 CPUs saturated). Ratio beproto /
 hyper (mean of the two hyper runs): **1.05 / 1.07 / 1.08 / 1.10**. Requests per server
-CPU-second: hyper 169 746 / 781 792 / 157 268 / 737 716; wdproto 178 775 / 834 796 / 174 070 /
+CPU-second: hyper 169 746 / 781 792 / 157 268 / 737 716; beproto 178 775 / 834 796 / 174 070 /
 794 849.
 
 **T3. Offload to a blocking worker pool (`wdpool.pas`, configuration B)**
@@ -181,7 +181,7 @@ matter; for plaintext it halves throughput or worse.
 | server | c=256 | c=1024 |
 |---|---|---|
 | hyper, `pipeline_flush(false)` | 766 117 | 743 749 |
-| wdproto, one write per response | 821 449 | 808 082 |
+| beproto, one write per response | 821 449 | 808 082 |
 | (for comparison) hyper, `pipeline_flush(true)` | 3 127 171 | 2 950 866 |
 
 **T5. Idle connections: 10 000 keep-alive connections, one request each, then idle (4 loops)**
@@ -189,8 +189,8 @@ matter; for plaintext it halves throughput or worse.
 | server | RSS before | RSS after | per connection |
 |---|---|---|---|
 | hyper | 3 156 KB | 107 636 KB | 10 698 B |
-| wdproto (buffers held per connection) | 2 040 KB | 140 336 KB | 14 161 B |
-| wdproto POOL=1 (buffers returned to the loop pool when idle) | 2 252 KB | 19 240 KB | 1 739 B |
+| beproto (buffers held per connection) | 2 040 KB | 140 336 KB | 14 161 B |
+| beproto POOL=1 (buffers returned to the loop pool when idle) | 2 252 KB | 19 240 KB | 1 739 B |
 
 The plain prototype is worse than hyper because `SetLength(WBuf, 8192)` zero-fills (touches) two
 pages per connection. With pooling, an idle connection holds no buffer at all.
@@ -515,8 +515,8 @@ type
     FinishMode: TH1FinishMode;       { default fmPlain }
   end;
 
-function HyperDefaultH1Config: TH1Config;      { exactly http1::Builder::new() }
-function WdProductionH1Config: TH1Config;      { HasTimer, PipelineFlush, fmWithUpgrades }
+function ConformanceH1Config: TH1Config;      { exactly http1::Builder::new() }
+function ProductionH1Config: TH1Config;      { HasTimer, PipelineFlush, fmWithUpgrades }
 function ValidateH1Config(const C: TH1Config; out Msg: string): Boolean;  { hyper's panics -> False }
 ```
 
@@ -1406,7 +1406,7 @@ Rust side (`tests/unit/test_codec_diff_rs`).
 Location: `conformance/pascal-server/` (test tooling, not shipped). It is a thin wrapper:
 everything on the wire comes from `bearings.http1.*`.
 
-Command line: `wdconf [--handler-mode inline|blocking] [--loops N] --config <path>`. The runner
+Command line: `beconf [--handler-mode inline|blocking] [--loops N] --config <path>`. The runner
 appends `--config`; the extra flags let the same 105 cases run against both execution paths.
 Default: `--loops 1` (connections are numbered in accept order; with one loop accept order is the
 kernel's queue order, the same as hyper's single accept loop), `--handler-mode inline`.
@@ -1586,17 +1586,17 @@ chunk prefix/data/suffix boundary; sendfile entry between iovecs (socketpair + t
 
 ### 8.3 The 105 wire cases
 
-- Assertion mode: `runner run --server 'wdconf --handler-mode inline' cases/h1` and again with
+- Assertion mode: `runner run --server 'beconf --handler-mode inline' cases/h1` and again with
   `--handler-mode blocking`, and with `--loops 4`. Target: 104 pass + 1 pending, same as the
   reference server.
-- Diff mode: `runner diff --a target/release/reference-server --b 'wdconf' cases/h1` → `same=104`.
+- Diff mode: `runner diff --a target/release/reference-server --b 'beconf' cases/h1` → `same=104`.
 - Determinism: 3 consecutive runs of each, as the M1 manifest did for the reference server.
 - Order of bring-up (M3.4 → M3.6): hello_world/unreachable cases first, then test_service without
   upgrades, then timeouts, then upgrades and graceful shutdown.
 
 ### 8.4 Production-profile wire check
 
-The cases run against `HyperDefaultH1Config`. A second run uses `WdProductionH1Config` plus each
+The cases run against `ConformanceH1Config`. A second run uses `ProductionH1Config` plus each
 case's explicit config fields, in diff mode; the only allowed differences are `read_once`
 segmentation (D1), which those cases already mark `diff_capture: false`. Any other difference is a
 bug in the D1-D5 table.
@@ -1607,7 +1607,7 @@ bug in the D1-D5 table.
   partial writes with random `EAGAIN`s; for every M1 case input and every M2 corpus request, the
   output bytes must equal the unsplit run. Thousands of seeds per CI run.
 - Differential fuzz vs hyper: generated request streams (M2 parser corpus + mutations, pipelined,
-  with bodies, chunked, trailers, expect) sent to the reference server and to `wdconf` with the
+  with bodies, chunked, trailers, expect) sent to the reference server and to `beconf` with the
   same config; compare wire bytes (date normalized) and events (the runner's diff logic). Run
   as generated case files, so failures become regression cases.
 - Slow clients: 10k connections sending a head one byte per 100 ms (exercises `PartialLen`
@@ -1673,11 +1673,11 @@ src/
   server/
     bearings.server.pas             new: TServerConfig, TServer, TConnObserver
 conformance/pascal-server/
-  wdconf.pas                  program
-  wdconf.spec.pas             JSON spec + validation
-  wdconf.events.pas           TEventWriter, observer
-  wdconf.service.pas          test_service / hello_world / unreachable, TScriptedBody
-  wdconf.upgrade.pas          upgrade threads, latches
+  beconf.pas                  program
+  beconf.spec.pas             JSON spec + validation
+  beconf.events.pas           TEventWriter, observer
+  beconf.service.pas          test_service / hello_world / unreachable, TScriptedBody
+  beconf.upgrade.pas          upgrade threads, latches
 tests/unit/
   test_h1_io.pas, test_h1_conn.pas, test_h1_dispatch.pas, test_rt_timer.pas,
   test_rt_loop.pas, test_exchange.pas, test_headers_validate.pas, test_trailers_diff (*_rs)
@@ -1690,11 +1690,11 @@ bench/
 | step | content | verified by |
 |---|---|---|
 | M3.0 | M2 changes: header validation, trailer T1-T5, no managed fields in `TEncoder`/`TResponseHead`, `ServerEncode` to `PByte` | the 506 existing tests + new validation/trailer tests + trailer diff vs hyper; `bench_role` parse/encode not slower than 152/121 ns |
-| M3.1 | `bearings.rt.*`: syscalls, cpu, clock, timer wheel, MPSC, buffer pool, loop, listener | unit tests (8.2 loop part); a raw static-response server on the loop matches `wdproto` within ±3 % in configuration B |
+| M3.1 | `bearings.rt.*`: syscalls, cpu, clock, timer wheel, MPSC, buffer pool, loop, listener | unit tests (8.2 loop part); a raw static-response server on the loop matches `beproto` within ±3 % in configuration B |
 | M3.2 | `bearings.http1.io` | io.rs ports (8.1) |
 | M3.3 | `bearings.http1.conn` | conn.rs ports, state tables, mock-IO diff vs hyper |
-| M3.4 | dispatcher + exchange (inline only) + `bearings.server` + plaintext bench app; `wdconf` with hello_world/unreachable | first conformance cases; **perf gate** (8.6), the first real check of the 420 ns budget |
-| M3.5 | `wdconf` complete for test_service (bodies, streams, delays, trailers, events, control) | 105 cases assertion + diff mode, inline |
+| M3.4 | dispatcher + exchange (inline only) + `bearings.server` + plaintext bench app; `beconf` with hello_world/unreachable | first conformance cases; **perf gate** (8.6), the first real check of the 420 ns budget |
+| M3.5 | `beconf` complete for test_service (bodies, streams, delays, trailers, events, control) | 105 cases assertion + diff mode, inline |
 | M3.6 | upgrades/CONNECT, `without_shutdown`, graceful shutdown, header timeout, `TServer.Stop` | the remaining cases; graceful stop test under load (no reset connections beyond R7) |
 | M3.7 | worker pool, `Offload`, `ReadBodyBlocking`, `TChannelBody`, cross-thread answers | 105 cases with `--handler-mode blocking`; T3 numbers reproduced or better |
 | M3.8 | sendfile, split fuzz, differential fuzz, soak, RSS, final perf matrix | 8.5 and 8.6 all green |
@@ -1724,13 +1724,13 @@ All under `scratchpad/m3-perf-proto/` (absolute:
 | file | what |
 |---|---|
 | `hyper-tfb/` | hyper TFB plaintext baseline (Cargo project; `PFLUSH=0` env switches `pipeline_flush` off; `THREADS` env) |
-| `loop/wdproto.pas` | loop prototype (env `THREADS`, `PIN=1`, `LISTEN=exclusive`, `READSZ`, `FLUSH_EACH=1`, `POOL=1`) |
+| `loop/beproto.pas` | loop prototype (env `THREADS`, `PIN=1`, `LISTEN=exclusive`, `READSZ`, `FLUSH_EACH=1`, `POOL=1`) |
 | `loop/wdpool.pas` | inline vs worker-pool offload (env `MODE=inline|pool`, `WORKERS`) |
 | `micro/reqcost.pas`, `micro/frames.pas` | T6 micro-benchmarks |
 | `bench2.sh` | wrk matrix with CPU and RSS (env `WRK_CPUS`, `WRK_THREADS`, `CONNS`, `DEPTHS`) |
 | `pipeline.lua`, `idle.py` | TFB pipelining script; idle-connection RSS test |
 
-Build: `fpc -Mobjfpc -Sh -O3 -CX -XX -Xs -Fu/home/jps/Code/wd-40/src/http1 -FUunits -owdproto wdproto.pas`
+Build: `fpc -Mobjfpc -Sh -O3 -CX -XX -Xs -Fu/home/jps/Code/wd-40/src/http1 -FUunits -obeproto beproto.pas`
 (units are written to the scratchpad, nothing under the project). `cargo build --release` in
 `hyper-tfb/`. wrk: `scratchpad/vendor/wrk/wrk`.
 
@@ -1739,5 +1739,5 @@ Example (configuration B):
 ```sh
 WRK_CPUS=4-15 WRK_THREADS=12
 THREADS=4 taskset -c 0-3 hyper-tfb/target/release/hyper-tfb 18080 &   ./bench2.sh hyper 18080 $!
-POOL=1 taskset -c 0-3 loop/wdproto 18081 &                              ./bench2.sh wd 18081 $!
+POOL=1 taskset -c 0-3 loop/beproto 18081 &                              ./bench2.sh wd 18081 $!
 ```

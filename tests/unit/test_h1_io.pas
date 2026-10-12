@@ -855,7 +855,7 @@ function MakeTempFile(const Content: RawByteString): cint;
 var
   Name: string;
 begin
-  Name := GetTempFileName(GetTempDir(False), 'wdio');
+  Name := GetTempFileName(GetTempDir(False), 'beio');
   Result := FpOpen(Name, O_RDWR or O_CREAT or O_TRUNC, &600);
   if Result < 0 then
     raise Exception.Create('temp file');

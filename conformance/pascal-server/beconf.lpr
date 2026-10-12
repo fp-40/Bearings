@@ -1,8 +1,8 @@
-{ wdconf - the bearings Pascal conformance server (conformance/SPEC.md; design
+{ beconf - the bearings Pascal conformance server (conformance/SPEC.md; design
   m3-transport.md section 6). Test tooling: a thin wrapper around bearings.server
   and bearings.http1.*; everything on the wire comes from the HTTP layer.
 
-  Usage: wdconf [--executor inline|worker] [--loops N] (--config <path> | --config-json <json>)
+  Usage: beconf [--executor inline|worker] [--loops N] (--config <path> | --config-json <json>)
   The runner appends --config <path>. Without a config the spec is the empty object.
 
   One loop on the main thread (the reference server's current-thread
@@ -11,17 +11,17 @@
   write(2) before the loop runs. --executor worker (S7, design 6.8): the
   handlers run on the server's worker pool (TServerConfig.Workers = 0:
   Min(32, DefaultLoopCount + 4) threads) through TOffloadCall
-  (wdconf.service). --loops N (S8, N >= 1): N loops; loop 0 stays on the
+  (beconf.service). --loops N (S8, N >= 1): N loops; loop 0 stays on the
   main thread. With N > 1 the one listening socket (same mio options) is
   shared by every loop in amSharedExclusive mode (EPOLLEXCLUSIVE); with
   N = 1 it is the amSingle listener of loop 0. }
-program wdconf;
+program beconf;
 
 {$mode objfpc}{$H+}
 
 uses
   cthreads, SysUtils, Classes, bearings.rt.loop, bearings.rt.net, bearings.http.exchange, bearings.http1.config,
-  bearings.server, wdconf.spec, wdconf.events, wdconf.upgrade, wdconf.service, wdconf.control;
+  bearings.server, beconf.spec, beconf.events, beconf.upgrade, beconf.service, beconf.control;
 
 var
   Server: TServer;
@@ -51,7 +51,7 @@ end;
 
 procedure Usage;
 begin
-  WriteLn(StdErr, 'usage: wdconf [--executor inline|worker] [--loops N] (--config <server-spec.json> | ',
+  WriteLn(StdErr, 'usage: beconf [--executor inline|worker] [--loops N] (--config <server-spec.json> | ',
     '--config-json ''<json>'')');
   WriteLn(StdErr, 'Prints "LISTENING <port>" then one JSON event per line. See conformance/SPEC.md.');
   Halt(2);
@@ -59,7 +59,7 @@ end;
 
 procedure Die(const Msg: string);
 begin
-  WriteLn(StdErr, 'wdconf: ', Msg);
+  WriteLn(StdErr, 'beconf: ', Msg);
   Halt(2);
 end;
 

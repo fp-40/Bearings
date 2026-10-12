@@ -1865,7 +1865,7 @@ procedure TTestH1Config.Hyper_defaults;
 var
   C: TH1Config;
 begin
-  C := HyperDefaultH1Config;
+  C := ConformanceH1Config;
   AssertTrue(C.KeepAlive);
   AssertFalse(C.HalfClose);
   AssertFalse(C.TitleCaseHeaders);
@@ -1884,7 +1884,7 @@ procedure TTestH1Config.Production_defaults;
 var
   C: TH1Config;
 begin
-  C := WdProductionH1Config;
+  C := ProductionH1Config;
   AssertTrue(C.Timer);
   AssertTrue(C.HeaderReadTimeout = tsDefault);
   AssertTrue(C.PipelineFlush);
@@ -1897,7 +1897,7 @@ var
   C: TH1Config;
   M: string;
 begin
-  C := HyperDefaultH1Config;
+  C := ConformanceH1Config;
   AssertTrue('defaults valid', ValidateH1Config(C, M));
   C.MaxBufSize := 8191;
   AssertFalse('MaxBufSize < 8192', ValidateH1Config(C, M));
@@ -1921,7 +1921,7 @@ var
 begin
   FMock.Vectored(True);
   InitConn;
-  C := HyperDefaultH1Config;
+  C := ConformanceH1Config;
   C.KeepAlive := False;
   C.HalfClose := True;
   C.TitleCaseHeaders := True;
@@ -1953,7 +1953,7 @@ var
   C: TH1Config;
 begin
   InitConn;
-  C := HyperDefaultH1Config;
+  C := ConformanceH1Config;
   ApplyH1Config(C, FConn);
   AssertEquals('default without timer: None', -1, FConn.State.HeaderReadTimeoutMs);
   FConn.Done;
@@ -2278,22 +2278,22 @@ end;
 procedure TTestConnBodyRate.Config_fields;
 var C: TH1Config; M: string;
 begin
-  C := HyperDefaultH1Config;
+  C := ConformanceH1Config;
   AssertEquals('hyper: off', 0, C.BodyReadTimeoutMs);
   AssertEquals('hyper: no rate', 0, C.BodyMinRate);
-  C := WdProductionH1Config;
+  C := ProductionH1Config;
   AssertEquals('production: 30 s', 30000, C.BodyReadTimeoutMs);
   AssertEquals('production: 1 KiB/s', 1024, C.BodyMinRate);
   AssertTrue('production valid', ValidateH1Config(C, M));
   C.Timer := False;
   AssertFalse('needs the timer', ValidateH1Config(C, M));
-  C := WdProductionH1Config;
+  C := ProductionH1Config;
   C.BodyReadTimeoutMs := 0;
   AssertFalse('a rate needs the wait limit', ValidateH1Config(C, M));
-  C := WdProductionH1Config;
+  C := ProductionH1Config;
   C.BodyMinRate := -1;
   AssertFalse('negative', ValidateH1Config(C, M));
-  C := WdProductionH1Config;
+  C := ProductionH1Config;
   InitConn;
   ApplyH1Config(C, FConn);
   AssertEquals('applied', 30000, FConn.State.BodyTimeoutMs);

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Conformance gate, worker executor (design m3-transport.md 7.4, 9 S7, T1):
-# builds wdconf and runs the wire cases against `wdconf --executor worker`
+# builds beconf and runs the wire cases against `beconf --executor worker`
 # in assertion mode.
 #   1. the 105 cases, RUNS times: every run must print
 #      "SUMMARY passed=104 failed=0 pending=1 total=105", except that a case
@@ -11,7 +11,7 @@
 #   3. the evidence for the exception (extra/worker-probe.json):
 #      reference-server must fail both probe cases in assertion mode (hyper
 #      fails the same wire assertion when its second handler is Pending at
-#      its first poll), and so must `wdconf --executor worker`.
+#      its first poll), and so must `beconf --executor worker`.
 # Step T1 (user decision 2026-10-08) removed the diff-mode checks (transcripts
 # SAME, the event allowlist, worker_allowlist.py, classify_diff.py, the
 # runner's --settle-ms). With DIFF=1 the script also runs diff mode against
@@ -30,10 +30,10 @@ RUNS=${RUNS:-5}
 LOG=$OUT/gate-worker
 mkdir -p "$LOG"
 OUT_DIR=$OUT sh "$PS/build.sh" > "$LOG/build.log" 2>&1 || {
-  echo "gate_worker: wdconf build FAILED (see $LOG/build.log)"; exit 1; }
+  echo "gate_worker: beconf build FAILED (see $LOG/build.log)"; exit 1; }
 (cd "$CONF" && cargo build --release --offline --quiet) > "$LOG/cargo.log" 2>&1 || {
   echo "gate_worker: runner build FAILED (see $LOG/cargo.log)"; exit 1; }
-W="$OUT/wdconf --executor worker"
+W="$OUT/beconf --executor worker"
 RUNNER=$CONF/target/release/runner
 REF=$CONF/target/release/reference-server
 CASES=$CONF/cases/h1
@@ -84,9 +84,9 @@ fi
 "$RUNNER" run --server "$W" "$PS/extra/worker-probe.json" > "$LOG/probe-wd.log" 2>&1 || true
 S=$(tail -n 1 "$LOG/probe-wd.log")
 if [ "$S" = "$WANT_PROBE" ]; then
-  echo "probe, wdconf --executor worker assertion mode: $S (expected: both fail, as the reference)"
+  echo "probe, beconf --executor worker assertion mode: $S (expected: both fail, as the reference)"
 else
-  echo "probe, wdconf --executor worker assertion mode: UNEXPECTED: $S (see $LOG/probe-wd.log)"; FAIL=1
+  echo "probe, beconf --executor worker assertion mode: UNEXPECTED: $S (see $LOG/probe-wd.log)"; FAIL=1
 fi
 if [ "${DIFF:-0}" = 1 ]; then
   "$RUNNER" diff --a "$REF" --b "$W" "$CASES" > "$LOG/diff-report.log" 2>&1 || true

@@ -34,7 +34,7 @@ Inputs read for this design: hyper `src/proto/h1/{conn,dispatch,io}.rs`, `src/se
 | strings | no managed types (AnsiString, dynamic arrays, interfaces) in locals or parameters of hot routines; `PByte`+length slices everywhere in the transport; M5 objects may use AnsiString |
 | header validation | `THttpHeaders` mutators validate names (token) and values (HTAB / 0x20..0x7E / 0x80..0xFF) like `http::HeaderName/HeaderValue`; `*Unchecked` variants for already-validated bytes; debug assertion in the encoders |
 | HTTP/2 room | `TExchange` and `TBody` do not know the protocol. A connection holds a `TProtoDriver` (`TH1Dispatcher` now, `TH2Session` over libnghttp2 later); `cpAuto` sniffs the 24-byte preface like hyper-util |
-| conformance server | `conformance/pascal-server/wdconf.pas`: one loop, test_service as an inline state machine (delays are loop timers, so cancel/drop ordering matches hyper's future drop); `--exec worker` variant runs it on the worker pool |
+| conformance server | `conformance/pascal-server/beconf.pas`: one loop, test_service as an inline state machine (delays are loop timers, so cancel/drop ordering matches hyper's future drop); `--exec worker` variant runs it on the worker pool |
 
 ### Assumptions (stated explicitly; correct me where wrong)
 
@@ -1442,10 +1442,10 @@ non-adjacent).
 ## 6. The Pascal conformance server
 
 Location: `conformance/pascal-server/` (test tooling, next to `reference-server/`):
-`wdconf.pas` (program), `wdconf.spec.pas` (JSON spec parsing with fcl-json, validation, exit 2 on
-errors), `wdconf.events.pas` (JSON line emitter, latin-1 byte strings, one `write` per line under a
-mutex), `wdconf.handlers.pas` (service, per-request script, script body, upgrade task),
-`wdconf.control.pas` (stdin thread).
+`beconf.pas` (program), `beconf.spec.pas` (JSON spec parsing with fcl-json, validation, exit 2 on
+errors), `beconf.events.pas` (JSON line emitter, latin-1 byte strings, one `write` per line under a
+mutex), `beconf.handlers.pas` (service, per-request script, script body, upgrade task),
+`beconf.control.pas` (stdin thread).
 
 Defaults: one loop (`--loops 1`, so accept order = connection numbering), inline execution.
 Variants used by the test plan: `--exec worker` (test_service runs as a `TWorkerHandler` with real
@@ -1619,13 +1619,13 @@ From `conformance/`:
 
 ```sh
 cargo build --release
-fpc ... -o../build/conformance/wdconf pascal-server/wdconf.pas
+fpc ... -o../build/conformance/beconf pascal-server/beconf.pas
 # assertion mode, each variant
-target/release/runner run --server '../build/conformance/wdconf' cases/h1
-target/release/runner run --server '../build/conformance/wdconf --exec worker' cases/h1
-target/release/runner run --server '../build/conformance/wdconf --loops 4' cases/h1
+target/release/runner run --server '../build/conformance/beconf' cases/h1
+target/release/runner run --server '../build/conformance/beconf --exec worker' cases/h1
+target/release/runner run --server '../build/conformance/beconf --loops 4' cases/h1
 # diff mode against hyper
-target/release/runner diff --a target/release/reference-server --b '../build/conformance/wdconf' cases/h1
+target/release/runner diff --a target/release/reference-server --b '../build/conformance/beconf' cases/h1
 ```
 
 Gate: `SUMMARY passed=104 failed=0 pending=1` in 3 consecutive runs per variant, and
@@ -1708,7 +1708,7 @@ src/
                           wd.web.form, wd.web.multipart, wd.web.session, wd.web.app
 tests/unit/               test_h1_io, test_h1_conn, test_h1_dispatch, test_exchange,
                           test_loop, test_timer, test_mpsc, test_buf, test_headers_validate
-conformance/pascal-server/ wdconf*.pas
+conformance/pascal-server/ beconf*.pas
 conformance/fuzz-h1/      Rust differential fuzzer
 bench/                    wdbench.pas, wrk scripts, hyper TFB patch, run-matrix.sh
 ```

@@ -67,7 +67,7 @@ Read these before designing anything:
      called. If `Upgraded` raises before attaching, detaching or closing
      `U`, the exchange closes it.
 4. Example of a working upgraded-connection task:
-   `conformance/pascal-server/wdconf.upgrade.pas` (`TConfUpgrader`, a
+   `conformance/pascal-server/beconf.upgrade.pas` (`TConfUpgrader`, a
    `TRawListener` with a small read/write state machine and a cross-loop
    signal through `TLoop.Post`). It is test tooling, but it shows the
    patterns to follow.

@@ -1,12 +1,12 @@
-{ rawsrv - M3 step S1 raw loop baseline: the wdproto plaintext server
-  (bench/wdproto.pas) rebuilt on the M3 runtime (design m3-transport.md
+{ rawsrv - M3 step S1 raw loop baseline: the beproto plaintext server
+  (bench/beproto.pas) rebuilt on the M3 runtime (design m3-transport.md
   section 9, S1): TLoop (one per thread), TListener (one SO_REUSEPORT
   listener per loop, TCP_NODELAY, backlog 4096), TIoTask + TTcpTransport
   with tokio's readiness rules, read and write blocks from the loop's
   TBlockPool, the per-loop date cache. No HTTP state machine, no service
   layer.
 
-  Per request it does exactly what wdproto POOL=1 does, so the comparison
+  Per request it does exactly what beproto POOL=1 does, so the comparison
   measures the runtime and nothing else: ServerParse into a per-connection
   THttpHeaders (external slices), the same three response headers added to
   a per-connection THttpHeaders, ServerEncode (the M3 TByteVec overload,
@@ -14,7 +14,7 @@
   (pipelined) request is answered, then one write (hyper's
   pipeline_flush(true)); request bodies are not supported (the connection
   is closed). An idle connection gives its read and write blocks back to the
-  loop pool (wdproto POOL=1). Response bytes equal wdproto's and hyper's
+  loop pool (beproto POOL=1). Response bytes equal beproto's and hyper's
   ("server: hyper" is kept so the bytes are identical).
 
   Usage: rawsrv [port]     env: THREADS=n (default DefaultLoopCount),

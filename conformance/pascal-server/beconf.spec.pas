@@ -1,4 +1,4 @@
-{ wdconf.spec - the server spec of conformance/SPEC.md sections 2, 4, 5 and
+{ beconf.spec - the server spec of conformance/SPEC.md sections 2, 4, 5 and
   6.3: JSON parsing and validation (design m3-transport.md 6.1, 6.2).
   Test tooling.
 
@@ -17,7 +17,7 @@
   their UTF-8 text and, when every code point is at most U+00FF, the
   latin-1 bytes. Duplicate object keys: the last value wins (serde_json
   Map::insert). }
-unit wdconf.spec;
+unit beconf.spec;
 
 {$mode objfpc}{$H+}
 {$modeswitch advancedrecords}
@@ -772,7 +772,7 @@ begin
       'writev', 'pipeline_flush', 'auto_date_header', 'ignore_invalid_headers',
       'allow_multiple_spaces_in_request_line_delimiters', 'conn_mode',
       'graceful_shutdown_on_accept'], 'config: ');
-    C := HyperDefaultH1Config;
+    C := ConformanceH1Config;
     { header_read_timeout_ms: absent = default, null = disabled, else an integer }
     T := M.Get('header_read_timeout_ms');
     if T = nil then
@@ -1025,7 +1025,7 @@ begin
   inherited Create;
   FReplies := TList.Create;
   FDefault := TReply.Create;
-  Cfg := HyperDefaultH1Config;
+  Cfg := ConformanceH1Config;
   Handler := hkTestService;
 end;
 

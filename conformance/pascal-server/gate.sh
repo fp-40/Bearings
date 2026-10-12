@@ -1,6 +1,6 @@
 #!/bin/sh
 # Conformance gate, inline executor (design m3-transport.md 7.4, 9 S6, T1):
-# builds wdconf and runs the wire cases against it in assertion mode.
+# builds beconf and runs the wire cases against it in assertion mode.
 #   1. the 105 cases, RUNS times in a row: every run must print
 #      "SUMMARY passed=104 failed=0 pending=1 total=105";
 #   2. the extra cases (extra/extra-cases.json: SPEC behaviors the 105 cases
@@ -10,7 +10,7 @@
 # byte-identical transcripts and event timing are not goals. With DIFF=1 the
 # script also runs diff mode against reference-server once, as a report
 # (printed, never a failure). With LOOPS=N the server runs as
-# `wdconf --loops N` (S8: N loops sharing one listener, amSharedExclusive;
+# `beconf --loops N` (S8: N loops sharing one listener, amSharedExclusive;
 # the 7.4 gate is LOOPS=4 RUNS=3) and the logs go to $OUT_DIR/gate-loopsN/.
 # Logs: $OUT_DIR/gate/. Exit status 0 when every check passes, 1 otherwise.
 # Usage: conformance/pascal-server/gate.sh
@@ -25,10 +25,10 @@ RUNS=${RUNS:-5}
 LOG=$OUT/gate${LOOPS:+-loops$LOOPS}
 mkdir -p "$LOG"
 OUT_DIR=$OUT sh "$CONF/pascal-server/build.sh" > "$LOG/build.log" 2>&1 || {
-  echo "gate: wdconf build FAILED (see $LOG/build.log)"; exit 1; }
+  echo "gate: beconf build FAILED (see $LOG/build.log)"; exit 1; }
 (cd "$CONF" && cargo build --release --offline --quiet) > "$LOG/cargo.log" 2>&1 || {
   echo "gate: runner build FAILED (see $LOG/cargo.log)"; exit 1; }
-W="$OUT/wdconf${LOOPS:+ --loops $LOOPS}"
+W="$OUT/beconf${LOOPS:+ --loops $LOOPS}"
 RUNNER=$CONF/target/release/runner
 REF=$CONF/target/release/reference-server
 CASES=$CONF/cases/h1

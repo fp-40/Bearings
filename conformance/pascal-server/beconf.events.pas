@@ -1,4 +1,4 @@
-{ wdconf.events - SPEC 7 event lines on stdout (design m3-transport.md 6.1,
+{ beconf.events - SPEC 7 event lines on stdout (design m3-transport.md 6.1,
   6.7). Test tooling, cold path: strings are allowed.
 
   A line is built completely, then written with one write(1, ...) loop under
@@ -7,7 +7,7 @@
   strings use the latin-1 mapping of SPEC 2: each byte is the code point of
   the same value, written as UTF-8 (bytes 0x80..0xFF become two bytes),
   control characters as JSON escapes. }
-unit wdconf.events;
+unit beconf.events;
 
 {$mode objfpc}{$H+}
 

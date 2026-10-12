@@ -8,8 +8,8 @@
   spec) and the M2 parser corpus (tests/unit/test_parser_corpus.py, served
   with the spec {}). The connection is served in-process by the real
   TH1Dispatcher and the conformance server's own handlers
-  (wdconf.service.TConfService, inline executor; its events are collected
-  through wdconf.events.EventHook) over a TScriptIo transport
+  (beconf.service.TConfService, inline executor; its events are collected
+  through beconf.events.EventHook) over a TScriptIo transport
   (tests/support/bearings.test.scriptio: it records what is written and scripts
   only the transport's answers; TMockTransport asserts the exact bytes of
   every write, which a fuzzer does not know in advance).
@@ -35,7 +35,7 @@
   (tests/unit/run_all.sh checks the log).
 
   Each input runs in two profiles: the case's own spec config, and
-  WdProductionH1Config (timer, 30 s header read timeout, pipeline_flush,
+  ProductionH1Config (timer, 30 s header read timeout, pipeline_flush,
   with_upgrades). auto_date_header is off in both (the date would differ
   between runs).
 
@@ -55,7 +55,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   Classes, SysUtils, StrUtils, fpcunit, testregistry, consoletestrunner, ctypes, bearings.rt.sys, bearings.rt.buf,
   bearings.rt.loop, bearings.rt.net, bearings.http.error, bearings.http.exchange, bearings.http1.config, bearings.http1.dispatch,
-  bearings.test.scriptio, wdconf.spec, wdconf.events, wdconf.service;
+  bearings.test.scriptio, beconf.spec, beconf.events, beconf.service;
 
 type
   TInput = record
@@ -358,7 +358,7 @@ begin
   try
     Cfg := Spec.Cfg;
     if Production then
-      Cfg := WdProductionH1Config;
+      Cfg := ProductionH1Config;
     Cfg.AutoDateHeader := False;
     R.S := Seed;
     if Split then

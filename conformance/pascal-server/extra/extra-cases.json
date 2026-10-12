@@ -1217,7 +1217,7 @@
   },
   {
    "name": "upgrade_write_blocks",
-   "notes": "S6 fix (S6 verifier: no case made an upgraded write wait). The upgrade task writes 16 MiB while the client does not read for 300 ms: the raw writes come back short once the socket buffers are full (strace of wdconf: 16 short write(2) calls), TryWrite then returns EAGAIN with the write bit clear, and each writable edge resumes the write. Then the client reads it all and sends FIN, and the task reads to EOF.",
+   "notes": "S6 fix (S6 verifier: no case made an upgraded write wait). The upgrade task writes 16 MiB while the client does not read for 300 ms: the raw writes come back short once the socket buffers are full (strace of beconf: 16 short write(2) calls), TryWrite then returns EAGAIN with the write bit clear, and each writable edge resumes the write. Then the client reads it all and sends FIN, and the task reads to EOF.",
    "server": {
     "config": {
      "conn_mode": "with_upgrades"
