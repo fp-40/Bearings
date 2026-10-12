@@ -338,6 +338,9 @@ Field | Meaning
 `AutoDateHeader` (True) | add a `Date` header unless the application set one
 `BodyReadTimeoutMs` (0 = off) | longest wait for one request body byte
 `BodyMinRate` (0 = off) | bytes/s the client must keep up after `BodyReadTimeoutMs` of waiting
+`ProxyProtocol` (False) | every connection starts with a PROXY protocol header, v1 or v2 (`bearings.rt.proxyproto`), from the proxy or load balancer in front: the address it carries becomes the peer (`TExchange.PeerAddr`, the access log's `client.address`); a connection without a valid header is closed without a response (outcome `parse`), one closed before any byte is a normal end. Only for listeners that only the proxy can reach: the header is trusted
+`MaxRequests` (0 = no limit) | most requests one connection serves; the last allowed response carries `Connection: close` (nginx `keepalive_requests`)
+`MaxConnectionMs` (0 = no limit) | once a connection is this old, its next response carries `Connection: close` and closes it; a request in progress is never cut, and an idle connection past the age stays until its next request or the header read timeout (nginx `keepalive_time`)
 `Parser: TParserConfig` | leniency switches of the head parser (`bearings.http1.parser`)
 `Mode: TH1ConnMode` (cmPlain) | what happens after a `101` response and at the end of the connection (section 10)
 
@@ -347,7 +350,8 @@ the 30 s header read timeout, `PipelineFlush`, `cmWithUpgrades` and the
 body rate rule (30 s, 1 KiB/s). `ValidateH1Config` rejects invalid
 combinations (`MaxBufSize` below 8192, a `tsMs` header timeout or a body
 timeout without a timer, negative values, `BodyMinRate` without
-`BodyReadTimeoutMs`); `TServer.Start` runs it and raises `EServerError`
+`BodyReadTimeoutMs`, a negative `MaxRequests` or `MaxConnectionMs`);
+`TServer.Start` runs it and raises `EServerError`
 with its message.
 
 Server presets: `ProductionServerConfig` listens on 0.0.0.0:8080, backlog

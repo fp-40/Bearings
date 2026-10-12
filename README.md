@@ -31,9 +31,11 @@ for code that blocks, on the worker pool, one event at a time per
 connection. It
 listens on TCP or on a Unix domain socket, runs under systemd socket
 activation with readiness and watchdog notifications, can cap the number
-of open connections, and can write an access log (JSON lines or the
-Combined Log Format) and keep metrics with a Prometheus text export
-(`docs/api.md`, section 2).
+of open connections and the requests and lifetime of each, reads the
+PROXY protocol header (v1 and v2) from a proxy or load balancer in front
+so that the client's address is known behind it, and can write an access
+log (JSON lines or the Combined Log Format) and keep metrics with a
+Prometheus text export (`docs/api.md`, section 2).
 
 ## Requirements
 
@@ -330,6 +332,19 @@ WantedBy=multi-user.target
 `systemctl start myapp.socket` listens; the service starts on the first
 connection. Without systemd the same program can be tried with
 `systemd-socket-activate -l 8080 ./myapp`.
+
+Behind a reverse proxy (nginx on the Unix socket above, HAProxy, a cloud
+load balancer) the peer of every connection is the proxy. With
+`Cfg.H1.ProxyProtocol := True` the server reads the PROXY protocol header
+the proxy sends first (nginx: `proxy_protocol on` in the `server` block
+that proxies to it; HAProxy: `send-proxy` or `send-proxy-v2` on the
+backend server), and `Ex.PeerAddr` and the access log give the client's
+address. Turn it on only for a listener that only the proxy can reach,
+since the header is trusted. `Cfg.H1.MaxRequests` and
+`Cfg.H1.MaxConnectionMs` cap the requests and the lifetime of a
+keep-alive connection, as nginx's `keepalive_requests` and
+`keepalive_time` do; the last allowed response says `Connection: close`
+(`docs/api.md`, section 2, "TH1Config").
 
 ## Documentation
 

@@ -99,6 +99,22 @@ type
     AutoDateHeader: Boolean;           { True }
     BodyReadTimeoutMs: Int64;          { 0 = off; the longest wait for one body byte }
     BodyMinRate: Int64;                { bytes/s required after BodyReadTimeoutMs of waiting; 0 = off }
+    { True: every connection starts with a PROXY protocol header (v1 or
+      v2, bearings.rt.proxyproto) from the proxy or load balancer in front
+      of the server; the address it carries is the connection's peer
+      (TExchange.PeerAddr, the access log). A connection without a valid
+      header is closed, without a response. Only for listeners that only
+      the proxy can reach. }
+    ProxyProtocol: Boolean;            { False }
+    { The most requests one connection serves; the last allowed response
+      carries "Connection: close". 0 = no limit (nginx: keepalive_requests). }
+    MaxRequests: Integer;              { 0 }
+    { The longest a connection is kept alive: once this time has passed
+      since it was accepted, the next response carries "Connection: close"
+      and closes the connection. 0 = no limit (nginx: keepalive_time).
+      A request in progress is never cut, and an idle connection past the
+      age stays until its next request or the header read timeout. }
+    MaxConnectionMs: Int64;            { 0 }
     { Leniency switches of the head parser (bearings.http1.parser). }
     Parser: TParserConfig;
     Mode: TH1ConnMode;
@@ -114,7 +130,7 @@ function ConformanceH1Config: TH1Config;
 function ProductionH1Config: TH1Config;
 { False with a message in Msg for an invalid combination: MaxBufSize below
   8192, a tsMs header timeout or a body timeout without a timer, negative
-  timeouts or rates, BodyMinRate without BodyReadTimeoutMs. A tsDefault
+  timeouts, rates or connection limits, BodyMinRate without BodyReadTimeoutMs. A tsDefault
   header timeout without a timer is valid and means no timeout. }
 function ValidateH1Config(const C: TH1Config; out Msg: string): Boolean;
 { Applies every option to a newly initialized TH1Conn that has not read
@@ -154,6 +170,9 @@ begin
   Result.AutoDateHeader := True;
   Result.BodyReadTimeoutMs := 0;
   Result.BodyMinRate := 0;
+  Result.ProxyProtocol := False;
+  Result.MaxRequests := 0;
+  Result.MaxConnectionMs := 0;
   Result.Parser := DefaultParserConfig;
   Result.Mode := cmPlain;
 end;
@@ -209,6 +228,12 @@ begin
     Msg := 'TH1Config.BodyMinRate is set, which needs TH1Config.BodyReadTimeoutMs, and BodyReadTimeoutMs is 0';
     Exit(False);
   end;
+  if (C.MaxRequests < 0) or (C.MaxConnectionMs < 0) then
+  begin
+    Msg := 'TH1Config.MaxRequests (' + IntText(C.MaxRequests) + ') and TH1Config.MaxConnectionMs (' +
+      IntText(C.MaxConnectionMs) + ') must be 0 or more';
+    Exit(False);
+  end;
   Result := True;
 end;
 
@@ -247,6 +272,9 @@ begin
     Conn.DisableDateHeader;
   if C.Timer and (C.BodyReadTimeoutMs > 0) then
     Conn.SetBodyReadTimeout(C.BodyReadTimeoutMs, C.BodyMinRate);
+  if C.ProxyProtocol then
+    Conn.SetProxyProtocol;
+  { MaxRequests and MaxConnectionMs are the dispatcher's (TH1Dispatcher.Setup) }
 end;
 
 end.

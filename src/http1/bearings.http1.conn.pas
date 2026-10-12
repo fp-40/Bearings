@@ -102,7 +102,7 @@ interface
 uses
   ctypes, bearings.rt.buf, bearings.rt.timer, bearings.rt.loop, bearings.rt.net, bearings.http1.io, bearings.http1.parser,
   bearings.http1.role, bearings.http1.encode, bearings.http1.decode, bearings.http.headers, bearings.http.error,
-  bearings.http.exchange;
+  bearings.http.exchange, bearings.rt.sys;
 
 type
   { the states are described in the unit header }
@@ -160,6 +160,12 @@ type
       NewHeaderTimeout. }
     HeaderReadTimer: TTimer;
     HeaderReadTimeoutRunning: Boolean;
+    { The PROXY protocol header (bearings.rt.proxyproto) is expected before
+      the first request (SetProxyProtocol). ProxyPeerSet: ProxyPeer holds
+      the address it carried, for the dispatcher (TakeProxyPeer). }
+    ProxyPending: Boolean;
+    ProxyPeerSet: Boolean;
+    ProxyPeer: TSockAddrStorage;
     DateHeader: Boolean;             { add a Date header to responses }
     TitleCaseHeaders: Boolean;       { write header names Title-Cased instead of as given }
     { The dispatcher should try to read again (WantsReadAgain): set when the
@@ -225,6 +231,11 @@ type
     procedure SetTitleCaseHeaders;  procedure SetMaxHeaders(N: Integer);
     procedure SetMaxHeaderSize(N: SizeInt);  procedure SetHeaderReadTimeout(Ms: Int64);
     procedure SetAllowHalfClose;  procedure DisableDateHeader;
+    { the connection starts with a PROXY protocol header (TH1Config.ProxyProtocol) }
+    procedure SetProxyProtocol;
+    { True once, after the header was read with an address: Peer is the
+      client's address and port as the proxy saw them }
+    function TakeProxyPeer(out Peer: TSockAddrStorage): Boolean;
     { the body rate rule; TimeoutMs > 0 needs Loop (the timer) }
     procedure SetBodyReadTimeout(TimeoutMs, MinRate: Int64);
 
@@ -245,6 +256,7 @@ type
     function PollReadHead(Headers: THttpHeaders; out Msg: TParsedRequestHead;
       out Head: TBytesView; out Wants: TWants; var Err: THyperError): TPollOpt;
     function OnReadHeadError(var Err: THyperError): TPollOpt;
+    function PollReadProxy(var Err: THyperError): TPollOpt;
     { Runs the body decoder over the read buffer, reading from the socket
       when the decoder needs more and the buffer is empty. }
     function DecodeFrame(Trailers: THttpHeaders; out View: TBytesView; out DErr: TDecodeError;
@@ -333,7 +345,7 @@ procedure HeaderReadTimerProc(T: PTimer);
 implementation
 
 uses
-  bearings.rt.sys, bearings.http.date;
+  bearings.http.date, bearings.rt.proxyproto;
 
 const
   S_CONNECTION: array[0..9] of AnsiChar = 'connection';
@@ -662,10 +674,79 @@ begin
   Result := (Io.ReadBuf.Len >= 24) and (CompareByte(Io.ReadBuf.Ptr^, H2_PREFACE[0], 24) = 0);
 end;
 
+procedure TH1Conn.SetProxyProtocol;
+begin
+  State.ProxyPending := True;
+end;
+
+function TH1Conn.TakeProxyPeer(out Peer: TSockAddrStorage): Boolean;
+begin
+  Result := State.ProxyPeerSet;
+  if Result then
+  begin
+    Peer := State.ProxyPeer;
+    State.ProxyPeerSet := False;
+  end;
+end;
+
+{ Reads the PROXY protocol header that opens the connection (the header
+  read timer is running). poSome: read and consumed; the request head
+  follows in the buffer. poNone: EOF before any byte (a proxy's connect
+  check): the connection ends like one closed between requests. poErr:
+  not a valid header (h1peProxyProtocol), EOF inside it, or a socket
+  error; no response is written, since the sender is not an HTTP client. }
+function TH1Conn.PollReadProxy(var Err: THyperError): TPollOpt;
+var
+  PP: TProxyParse;
+  Used, N: SizeInt;
+  HasPeer: Boolean;
+  Errno: cint;
+  IoR: TIoPoll;
+begin
+  while True do
+  begin
+    PP := ParseProxyHeader(Io.ReadBuf.Ptr, Io.ReadBuf.Len, Used, HasPeer, State.ProxyPeer);
+    if PP = ppOk then
+    begin
+      Io.ReadBuf.Advance(Used);
+      State.ProxyPending := False;
+      State.ProxyPeerSet := HasPeer;
+      Exit(poSome);
+    end;
+    if (PP = ppError) or (Io.ReadBuf.Len >= PROXY_MAX) then
+    begin
+      Err := NewParse(h1peProxyProtocol);
+      CloseRead;
+      CloseWrite;
+      Exit(poErr);
+    end;
+    IoR := Io.PollReadFromIo(N, Errno);
+    if IoR = ipPending then
+      Exit(poPending);
+    if IoR = ipError then
+    begin
+      Err := NewIo(Errno);
+      CloseRead;
+      CloseWrite;
+      Exit(poErr);
+    end;
+    if N = 0 then
+    begin
+      CloseRead;
+      CloseWrite;
+      if Io.ReadBuf.Len = 0 then
+        Exit(poNone);                { EOF before the header }
+      Err := NewIncomplete;          { EOF inside it }
+      Exit(poErr);
+    end;
+  end;
+end;
+
 function TH1Conn.PollReadHead(Headers: THttpHeaders; out Msg: TParsedRequestHead;
   out Head: TBytesView; out Wants: TWants; var Err: THyperError): TPollOpt;
 var
   R: TPollResult;
+  PR: TPollOpt;
 begin
   Assert(CanReadHead, 'poll_read_head: cannot read head');
   Wants := [];
@@ -678,6 +759,24 @@ begin
       State.HeaderReadTimeoutRunning := True;
       Loop.Timers.Arm(@State.HeaderReadTimer, Loop.NowMs + State.HeaderReadTimeoutMs);
     end;
+
+  if State.ProxyPending then
+  begin
+    { the PROXY protocol header comes first; the timer above covers it }
+    PR := PollReadProxy(Err);
+    if PR = poPending then
+    begin
+      if State.HeaderReadTimeoutRunning and State.HeaderReadTimer.Fired then
+      begin
+        State.HeaderReadTimeoutRunning := False;
+        Err := NewHeaderTimeout;
+        Exit(poErr);
+      end;
+      Exit(poPending);
+    end;
+    if PR <> poSome then
+      Exit(PR);
+  end;
 
   R := Io.Parse(State.ParseCtx, Headers, Msg, Head, Err);
   if R = prErr then

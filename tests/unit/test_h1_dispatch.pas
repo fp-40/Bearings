@@ -228,6 +228,13 @@ type
       poll_shutdown) }
     procedure Pipeline_flush_upgrade_101_before_hand_off;
     procedure Pipeline_flush_upgrade_101_write_pending;
+    { the PROXY protocol header (TH1Config.ProxyProtocol) and the
+      connection's lifetime caps (MaxRequests, MaxConnectionMs) }
+    procedure Proxy_header_v1_sets_the_peer;
+    procedure Proxy_header_v2_split_across_reads;
+    procedure Proxy_header_missing_closes_without_response;
+    procedure Proxy_header_eof_before_it_is_ok;
+    procedure Max_requests_closes_after_the_last_one;
     procedure Pipeline_flush_keep_alive_off_pipelined;
     procedure Pipeline_flush_parts_response_written;
     procedure No_pipeline_flush_unchanged_at_end;
@@ -1317,6 +1324,74 @@ begin
   finally
     Src.Free;
   end;
+end;
+
+procedure TTestDispatchBehavior.Proxy_header_v1_sets_the_peer;
+begin
+  FCfg.ProxyProtocol := True;
+  FIo.AddRead('PROXY TCP4 10.1.2.3 10.0.0.1 5555 80' + CRLF + GET_REQ).AddReadPending
+    .AddRead('GET /b HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF).AddReadPending.AddReadEof;
+  Start;
+  Drive;
+  AssertEquals('two responses', 2, Count('HTTP/1.1 200 OK', FIo.Written));
+  AssertEquals('the peer from the header', '10.1.2.3', SockAddrToStr(FD.Peer));
+  AssertEquals(5555, Integer(SockAddrPort(FD.Peer)));
+  AssertTrue('outcome ok', FObs.Outcome = coOk);
+end;
+
+procedure TTestDispatchBehavior.Proxy_header_v2_split_across_reads;
+const
+  V2 = #13#10#13#10#0#13#10'QUIT'#10 + #$21#$11#0#12 + #10#1#2#3 + #10#0#0#1 + #$15#$B3 + #0#80;
+begin
+  FCfg.ProxyProtocol := True;
+  FIo.AddRead(Copy(V2, 1, 5)).AddReadPending.AddRead(Copy(V2, 6, 15)).AddReadPending
+    .AddRead(Copy(V2, 21, MaxInt) + GET_REQ).AddReadPending.AddReadEof;
+  Start;
+  Drive;
+  AssertEquals('one response', 1, Count('HTTP/1.1 200 OK', FIo.Written));
+  AssertEquals('10.1.2.3', SockAddrToStr(FD.Peer));
+  AssertEquals(5555, Integer(SockAddrPort(FD.Peer)));
+  AssertTrue('outcome ok', FObs.Outcome = coOk);
+end;
+
+procedure TTestDispatchBehavior.Proxy_header_missing_closes_without_response;
+begin
+  FCfg.ProxyProtocol := True;
+  FIo.AddRead(GET_REQ).AddReadPending.AddReadEof;
+  Start;
+  Drive;
+  AssertTrue('done', Done);
+  AssertEquals('nothing written', '', FIo.Written);
+  AssertEquals('no call', 0, FSvc.Calls);
+  AssertTrue('outcome parse', FObs.Outcome = coParse);
+  AssertEquals('invalid PROXY protocol header', FObs.Detail);
+end;
+
+procedure TTestDispatchBehavior.Proxy_header_eof_before_it_is_ok;
+begin
+  { a proxy's connect check: it opens and closes without a byte }
+  FCfg.ProxyProtocol := True;
+  FIo.AddReadEof;
+  Start;
+  Drive;
+  AssertTrue('done', Done);
+  AssertEquals('nothing written', '', FIo.Written);
+  AssertTrue('outcome ok', FObs.Outcome = coOk);
+end;
+
+procedure TTestDispatchBehavior.Max_requests_closes_after_the_last_one;
+begin
+  FCfg.MaxRequests := 2;
+  FIo.AddRead(GET_REQ + GET_REQ + GET_REQ).AddReadPending.AddReadEof;
+  Start;
+  Drive;
+  AssertTrue('done', Done);
+  AssertEquals('two responses, the third request is not served', 2, Count('HTTP/1.1 200 OK', FIo.Written));
+  AssertEquals('the last one closes', 1, Count('connection: close', FIo.Written));
+  AssertTrue('the close is on the second response', Pos('connection: close', FIo.Written) > Pos('hello', FIo.Written));
+  AssertEquals('shutdown', 1, FIo.ShutdownCalls);
+  AssertTrue('outcome ok', FObs.Outcome = coOk);
+  AssertEquals('requests', 2, Integer(FD.RequestCount));
 end;
 
 procedure TTestDispatchBehavior.Http10_closes;

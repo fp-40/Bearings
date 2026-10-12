@@ -430,6 +430,22 @@ reused and ends with outcome `io`, 5.7);
 trailers are copied into a per-connection scratch buffer and parsed into the
 exchange's `ReqTrailers` list under the same header limits.
 
+**The PROXY protocol header** (`TH1Config.ProxyProtocol`,
+`bearings.rt.proxyproto`). When a proxy stands in front, every connection
+starts with one header, v1 (a text line of at most 107 bytes) or v2 (a
+signature, a command, a family and an address block, TLVs skipped), before
+the first request. `TH1Conn.PollReadHead` reads it before the first head
+parse, under the same header read timer, through `PollReadProxy`: the
+parser is a pure function over the read buffer that says ok (consume the
+bytes), need more (read on; at most `PROXY_MAX`, 4 KiB) or error. The
+address it carries replaces the connection's peer (`TH1Dispatcher.Peer` and
+the request head's `Peer`, so `TExchange.PeerAddr` and the access log see
+it; the observer's `OnAccept` saw the socket's). A missing or invalid header
+ends the connection with the parse error `h1peProxyProtocol` and no
+response, since the sender is not an HTTP client; EOF before any byte (a
+proxy's connect check) is a normal end. v1 `UNKNOWN`, v2 `LOCAL` and v2
+without an IP address keep the socket's peer.
+
 ### 5.2 States and keep-alive
 
 `TConnState` keeps the reading and the writing side apart: `Reading` is
@@ -440,7 +456,13 @@ exchange's `ReqTrailers` list under the same header limits.
 `kaBusy` during a request, `kaIdle` between requests and `kaDisabled` once
 the connection must close after the current response. When both sides reach
 their keep-alive state, `TryKeepAlive` resets both to `Init` or, if keep-alive
-is disabled, closes both. `Idle` sets `NotifyRead` when a header read timeout
+is disabled, closes both. The dispatcher disables keep-alive on its own at
+the request that reaches `MaxRequests`, and at the first request read after
+`MaxConnectionMs` has passed since the connection was set up (the loop
+clock): that response says `Connection: close`. There is no timer for the
+age, so an idle connection past it stays until its next request or the
+header read timeout; a request in progress is never cut (nginx's
+`keepalive_requests` and `keepalive_time`). `Idle` sets `NotifyRead` when a header read timeout
 is configured, so the dispatcher loops once more and re-arms the timer right
 after the response; the header read timeout therefore also bounds an idle
 keep-alive connection. After a response, `MaybeNotify` tries one read when

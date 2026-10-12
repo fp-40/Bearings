@@ -407,6 +407,15 @@ type
     procedure Slow_sink_does_not_block_the_loop;
   end;
 
+  { TH1Config.ProxyProtocol over real sockets, and the lifetime caps }
+  TTestProxyAndLifetime = class(TServerCase)
+  published
+    procedure Proxy_v1_over_tcp_gives_the_client_address;
+    procedure Proxy_v2_over_a_unix_socket;
+    procedure Connection_without_a_proxy_header_is_closed;
+    procedure Max_connection_age_closes_at_the_next_request;
+  end;
+
   TTestMetrics = class(TServerCase)
   published
     procedure Counts_after_a_known_sequence;
@@ -1762,6 +1771,121 @@ begin
   AssertTrue(T, Pos('bearings_request_duration_seconds_count 1'#10, T) > 0);
 end;
 
+{ ---- the PROXY protocol and the lifetime caps ---- }
+
+procedure TTestProxyAndLifetime.Proxy_v1_over_tcp_gives_the_client_address;
+var
+  Cfg: TServerConfig;
+  Fd: cint;
+  Got: RawByteString;
+begin
+  Cfg := TestConfig(1);
+  Cfg.H1.ProxyProtocol := True;
+  StartServer(Cfg);
+  Fd := Connect(Srv.Port);
+  try
+    SendAll(Fd, 'PROXY TCP4 10.1.2.3 127.0.0.1 5555 80' + CRLF + Get('/peer'));
+    Got := RecvBytes(Fd, Length(Resp('2:10.1.2.3')));
+    AssertEquals(Resp('2:10.1.2.3'), Got);
+    { the header is read once per connection: the next request has none }
+    AssertEquals(Resp('2:10.1.2.3'), GetOnce(Fd, '/peer'));
+    AssertEquals(Resp('small'), GetOnce(Fd, '/small'));
+  finally
+    fpClose(Fd);
+  end;
+  { a header without an address keeps the socket's peer }
+  Fd := Connect(Srv.Port);
+  try
+    SendAll(Fd, 'PROXY UNKNOWN' + CRLF + Get('/peer'));
+    Got := RecvBytes(Fd, Length(Resp('2:127.0.0.1')));
+    AssertEquals(Resp('2:127.0.0.1'), Got);
+  finally
+    fpClose(Fd);
+  end;
+  StopServer;
+end;
+
+procedure TTestProxyAndLifetime.Proxy_v2_over_a_unix_socket;
+var
+  Cfg: TServerConfig;
+  P, Got: RawByteString;
+  Fd: cint;
+const
+  V2 = #13#10#13#10#0#13#10'QUIT'#10 + #$21#$21#0#36 + #$20#$01#$0D#$B8#0#0#0#0#0#0#0#0#0#0#0#1
+    + #0#0#0#0#0#0#0#0#0#0#0#0#0#0#0#1 + #$FF#$FF + #1#$BB;
+begin
+  P := SockPath('proxy');
+  Cfg := UnixConfig(1, P);
+  Cfg.H1.ProxyProtocol := True;
+  StartServer(Cfg);
+  Fd := ConnectUnix(P);
+  try
+    SendAll(Fd, V2 + Get('/peer'));
+    Got := RecvBytes(Fd, Length(Resp('10:2001:db8::1')));
+    AssertEquals(Resp('10:2001:db8::1'), Got);
+  finally
+    fpClose(Fd);
+  end;
+  StopServer;
+end;
+
+procedure TTestProxyAndLifetime.Connection_without_a_proxy_header_is_closed;
+var
+  Cfg: TServerConfig;
+  Fd: cint;
+  Got: RawByteString;
+  Eof: Boolean;
+begin
+  Cfg := TestConfig(1);
+  Cfg.H1.ProxyProtocol := True;
+  StartServer(Cfg);
+  Fd := Connect(Srv.Port);
+  try
+    SendAll(Fd, Get('/small'));
+    Got := RecvUntil(Fd, '', Eof);
+    AssertEquals('no response', '', Got);
+    AssertTrue('closed', Eof);
+  finally
+    fpClose(Fd);
+  end;
+  { a connection closed without a byte (a connect check) is fine }
+  Fd := Connect(Srv.Port);
+  fpClose(Fd);
+  Fd := Connect(Srv.Port);
+  try
+    SendAll(Fd, 'PROXY TCP4 10.1.2.3 127.0.0.1 5555 80' + CRLF + Get('/small'));
+    AssertEquals(Resp('small'), RecvBytes(Fd, Length(Resp('small'))));
+  finally
+    fpClose(Fd);
+  end;
+  StopServer;
+end;
+
+procedure TTestProxyAndLifetime.Max_connection_age_closes_at_the_next_request;
+var
+  Cfg: TServerConfig;
+  Fd: cint;
+  Got: RawByteString;
+  Eof: Boolean;
+begin
+  Cfg := TestConfig(1);
+  Cfg.H1.MaxConnectionMs := 300;
+  StartServer(Cfg);
+  Fd := Connect(Srv.Port);
+  try
+    AssertEquals('within the age: keep-alive', Resp('small'), GetOnce(Fd, '/small'));
+    Sleep(400);
+    SendAll(Fd, Get('/small'));
+    Got := RecvUntil(Fd, '', Eof);
+    AssertTrue('the response after the age closes: ' + Got, Pos('connection: close' + CRLF, Got) > 0);
+    AssertTrue('its body', Pos(CRLF + CRLF + 'small', Got) > 0);
+    AssertTrue('then EOF', Eof);
+  finally
+    fpClose(Fd);
+  end;
+  StopServer;
+end;
+
 begin
   if ParamStr(1) = '--sd-child' then
   begin
@@ -1773,6 +1897,7 @@ begin
   RegisterTest(TTestSystemd);
   RegisterTest(TTestConnLimit);
   RegisterTest(TTestAccessLog);
+  RegisterTest(TTestProxyAndLifetime);
   RegisterTest(TTestMetrics);
   with TTestRunner.Create(nil) do
   try

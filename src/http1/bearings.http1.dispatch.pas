@@ -231,8 +231,12 @@ type
     ReqBodyBytes, RespBodyBytes: QWord;
     HookData: Pointer;               { the hooks' per-connection state (nil until they set it) }
     ConnId: QWord;
-    Peer: TSockAddrStorage;
+    Peer: TSockAddrStorage;          { the socket's peer; with TH1Config.ProxyProtocol, the address the PROXY header carried once it was read }
     OwnsTransport: Boolean;          { Finish / Abort free the transport object (default True) }
+    { TH1Config.MaxRequests and MaxConnectionMs (the connection's lifetime
+      caps) and the loop clock when the connection was set up }
+    MaxRequests: Integer;
+    MaxConnectionMs, StartMs: Int64;
     FErrorText: RawByteString;       { cold: text for ecConnText errors }
 
     { TIoTask.Create (AFd = -1 for a transport without a socket of its own); call Setup next. }
@@ -413,6 +417,9 @@ begin
   FPendingUpgrade.Active := False;
   FPendingUpgrade.Slot := nil;
   FRequestNo := 0;
+  MaxRequests := Cfg.MaxRequests;
+  MaxConnectionMs := Cfg.MaxConnectionMs;
+  StartMs := Loop.NowMs;
   if (Loop <> nil) and (Loop.Exchanges <> nil) then
     FPool := TExchangePool(Loop.Exchanges)
   else
@@ -861,6 +868,8 @@ var
   Msg: TParsedRequestHead;
   Head: TBytesView;
   Wants: TWants;
+  PR: TPollOpt;
+  ProxyPeer: TSockAddrStorage;
 begin
   { A new request head may be read. }
   if BodyTx then
@@ -880,9 +889,16 @@ begin
   if InFlight <> nil then
     Exit(prPending);
 
-
   AcquireExchange;
-  case Conn.PollReadHead(Ex.Head.Headers, Msg, Head, Wants, Err) of
+  PR := Conn.PollReadHead(Ex.Head.Headers, Msg, Head, Wants, Err);
+  if Conn.TakeProxyPeer(ProxyPeer) then
+  begin
+    { the PROXY header was read: the client's address from now on, for
+      this request too (AcquireExchange copied the socket's) }
+    Peer := ProxyPeer;
+    Ex.Head.Peer := ProxyPeer;
+  end;
+  case PR of
     poPending:
       Exit(prPending);
     poSome:
@@ -1148,6 +1164,10 @@ begin
   { fills the exchange's request head from the parsed head and creates
     the service call }
   Inc(FRequestNo);
+  { the lifetime caps: this response is the connection's last }
+  if ((MaxRequests > 0) and (FRequestNo >= LongWord(MaxRequests)))
+      or ((MaxConnectionMs > 0) and (Loop.NowMs - StartMs >= MaxConnectionMs)) then
+    Conn.DisableKeepAlive;
   Ex.FillHead(Msg, Head, FRequestNo);
   ReqHeadBytes := Head.Len;
   ReqBodyBytes := 0;

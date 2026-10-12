@@ -118,7 +118,8 @@ type
     h1peHeaderTransferEncodingUnexpected,  { Transfer-Encoding in HTTP/1.0 }
     h1peTooLarge,
     h1peStatus,
-    h1peInternal
+    h1peInternal,
+    h1peProxyProtocol                      { the connection's PROXY protocol header is missing or invalid (bearings.rt.proxyproto) }
   );
 
   { spsComplete: a whole head was parsed; spsPartial: the head is not
@@ -717,6 +718,7 @@ begin
     h1peTooLarge: Result := 'message head is too large';
     h1peStatus: Result := 'invalid HTTP status-code parsed';
     h1peInternal: Result := 'internal error in the HTTP/1 parser, please report';
+    h1peProxyProtocol: Result := 'invalid PROXY protocol header';
   end;
 end;
 

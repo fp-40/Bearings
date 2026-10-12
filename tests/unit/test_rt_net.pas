@@ -30,7 +30,8 @@ program test_rt_net;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   Classes, SysUtils, BaseUnix, Sockets, fpcunit, testregistry, consoletestrunner,
-  ctypes, bearings.rt.sys, bearings.rt.clock, bearings.rt.timer, bearings.rt.loop, bearings.rt.net, bearings.http1.encode;
+  ctypes, bearings.rt.sys, bearings.rt.clock, bearings.rt.timer, bearings.rt.loop, bearings.rt.net, bearings.rt.proxyproto,
+  bearings.http1.encode;
 
 type
   TTestNet = class(TTestCase)
@@ -983,9 +984,166 @@ begin
   end;
 end;
 
+{ ---- the PROXY protocol header (bearings.rt.proxyproto) ---- }
+
+type
+  TTestProxyProto = class(TTestCase)
+  private
+    Peer: TSockAddrStorage;
+    Used: SizeInt;
+    HasPeer: Boolean;
+    function Parse(const S: RawByteString): TProxyParse;
+    function PeerText: RawByteString;
+  published
+    procedure V1_tcp4_and_tcp6;
+    procedure V1_unknown_keeps_the_socket_peer;
+    procedure V1_errors;
+    procedure V1_byte_by_byte;
+    procedure V2_inet_and_inet6;
+    procedure V2_local_unspec_unix_and_tlvs;
+    procedure V2_errors;
+    procedure V2_byte_by_byte;
+    procedure Not_a_header;
+  end;
+
+const
+  V2_SIG = #13#10#13#10#0#13#10'QUIT'#10;
+
+function V2(Cmd, Fam: Byte; const Body: RawByteString): RawByteString;
+begin
+  Result := V2_SIG + AnsiChar($20 or Cmd) + AnsiChar(Fam) + AnsiChar(Length(Body) shr 8)
+    + AnsiChar(Length(Body) and $FF) + Body;
+end;
+
+function TTestProxyProto.Parse(const S: RawByteString): TProxyParse;
+begin
+  FillChar(Peer, SizeOf(Peer), 0);
+  Peer.Family := 99;                 { a marker: untouched means 99 }
+  Used := -1;
+  Result := ParseProxyHeader(PByte(PAnsiChar(S)), Length(S), Used, HasPeer, Peer);
+end;
+
+function TTestProxyProto.PeerText: RawByteString;
+begin
+  Result := IntToStr(Peer.Family) + ':' + SockAddrToStr(Peer) + ':' + IntToStr(SockAddrPort(Peer));
+end;
+
+procedure TTestProxyProto.V1_tcp4_and_tcp6;
+begin
+  AssertTrue(Parse('PROXY TCP4 10.1.2.3 10.0.0.1 5555 80'#13#10'GET /') = ppOk);
+  AssertEquals(38, Used);
+  AssertTrue(HasPeer);
+  AssertEquals('2:10.1.2.3:5555', PeerText);
+  AssertTrue(Parse('PROXY TCP6 2001:db8::1 ::1 65535 443'#13#10) = ppOk);
+  AssertEquals(38, Used);
+  AssertEquals('10:2001:db8::1:65535', PeerText);
+  { the longest TCP6 line (104 bytes; the specification's bound is 107) }
+  AssertTrue(Parse('PROXY TCP6 ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff 65535 65535'#13#10) = ppOk);
+  AssertEquals(104, Used);
+end;
+
+procedure TTestProxyProto.V1_unknown_keeps_the_socket_peer;
+begin
+  AssertTrue(Parse('PROXY UNKNOWN'#13#10) = ppOk);
+  AssertEquals(15, Used);
+  AssertFalse(HasPeer);
+  AssertEquals('untouched', 99, Peer.Family);
+  AssertTrue(Parse('PROXY UNKNOWN ffff:f...:ffff ffff:f...:ffff 65535 65535'#13#10) = ppOk);
+  AssertFalse(HasPeer);
+end;
+
+procedure TTestProxyProto.V1_errors;
+begin
+  AssertTrue('no CRLF in 107 bytes', Parse('PROXY TCP4 10.1.2.3 10.0.0.1 5555 80' + StringOfChar(' ', 80)) = ppError);
+  AssertTrue('bad protocol', Parse('PROXY UDP4 10.1.2.3 10.0.0.1 5555 80'#13#10) = ppError);
+  AssertTrue('family mismatch', Parse('PROXY TCP4 2001:db8::1 ::1 5555 80'#13#10) = ppError);
+  AssertTrue('bad address', Parse('PROXY TCP4 10.1.2 10.0.0.1 5555 80'#13#10) = ppError);
+  AssertTrue('bad port', Parse('PROXY TCP4 10.1.2.3 10.0.0.1 65536 80'#13#10) = ppError);
+  AssertTrue('port not a number', Parse('PROXY TCP4 10.1.2.3 10.0.0.1 5x 80'#13#10) = ppError);
+  AssertTrue('missing field', Parse('PROXY TCP4 10.1.2.3 10.0.0.1 5555'#13#10) = ppError);
+  AssertTrue('extra field', Parse('PROXY TCP4 10.1.2.3 10.0.0.1 5555 80 x'#13#10) = ppError);
+  AssertTrue('lowercase', Parse('proxy TCP4 10.1.2.3 10.0.0.1 5555 80'#13#10) = ppError);
+end;
+
+procedure TTestProxyProto.V1_byte_by_byte;
+var
+  S: RawByteString;
+  I: Integer;
+begin
+  S := 'PROXY TCP4 10.1.2.3 10.0.0.1 5555 80'#13#10;
+  for I := 0 to Length(S) - 1 do
+    AssertTrue('prefix of ' + IntToStr(I), Parse(Copy(S, 1, I)) = ppNeedMore);
+  AssertTrue(Parse(S) = ppOk);
+end;
+
+procedure TTestProxyProto.V2_inet_and_inet6;
+begin
+  AssertTrue(Parse(V2(1, $11, #10#1#2#3 + #10#0#0#1 + #$15#$B3 + #0#80) + 'GET') = ppOk);
+  AssertEquals(28, Used);
+  AssertTrue(HasPeer);
+  AssertEquals('2:10.1.2.3:5555', PeerText);
+  AssertTrue(Parse(V2(1, $21, #$20#$01#$0D#$B8#0#0#0#0#0#0#0#0#0#0#0#1 + StringOfChar(#0, 15) + #1
+    + #$FF#$FF + #1#$BB)) = ppOk);
+  AssertEquals(52, Used);
+  AssertEquals('10:2001:db8::1:65535', PeerText);
+end;
+
+procedure TTestProxyProto.V2_local_unspec_unix_and_tlvs;
+begin
+  AssertTrue('LOCAL', Parse(V2(0, 0, '')) = ppOk);
+  AssertEquals(16, Used);
+  AssertFalse(HasPeer);
+  AssertEquals(99, Peer.Family);
+  AssertTrue('LOCAL with a body', Parse(V2(0, $11, StringOfChar(#7, 12))) = ppOk);
+  AssertEquals(28, Used);
+  AssertFalse(HasPeer);
+  AssertTrue('unspec', Parse(V2(1, 0, '')) = ppOk);
+  AssertFalse(HasPeer);
+  AssertTrue('unix', Parse(V2(1, $31, StringOfChar('a', 216))) = ppOk);
+  AssertEquals(232, Used);
+  AssertFalse(HasPeer);
+  { TLVs after the address block are skipped }
+  AssertTrue('tlv', Parse(V2(1, $11, #10#1#2#3 + #10#0#0#1 + #$15#$B3 + #0#80 + #$20#0#5'hello')) = ppOk);
+  AssertEquals(36, Used);
+  AssertEquals('2:10.1.2.3:5555', PeerText);
+end;
+
+procedure TTestProxyProto.V2_errors;
+begin
+  AssertTrue('version 1 byte', Parse(V2_SIG + #$11#$11#0#12 + StringOfChar(#0, 12)) = ppError);
+  AssertTrue('command 2', Parse(V2_SIG + #$22#$11#0#12 + StringOfChar(#0, 12)) = ppError);
+  AssertTrue('inet body short', Parse(V2(1, $11, StringOfChar(#0, 11))) = ppError);
+  AssertTrue('inet6 body short', Parse(V2(1, $21, StringOfChar(#0, 35))) = ppError);
+  AssertTrue('family 4', Parse(V2(1, $41, '')) = ppError);
+  AssertTrue('too long', Parse(V2_SIG + #$21#$11#$FF#$FF) = ppError);
+end;
+
+procedure TTestProxyProto.V2_byte_by_byte;
+var
+  S: RawByteString;
+  I: Integer;
+begin
+  S := V2(1, $11, #10#1#2#3 + #10#0#0#1 + #$15#$B3 + #0#80);
+  for I := 0 to Length(S) - 1 do
+    AssertTrue('prefix of ' + IntToStr(I), Parse(Copy(S, 1, I)) = ppNeedMore);
+  AssertTrue(Parse(S) = ppOk);
+end;
+
+procedure TTestProxyProto.Not_a_header;
+begin
+  AssertTrue(Parse('') = ppNeedMore);
+  AssertTrue(Parse('GET / HTTP/1.1'#13#10) = ppError);
+  AssertTrue(Parse('P') = ppNeedMore);
+  AssertTrue(Parse('PR') = ppNeedMore);
+  AssertTrue(Parse('PROXZ') = ppError);
+  AssertTrue(Parse(#13) = ppNeedMore);
+  AssertTrue(Parse(#13#10#13#10#0#13#10'QUIX') = ppError);
+end;
+
 begin
   RegisterTest(TTestNet);
   RegisterTest(TTestSockAddrToStr);
+  RegisterTest(TTestProxyProto);
   with TTestRunner.Create(nil) do
   try
     Initialize;
