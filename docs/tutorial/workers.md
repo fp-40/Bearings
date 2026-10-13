@@ -162,7 +162,7 @@ end.
 ```
 
 ```sh
-$ build/tutorial/kv3 8080 &
+$ ./kv3 8080 &
 $ curl -s -X PUT --data-binary 'world from the body' http://127.0.0.1:8080/kv/hello
 stored
 $ curl -s http://127.0.0.1:8080/kv/hello

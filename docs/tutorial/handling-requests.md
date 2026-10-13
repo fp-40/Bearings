@@ -152,7 +152,7 @@ New here:
 Start the server with four loops:
 
 ```sh
-build/tutorial/kv1 8080 4
+./kv1 8080 4
 ```
 
 Store a value and read it back a few times:

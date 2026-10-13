@@ -172,7 +172,7 @@ instead of the `Proc` forms. The store is freed after the server, when no
 loop can touch it any more.
 
 ```sh
-$ build/tutorial/kv2 8080 &
+$ ./kv2 8080 &
 $ curl -s -X PUT 'http://127.0.0.1:8080/kv/hello?world'
 stored
 $ for i in 1 2 3 4; do curl -s http://127.0.0.1:8080/kv/hello; done

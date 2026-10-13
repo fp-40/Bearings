@@ -88,9 +88,8 @@ end.
 Compile and run it:
 
 ```sh
-fpc -Mobjfpc -Sh -O2 -Fusrc/rt -Fusrc/http -Fusrc/http1 -Fusrc/server -Fusrc/ws \
-    -FUbuild/tutorial/units -FEbuild/tutorial hello.pas
-build/tutorial/hello 8080
+fpc -Mobjfpc -Sh -O2 hello.pas
+./hello 8080
 ```
 
 In another terminal:

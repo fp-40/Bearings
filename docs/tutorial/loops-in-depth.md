@@ -116,7 +116,7 @@ end.
 ```
 
 ```sh
-$ build/tutorial/delay 8080 &
+$ ./delay 8080 &
 $ time curl -s http://127.0.0.1:8080/delay
 you waited one second
 
