@@ -52,6 +52,7 @@ begin
     P.Targets.AddUnit('bearings.rt.loop.pas');
     P.Targets.AddUnit('bearings.rt.workers.pas');
     P.Targets.AddUnit('bearings.rt.net.pas');
+    P.Targets.AddUnit('bearings.rt.proxyproto.pas');
     P.Targets.AddUnit('bearings.rt.stream.pas');
     P.Targets.AddUnit('bearings.rt.sd.pas');
     { http and http1 }
