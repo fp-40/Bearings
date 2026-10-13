@@ -7,11 +7,14 @@ here was taken from the code and the header comments of the units under
 `src/`; where a detail matters, the unit is named so you can read the
 header comment, which is written for the same audience as this guide.
 
-Five example programs under `examples/` accompany it: `hello.pas`
+Example programs under `examples/` accompany it: `hello.pas`
 (inline answer, static body), `worker.pas` (every request on a worker,
 request body read with `ReadAll`, echoed back), `stream.pas` (a streamed
-response and a file response), `ws_echo.pas` (a WebSocket echo server)
-and `ws_chat.pas` (a chat with rooms on the pub/sub topics).
+response and a file response), `ws_echo.pas` (a WebSocket echo server),
+`ws_chat.pas` (a chat with rooms on the pub/sub topics), and the four
+programs of the tutorial (`docs/index.md`): `kv1.pas`, `kv2.pas`,
+`kv3.pas` (a key-value store, per loop, shared, and on the worker pool)
+and `delay.pas` (a `TWakeTimer`).
 You can find the build command for them in `examples/README.md`.
 
 Contents:

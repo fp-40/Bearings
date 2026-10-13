@@ -375,9 +375,13 @@ keep-alive connection, as nginx's `keepalive_requests` and
   (configure, answer inline or on a worker, read request bodies, stream
   responses, upgrades, shutdown), with a reference table of every public
   type and routine and its threading rule.
-- `examples/`: five complete programs (`hello.pas`, `worker.pas`,
-  `stream.pas`, `ws_echo.pas`, `ws_chat.pas`) and the command that builds
-  them (`examples/README.md`).
+- `docs/index.md`: the tutorial: from a server that answers "Hello" to a
+  key-value store on the worker pool, a timer, streaming, WebSocket and
+  shutdown, one chapter at a time.
+- `examples/`: nine complete programs (`hello.pas`, `worker.pas`,
+  `stream.pas`, `kv1.pas`, `kv2.pas`, `kv3.pas`, `delay.pas`,
+  `ws_echo.pas`, `ws_chat.pas`) and the command that builds them
+  (`examples/README.md`).
 - The header comment of every unit under `src/` explains what the unit does.
 - `docs/design.md`: the design: the decisions and their reasons, the
   invariants a contributor must respect, and the deviations from what an
