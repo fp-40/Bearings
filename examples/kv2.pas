@@ -1,5 +1,5 @@
 { kv2 - the key-value store of kv1.pas with one store shared by every
-  loop under a critical section (docs/index.md, chapter 4).
+  loop under a critical section (docs/tutorial/shared-state.md).
 
   The store is one object for the server; the loops reach it through the
   factory method TApp.NewService. The lock is held only for the map

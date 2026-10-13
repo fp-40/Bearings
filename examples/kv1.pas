@@ -1,5 +1,5 @@
 { kv1 - a key-value store over HTTP with one store per event loop
-  (docs/index.md, chapter 3).
+  (docs/tutorial/handling-requests.md).
 
   GET /kv/<key> answers the value, PUT /kv/<key>?<value> stores the query
   string as the value. The map lives in the call object, and there is one

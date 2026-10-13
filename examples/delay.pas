@@ -1,5 +1,5 @@
 { delay - a request answered one second later on the loop thread, with no
-  worker, through TWakeTimer (docs/index.md, chapter 8).
+  worker, through TWakeTimer (docs/tutorial/loops-in-depth.md).
 
   GET /delay gets a call object of its own (the service creates one per
   request, because the timer is per-request state). Its first Poll arms

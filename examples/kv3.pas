@@ -1,5 +1,5 @@
 { kv3 - the key-value store of kv2.pas on the worker pool, with the value
-  read from the request body (docs/index.md, chapter 5).
+  read from the request body (docs/tutorial/workers.md).
 
   Every request is handed to a worker thread (TOffloadCall,
   TBlockingHandler). PUT /kv/<key> reads the body with ReadAll (a blocking

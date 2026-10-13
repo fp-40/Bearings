@@ -375,7 +375,8 @@ keep-alive connection, as nginx's `keepalive_requests` and
   (configure, answer inline or on a worker, read request bodies, stream
   responses, upgrades, shutdown), with a reference table of every public
   type and routine and its threading rule.
-- `docs/index.md`: the tutorial: from a server that answers "Hello" to a
+- `docs/index.md`: the tutorial (one file per chapter under
+  `docs/tutorial/`): from a server that answers "Hello" to a
   key-value store on the worker pool, a timer, streaming, WebSocket and
   shutdown, one chapter at a time.
 - `examples/`: nine complete programs (`hello.pas`, `worker.pas`,
