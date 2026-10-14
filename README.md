@@ -20,10 +20,10 @@ The tests and benchmarks also use Python 3, Rust/cargo (the conformance harness 
 
 ## Documentation
 
-- `docs/`: from a server that answers "Hello" to a key-value store on the worker pool, a timer, streaming, WebSocket and shutdown.
-- `docs/api/`: the API guide, organized by what a program does.
-- `examples/`: complete and commented; four of them are the ones the tutorial writes.
-- `docs/design/`: the design decisions and their reasons.
+- [`docs/`](docs/index.md): from a server that answers "Hello" to a key-value store on the worker pool, a timer, streaming, WebSocket and shutdown.
+- [`docs/api/`](docs/api/index.md): the API guide, organized by what a program does.
+- [`examples/`](examples/README.md): complete and commented; four of them are the ones the tutorial writes.
+- [`docs/design/`](docs/design/index.md): the design decisions and their reasons.
 
 The header comment of every unit under `src/` also explains what the unit does.
 
@@ -33,14 +33,18 @@ There is no build step for the library itself: programs compile its units
 with `fpc -Mobjfpc -Sh -Fusrc/rt -Fusrc/http -Fusrc/http1 -Fusrc/server -Fusrc/ws`.
 Build output goes under `build/` (ignored by git).
 
-- `examples/README.md`: the command that builds the four example programs into `build/examples/`.
-- `tools/get-tools.sh`: fetches valgrind, wrk and wrk2 into `build/tools/`.
-- `tests/unit/run_all.sh`: every unit suite (also under heaptrc and valgrind drd), the worker stress test, the echo test under valgrind, the split fuzz and the hot-path assembler check (`tools/check-hot-asm.sh`, which fails when a routine of the request path got an implicit exception frame). `TARGET=aarch64 tests/unit/run_all.sh` cross-compiles the unit suites for ARM64 and runs them under qemu (`docs/design/arm64.md`).
-- `tools/get-cross-aarch64.sh`: builds the ARM64 cross compiler into `build/tools/` (`docs/design/arm64.md`).
-- `tools/install-package.sh`: installs the units as an FPC package, so that programs compile without `-Fu` (section "Installing as a package").
-- `conformance/pascal-server/gate.sh`: the wire conformance cases (`conformance/cases`) against the Pascal conformance server; the runner, the hyper reference server and the differential fuzzer (`fuzz-diff`) are in the Cargo workspace `conformance/`.
-- `conformance/autobahn/run.sh`: the Autobahn WebSocket test suite (Docker) against `examples/ws_echo.pas`; run by hand.
-- `bench/`: the throughput benchmarks against hyper (`bench/run_gate.sh`, `bench/plaintext.pas`), the offload cost (`bench/run_offload.sh`), micro-benchmarks (`bench/bench_dispatch.pas`) and the WebSocket echo benchmark client (`bench/ws_bench.pas`).
+- [`examples/README.md`](examples/README.md): the command that builds the four example programs into `build/examples/`.
+- [`tools/get-tools.sh`](tools/get-tools.sh): fetches valgrind, wrk and wrk2 into `build/tools/`.
+- [`tests/unit/run_all.sh`](tests/unit/run_all.sh): every unit suite (also under heaptrc and valgrind drd), the worker stress test, the echo test under valgrind, the split fuzz and the hot-path assembler check ([`tools/check-hot-asm.sh`](tools/check-hot-asm.sh), which fails when a routine of the request path got an implicit exception frame). `TARGET=aarch64 tests/unit/run_all.sh` cross-compiles the unit suites for ARM64 and runs them under qemu (`docs/design/arm64.md`).
+- [`tools/get-cross-aarch64.sh`](tools/get-cross-aarch64.sh): builds the ARM64 cross compiler into `build/tools/` (`docs/design/arm64.md`).
+- [`tools/install-package.sh`](tools/install-package.sh): installs the units as an FPC package, so that programs compile without `-Fu` (section "Installing as a package").
+- [`conformance/pascal-server/gate.sh`](conformance/pascal-server/gate.sh): the wire conformance cases (`conformance/cases`) against the Pascal conformance server; the runner, the hyper reference server and the differential fuzzer (`fuzz-diff`) are in the Cargo workspace `conformance/`.
+- [`conformance/autobahn/run.sh`](conformance/autobahn/run.sh): the Autobahn WebSocket test suite (Docker) against `examples/ws_echo.pas`; run by hand.
+- `bench/`:
+  - the throughput benchmarks against hyper ([`bench/run_gate.sh`](bench/run_gate.sh) and [`bench/plaintext.pas`](bench/plaintext.pas))
+  - the offload cost ([`bench/run_offload.sh`](bench/run_offload.sh)),
+  - micro-benchmarks ([`bench/bench_dispatch.pas`](bench/bench_dispatch.pas)), and
+  - the WebSocket echo benchmark client ([`bench/ws_bench.pas`](bench/ws_bench.pas)).
 
 ## Installing as a package
 
