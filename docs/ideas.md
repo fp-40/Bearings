@@ -12,7 +12,7 @@
 
 1. Rebalanceo después del accept. Envoy tiene un "exact connection balancer": el
 loop que acepta pasa el socket al loop con menos conexiones. Eso ataca
-directamente un riesgo que docs/design.md sección 11 ya lista: SO_REUSEPORT
+directamente un riesgo que docs/design/limits.md ya lista: SO_REUSEPORT
 reparte por hash, no por carga. Seastar hace lo contrario con
 SO_ATTACH_REUSEPORT_CBPF: un filtro que manda cada conexión al loop de la CPU
 donde llegó la interrupción de red, lo que además mantiene la localidad de

@@ -95,4 +95,4 @@ $ curl -i http://127.0.0.1:8080/file      # the file, with its Content-Length
 
 A streaming producer that lives on the loop thread is better written as a
 `TBodySource`, a class the connection polls for the next frame only while
-the socket can take more (`docs/api.md`, section 5).
+the socket can take more ([API guide](api/response-bodies.md), section 5).

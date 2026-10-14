@@ -45,13 +45,13 @@ still known behind the proxy.
 - The path for a request answered on the loop thread allocates nothing
   and touches no atomic instruction. On the plaintext benchmark the library
   runs at 0.85 to 0.98 of hyper, the Rust HTTP library
-  (`docs/perf-report.md`).
+  (`bench/run_gate.sh` runs the comparison).
 - A connection is accepted by one loop and stays there, and every queue
   in the library is bounded: a slow client slows its producer down instead
   of making the server buffer everything.
 - There is no build step and no dependency beyond the Free Pascal RTL. A
   program puts five directories on its unit path and compiles.
-- Every public routine has a documented threading rule (`docs/api.md`,
+- Every public routine has a documented threading rule ([API guide](api/reference.md),
   section 14), and a build with assertions checks the rules at run time.
 
 ## When not to use Bearings
@@ -61,16 +61,16 @@ still known behind the proxy.
   the right choice.
 - You want a web framework. Bearings has no router, no templates and no
   sessions. It is the layer a framework would be built on.
-- Your program runs on Windows, macOS or BSD. The library calls Linux
-  system calls directly.
 - Your handlers are CPU-bound. The worker pool keeps blocking code off
   the loops, but a server whose work is long computation is better served
   by a thread per CPU and a plain blocking socket library.
 
 ## Getting help
 
-`docs/api.md` is the API guide, organized by what a program does.
-`docs/design.md` explains the decisions behind the library and the
-invariants a contributor must respect. The header comment of every unit
-under `src/` describes that unit. The programs under `examples/` are complete
-and commented; four of them are the ones this tutorial writes.
+`docs/api/` is the API guide, organized by what a program does.
+`docs/design/` explains the decisions behind the library and the
+invariants a contributor must respect.
+
+The header comment of every unit under `src/` describes that unit.
+
+The programs under `examples/` are complete and commented; four of them are the ones the tutorial writes.

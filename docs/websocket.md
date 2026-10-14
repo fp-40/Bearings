@@ -8,8 +8,8 @@ connection mode `cmWithUpgrades`, which `ProductionServerConfig` sets.
 ## Echo
 
 The service's call sees `Ex.WantsUpgrade`, checks the handshake and
-accepts it with a handler (from `README.md`; `examples/ws_echo.pas` is the
-full program, with backpressure handling):
+accepts it with a handler (`examples/ws_echo.pas` is the full program,
+with backpressure handling):
 
 ```pascal
 uses ..., bearings.ws.frame, bearings.ws.handshake, bearings.ws.conn;

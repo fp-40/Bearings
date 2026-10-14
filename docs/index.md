@@ -1,15 +1,14 @@
-# Bearings tutorial
+# Bearings documentation
 
-- [Overview](tutorial/overview.md)
-
-1. [Setup](tutorial/setup.md)
-2. [Hello Bearings](tutorial/hello-bearings.md)
-3. [Handling requests](tutorial/handling-requests.md)
-4. [Shared state](tutorial/shared-state.md)
-5. [Blocking code: the worker pool](tutorial/workers.md)
-6. [Request bodies](tutorial/request-bodies.md)
-7. [Response bodies](tutorial/response-bodies.md)
-8. [Loops in depth](tutorial/loops-in-depth.md)
-9. [WebSocket](tutorial/websocket.md)
-10. [Graceful shutdown](tutorial/shutdown.md)
-11. [Next steps](tutorial/next-steps.md)
+1. [Overview](overview.md)
+2. [Setup](setup.md)
+3. [Hello Bearings](hello-bearings.md)
+4. [Handling requests](handling-requests.md)
+5. [Shared state](shared-state.md)
+6. [Blocking code: the worker pool](workers.md)
+7. [Request bodies](request-bodies.md)
+8. [Response bodies](response-bodies.md)
+9. [Loops in depth](loops-in-depth.md)
+10. [WebSocket](websocket.md)
+11. [Graceful shutdown](shutdown.md)
+12. [Next steps](next-steps.md)

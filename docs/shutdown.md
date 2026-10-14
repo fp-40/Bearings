@@ -34,5 +34,5 @@ accept queue instead of being refused. With `Type=notify`, `Start` sends
 `READY=1` once every listener is open, and with `WatchdogSec=` the server
 sends a heartbeat every half interval, but only while every event loop is
 making progress: a loop stuck in a handler stops the heartbeat and systemd
-restarts the service. `README.md`, section "Running under systemd", has
+restarts the service. The [API guide](api/server.md), section 2, "systemd", has
 the sample units.

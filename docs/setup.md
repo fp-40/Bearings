@@ -1,7 +1,7 @@
 # Setup
 
 You need Free Pascal 3.2.2 on Linux x86_64 (an ARM64 build exists but has
-only run under emulation; see `README.md`, section "ARM64"). Check the
+only run under emulation; see [ARM64](design/arm64.md)). Check the
 compiler:
 
 ```sh
