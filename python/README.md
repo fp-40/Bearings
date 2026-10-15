@@ -1,4 +1,4 @@
-# pybearings
+# pyBearings
 
 [Bearings](../README.md), the Free Pascal HTTP/1.1 server, as a WSGI server for Python. Linux only (x86_64 and ARM64); free-threaded Python works.
 
@@ -25,10 +25,8 @@ uv run pytest
 
 ## Wheels
 
-`uv build --wheel` builds the wheel for this machine's CPU
-(`manylinux_2_34_x86_64` here). For ARM64, give it the cross compiler of
-`tools/get-cross-aarch64.sh`; the wheel is tagged for the CPU that compiler
-targets:
+`uv build --wheel` builds the wheel for this machine's CPU (`manylinux_2_34_x86_64` here).
+For ARM64, give it the cross compiler of `tools/get-cross-aarch64.sh`; the wheel is tagged for the CPU that compiler targets:
 
 ```sh
 PYBEARINGS_FPC=../build/tools/bin/fpc-aarch64 uv build --wheel   # manylinux_2_34_aarch64

@@ -24,7 +24,8 @@ def _address(host: str) -> str:
         return host
     except ValueError:
         pass
-    return socket.getaddrinfo(host, None, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)[0][4][0]
+    # an AF_INET or AF_INET6 sockaddr: its first item is the address, a str
+    return str(socket.getaddrinfo(host, None, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)[0][4][0])
 
 
 def _error(message: str) -> OSError:

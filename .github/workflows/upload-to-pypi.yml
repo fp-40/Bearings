@@ -1,0 +1,55 @@
+name: Upload to PyPI
+
+on:
+  # Triggers the workflow when a release is created
+  release:
+    types: [released]
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: validate
+    strategy:
+      matrix:
+        python: ['3.14t', '3.15t']
+      fail-fast: false
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental || false }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: "Installs dependencies"
+        run: cd python && uv sync --group dev --python ${{ matrix.python }}
+
+      - name: "Lint"
+        run: cd python && make lint
+
+      - name: "Test"
+        run: cd python && make test
+
+  upload:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/bearings
+    permissions:
+      # Required for PyPI Trusted Publishing
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: "Builds the package"
+        run: cd python && uv build
+
+      - name: "Uploads to PyPI"
+        run: cd python && uv publish --trusted-publishing always

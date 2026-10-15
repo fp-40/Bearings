@@ -247,7 +247,7 @@ class Response:
     def _send_file(self, result: t.Any) -> bool:
         """Send a file body with sendfile(2): a body with a `filelike` that
         is a regular file (`FileWrapper`, and wsgiref's and Proper's)."""
-        filelike = getattr(result, "filelike", None)
+        filelike: t.Any = getattr(result, "filelike", None)
         fileno = getattr(filelike, "fileno", None)
         if fileno is None:
             return False
@@ -299,7 +299,7 @@ class WsgiHandler:
 
     def listening_on(self, port: int) -> None:
         """The port the server listens on, once it does (`SERVER_PORT`)."""
-        self._base = {
+        self._base: dict[str, t.Any] = {
             "SCRIPT_NAME": "",
             "SERVER_NAME": self.unix_path or self.host,
             "SERVER_PORT": "" if self.unix_path else str(port),
