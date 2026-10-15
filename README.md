@@ -67,7 +67,7 @@ Re-run the script after changing the library: the installed units are a copy. `f
 
 ## Other languages
 
-`src/capi/` makes the server a C library, `libbearings.so`: `bearings.capi.pas` holds the routines and explains the model, `libbearings.pas` exports them, and `bearings.h` declares them for C. Every request runs a callback on the worker pool. With a WebSocket path, the server also accepts WebSockets there, checks their Origin, and hands their events to a second callback, also on the worker pool; the topics of `bearings.ws.topics` are reached by the connection's id.
+`src/capi/` makes the server a C library, `libbearings.so` ([API guide, section 15](docs/api/capi.md)): `bearings.capi.pas` holds the routines and explains the model, `libbearings.pas` exports them, and `bearings.h` declares them for C. Every request runs a callback on the worker pool. With a WebSocket path, the server also accepts WebSockets there, checks their Origin, and hands their events to a second callback, also on the worker pool; the topics of `bearings.ws.topics` are reached by the connection's id.
 
 `python/` is the Python package built on it, `pybearings` (imported as `bearings`): a WSGI server. Its README has the details.
 

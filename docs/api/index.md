@@ -31,3 +31,4 @@ Contents:
 12. [Debug build flags](debug.md)
 13. [Performance rules](performance.md)
 14. [Reference tables](reference.md)
+15. [The C interface](capi.md)

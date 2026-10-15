@@ -11,7 +11,8 @@
 # test_ws_frame, test_ws_handshake, test_ws_conn and test_ws_echo cover
 # WebSocket (src/ws; test_ws_echo uses real sockets, its TTestWsWorker and
 # TTestWsTopics suites also run under drd; test_ws_conn and
-# test_ws_echo also run with heaptrc);
+# test_ws_echo also run with heaptrc); test_capi covers the C interface
+# (src/capi; real sockets; also run with heaptrc);
 # test_workers is the
 # S7 suite, also run under
 # valgrind --tool=drd; the S4, S5 and S7 suites also run once more
@@ -61,13 +62,13 @@ esac
 mkdir -p "$OUT"
 # absolute: the drd runs cd into $OUT/drd (a relative OUT_DIR broke their paths)
 OUT=$(cd "$OUT" && pwd)
-FU="-Fu$ROOT/src/rt -Fu$ROOT/src/http -Fu$ROOT/src/http1 -Fu$ROOT/src/server -Fu$ROOT/src/ws -Fu$ROOT/tests/support -Fu$ROOT/tests/unit"
+FU="-Fu$ROOT/src/rt -Fu$ROOT/src/http -Fu$ROOT/src/http1 -Fu$ROOT/src/server -Fu$ROOT/src/ws -Fu$ROOT/src/capi -Fu$ROOT/tests/support -Fu$ROOT/tests/unit"
 FAIL=0
 TOTAL=0
 for T in test_parser test_codec test_role test_headers_validate \
     test_rt_sys test_rt_timer test_rt_loop test_rt_net test_rt_readbuf test_h1_io \
     test_h1_conn test_body_chan test_exchange test_h1_dispatch test_workers test_server \
-    test_server_ops test_ws_frame test_ws_handshake test_ws_conn test_ws_echo; do
+    test_server_ops test_ws_frame test_ws_handshake test_ws_conn test_ws_echo test_capi; do
   # test_h1_dispatch: -dWD_DEBUG, in its own unit directory (the define
   # changes bearings.http1.dispatch's fields)
   D=$OUT
@@ -97,7 +98,7 @@ echo "unit tests run: $TOTAL"
 HT="$OUT/heaptrc"
 mkdir -p "$HT"
 for T in test_h1_conn test_body_chan test_exchange test_h1_dispatch test_workers test_server \
-    test_server_ops test_ws_conn test_ws_echo; do
+    test_server_ops test_ws_conn test_ws_echo test_capi; do
   XD=
   if [ "$T" = test_h1_dispatch ]; then XD="-dWD_DEBUG -dWD_STALL"; fi
   mkdir -p "$HT/u-$T"
