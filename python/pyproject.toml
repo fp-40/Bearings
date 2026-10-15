@@ -156,6 +156,3 @@ no-lines-before = ["local-folder"]
 relative-imports-order = "furthest-to-closest"
 # Use two line after imports.
 lines-after-imports = 2
-
-[tool.uv.sources]
-pybearings = { path = "../fp40/Bearings/python", editable = true }
