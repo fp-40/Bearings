@@ -63,7 +63,8 @@ exchange:
   only when the response is chunked, the client announced it accepts them
   (`TE: trailers`), and the response head listed their names in a
   `Trailer` header.
-- `AbortStream(Msg)` ends the body with an error: the chunked encoding is
+- `AbortStream(Msg)` ends the body with an error: what was written before
+  it (the head and the earlier frames) is flushed, the chunked encoding is
   left without its last chunk, so the client sees an incomplete body, and
   the connection closes. `Msg` becomes the body error text
   (`SetBodyErrorText`) that the connection reports when it closes.

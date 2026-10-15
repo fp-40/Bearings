@@ -160,6 +160,9 @@ type
     FList: PConnList;
     FPrevConn, FNextConn: TH1Dispatcher;
     FDone: Boolean;                  { DropAll ran (from Finish, Abort or Destroy) }
+    { the response's body source failed: what was written before it is
+      flushed, then the connection fails (PollWrite) }
+    FBodyFailed: Boolean;
     {$ifdef WD_DEBUG}
     FDbgReads, FDbgWrites: QWord;
     FDbgCallPending, FDbgSourcePending, FDbgChanPending: Boolean;
@@ -953,7 +956,19 @@ begin
     head with the body length, then the body frames, then ends the body. }
   while True do
   begin
-    if IsClosing then
+    if FBodyFailed then
+    begin
+      { the head and the frames written before the body failed go out
+        first, so the client sees a truncated body; then the connection
+        fails. hyper skips this flush: what it buffered in the same poll
+        as the error is never sent (docs/design/deviations.md). }
+      Result := PollFlush(Err);
+      if Result <> prOk then
+        Exit;
+      Err := NewUserBody;
+      Exit(prErr);
+    end
+    else if IsClosing then
       Exit(prOk)
     else if (BodyRx.Kind = obNone) and Conn.CanWriteHead and (InFlight <> nil) then
     begin
@@ -1022,11 +1037,12 @@ begin
           end;
         fpError:
           begin
-            { the body source failed: the connection fails (the client sees
-              a truncated body, which it can detect from the framing) }
+            { the body source failed: the connection fails once what was
+              written is flushed (the client sees a truncated body, which
+              it can detect from the framing) }
             SetBodyError(Err);
             ClearBodyRx;
-            Exit(prErr);
+            FBodyFailed := True;
           end;
         fpData:
           if BodyRx.IsEndStream then

@@ -211,6 +211,7 @@ type
     procedure Body_framing_error_outcome_io;
     procedure Body_socket_error_outcome_io;
     procedure Stream_body_error_is_user;
+    procedure Stream_body_error_flushes_what_was_written;
     procedure Http10_closes;
     procedure Write_error_ends_connection;
     procedure Pending_call_woken_by_timer;
@@ -1307,8 +1308,7 @@ var
   Src: TScriptSource;
 begin
   { 'w': a Pending with a wake between the data and the error, so the head
-    and the chunk are flushed first (an error propagated by poll_write
-    skips the flush: data buffered in the same poll is never sent) }
+    and the chunk are flushed before the error comes }
   Src := TScriptSource.Create(['d:abc', 'w', 'e']);
   try
     FSvc.Stream := Src;
@@ -1319,6 +1319,31 @@ begin
     AssertTrue('outcome user', FObs.Outcome = coUser);
     AssertTrue('chunked left open', Copy(FIo.Written, Length(FIo.Written) - 4, 5) <> '0' + CRLF + CRLF);
     AssertTrue('data sent', Pos('3' + CRLF + 'abc' + CRLF, FIo.Written) > 0);
+    AssertEquals('no shutdown', 0, FIo.ShutdownCalls);
+    AssertEquals('source dropped once', 1, Src.DoneCalls);
+  finally
+    Src.Free;
+  end;
+end;
+
+procedure TTestDispatchBehavior.Stream_body_error_flushes_what_was_written;
+var
+  Src: TScriptSource;
+begin
+  { the error comes in the same poll as the data: the head and the chunk,
+    still in the write buffer, are flushed before the connection fails
+    (hyper never sends them: docs/design/deviations.md) }
+  Src := TScriptSource.Create(['d:abc', 'd:de', 'e']);
+  try
+    FSvc.Stream := Src;
+    FIo.AddRead(GET_REQ);
+    Start;
+    Drive;
+    AssertTrue('done', Done);
+    AssertTrue('outcome user', FObs.Outcome = coUser);
+    AssertTrue('the head sent', Pos('HTTP/1.1 200 OK', FIo.Written) = 1);
+    AssertTrue('the data sent', Pos('3' + CRLF + 'abc' + CRLF + '2' + CRLF + 'de' + CRLF, FIo.Written) > 0);
+    AssertTrue('chunked left open', Copy(FIo.Written, Length(FIo.Written) - 4, 5) <> '0' + CRLF + CRLF);
     AssertEquals('no shutdown', 0, FIo.ShutdownCalls);
     AssertEquals('source dropped once', 1, Src.DoneCalls);
   finally
