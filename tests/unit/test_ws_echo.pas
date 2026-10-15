@@ -205,6 +205,7 @@ type
     procedure Slow_subscriber_drops_messages;
     procedure Slow_subscriber_aborted_with_CloseOnBackpressure;
     procedure Publish_from_a_plain_thread;
+    procedure First_subscriber_of_a_loop_gets_the_next_publish;
     procedure Invalid_patterns_and_topics;
   end;
 
@@ -238,8 +239,8 @@ begin
 end;
 
 { 'sub P', 'unsub P', 'pub T text', 'pubx T text' (everyone but the
-  sender), 'pubbig T N' (N bytes, binary), 'pubframe T text'; the answer
-  or '' }
+  sender), 'pubbig T N' (N bytes, binary), 'pubframe T text', 'subpub T
+  text' (subscribe to T, then publish to it at once); the answer or '' }
 function TopicCommand(WS: TWebSocket; const Msg: RawByteString): RawByteString;
 var
   Cmd, A, B: RawByteString;
@@ -277,6 +278,11 @@ begin
     Topics.PublishBinary(A, StringOfChar('x', StrToInt(B)))
   else if Cmd = 'pubframe' then
     Topics.PublishFrame(A, WsTextFrame(B))
+  else if Cmd = 'subpub' then
+  begin
+    Topics.Subscribe(WS, A);
+    Topics.Publish(A, B);
+  end
   else
     Result := 'unknown';
 end;
@@ -1684,6 +1690,37 @@ begin
   end;
   WaitFreed;
   AssertEquals(0, TopicDrops);
+end;
+
+procedure TTestWsTopics.First_subscriber_of_a_loop_gets_the_next_publish;
+var
+  C: TClient;
+  I, N: Integer;
+begin
+  { From a worker handler the subscribe is posted to the loop, and the
+    loop has no table yet (a fresh server and registry each time): the
+    publish made right after it must still reach the new subscriber. }
+  N := 20 * IterPct div 100;
+  if N < 2 then
+    N := 2;
+  for I := 1 to N do
+  begin
+    StartServer(2, 2);
+    C := Join(Srv.Port, '/topics-worker');
+    try
+      C.SendAll(CFrame(WS_OP_TEXT, 'subpub fresh hello'));
+      Expect(C, 'hello', 'the new subscriber, round ' + IntToStr(I));
+      CloseAll([C]);
+    finally
+      C.Free;
+    end;
+    WaitFreed;
+    Srv.Stop(1000);
+    Srv.Wait;
+    FreeAndNil(Srv);
+    FreeAndNil(Topics);
+    Topics := TWsTopics.Create;
+  end;
 end;
 
 procedure TTestWsTopics.Invalid_patterns_and_topics;

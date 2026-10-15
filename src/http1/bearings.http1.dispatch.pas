@@ -959,12 +959,12 @@ begin
     if FBodyFailed then
     begin
       { the head and the frames written before the body failed go out
-        first, so the client sees a truncated body; then the connection
-        fails. hyper skips this flush: what it buffered in the same poll
-        as the error is never sent (docs/design/deviations.md). }
-      Result := PollFlush(Err);
-      if Result <> prOk then
-        Exit;
+        first (PollLoop's flush, when the socket takes them), so the client
+        sees a truncated body; then the connection fails. hyper skips this
+        flush: what it buffered in the same poll as the error is never sent
+        (docs/design/deviations.md). }
+      if Conn.HasBufferedWrite then
+        Exit(prPending);           { PollLoop flushes; CanWriteAgain brings us back }
       Err := NewUserBody;
       Exit(prErr);
     end
@@ -1134,7 +1134,8 @@ end;
 
 function TH1Dispatcher.CanWriteAgain: Boolean;
 begin
-  Result := (not IsClosing) and (BodyRx.Kind <> obNone) and Conn.CanWriteBody;
+  { a failed body source: once the flush is done, PollWrite fails the connection }
+  Result := (not IsClosing) and (FBodyFailed or ((BodyRx.Kind <> obNone) and Conn.CanWriteBody));
 end;
 
 function TH1Dispatcher.IsDone: Boolean;

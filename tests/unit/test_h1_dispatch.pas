@@ -212,6 +212,7 @@ type
     procedure Body_socket_error_outcome_io;
     procedure Stream_body_error_is_user;
     procedure Stream_body_error_flushes_what_was_written;
+    procedure Stream_body_error_waits_for_a_blocked_socket;
     procedure Http10_closes;
     procedure Write_error_ends_connection;
     procedure Pending_call_woken_by_timer;
@@ -1345,6 +1346,32 @@ begin
     AssertTrue('the data sent', Pos('3' + CRLF + 'abc' + CRLF + '2' + CRLF + 'de' + CRLF, FIo.Written) > 0);
     AssertTrue('chunked left open', Copy(FIo.Written, Length(FIo.Written) - 4, 5) <> '0' + CRLF + CRLF);
     AssertEquals('no shutdown', 0, FIo.ShutdownCalls);
+    AssertEquals('source dropped once', 1, Src.DoneCalls);
+  finally
+    Src.Free;
+  end;
+end;
+
+procedure TTestDispatchBehavior.Stream_body_error_waits_for_a_blocked_socket;
+var
+  Src: TScriptSource;
+begin
+  { the socket takes 5 bytes, then blocks: the connection waits for it to
+    be writable (no hot polling), writes the rest, and only then fails }
+  Src := TScriptSource.Create(['d:abc', 'd:de', 'e']);
+  try
+    FSvc.Stream := Src;
+    FIo.AddWriteLimit(5).AddWritePending;
+    FIo.StrictWriteBlock := True;
+    FIo.AddRead(GET_REQ);
+    Start;
+    Drive;
+    AssertTrue('done', Done);
+    AssertTrue('outcome user', FObs.Outcome = coUser);
+    AssertTrue('the head sent', Pos('HTTP/1.1 200 OK', FIo.Written) = 1);
+    AssertTrue('the data sent', Pos('3' + CRLF + 'abc' + CRLF + '2' + CRLF + 'de' + CRLF, FIo.Written) > 0);
+    AssertTrue('chunked left open', Copy(FIo.Written, Length(FIo.Written) - 4, 5) <> '0' + CRLF + CRLF);
+    AssertEquals('no write while blocked', 0, FIo.WritesWhileBlocked);
     AssertEquals('source dropped once', 1, Src.DoneCalls);
   finally
     Src.Free;

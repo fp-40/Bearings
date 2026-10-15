@@ -10,7 +10,9 @@
   TTestCapiWs: a WebSocket's events in order (open with the handshake, text,
   binary, close with the code and reason), sends by id, topics, the close
   from the server, the Origin rules, the ignored text, the WebSockets open,
-  and the calls with an id that no connection has.
+  and the calls with an id that no connection has; threads that send,
+  subscribe, publish and close by id while connections end under them
+  (also run under drd by run_all.sh, with WD_ITER=20).
   Run: test_capi --all --format=plain }
 program test_capi;
 
@@ -18,8 +20,9 @@ program test_capi;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
+  {$IFDEF WD_DRD}cmem,{$ENDIF}            { the C heap: drd sees the blocks (as test_ws_echo) }
   Classes, SysUtils, SyncObjs, fpcunit, testregistry, consoletestrunner, Sockets, BaseUnix,
-  ctypes, bearings.http.exchange, bearings.ws.frame, bearings.test.ws, bearings.capi;
+  ctypes, bearings.rt.sync, bearings.http.exchange, bearings.ws.frame, bearings.test.ws, bearings.capi;
 
 const
   CRLF = #13#10;
@@ -128,6 +131,8 @@ var
   Srv: Pointer;
 begin
   SetString(S, Data, Len);
+  { set before the first connection; drd cannot see that order through the socket }
+  HappensAfter(@TheServer);
   Srv := TheServer;
   case Event of
     BEARINGS_WS_OPENED:
@@ -343,6 +348,15 @@ type
     procedure Origins;
     procedure The_ignored_text;
     procedure Unknown_ids;
+    procedure Calls_by_id_while_connections_end;
+  end;
+
+  { sends, subscribes, publishes and closes by id, over and over }
+  THammer = class(TThread)
+  public
+    Srv: Pointer;
+    MaxId, Rounds, Seed: Integer;
+    procedure Execute; override;
   end;
 
 procedure TCapiCase.StartServer(WithWs: Boolean);
@@ -368,6 +382,7 @@ begin
   Srv := bearings_server_new(@Cfg, @OnRequest, WsCb, nil, @Err[0], SizeOf(Err));
   AssertTrue('started: ' + Err, Srv <> nil);
   TheServer := Srv;
+  HappensBefore(@TheServer);
   Port := bearings_server_port(Srv);
 end;
 
@@ -704,6 +719,73 @@ begin
   AssertEquals(BEARINGS_CANCELED, bearings_ws_subscribe(Srv, 999, 'a', 1));
   AssertEquals(BEARINGS_CANCELED, bearings_ws_unsubscribe(Srv, 999, 'a', 1));
   AssertEquals(0, Integer(bearings_ws_count(Srv)));
+end;
+
+procedure THammer.Execute;
+var
+  R, Id: Integer;
+  Msg: RawByteString;
+begin
+  Msg := 'x';
+  for R := 1 to Rounds do
+    for Id := 1 to MaxId do
+    begin
+      bearings_ws_send(Srv, Id, PByte(PAnsiChar(Msg)), 1);
+      bearings_ws_subscribe(Srv, Id, 't', 1);
+      bearings_ws_publish(Srv, 't', 1, PByte(PAnsiChar(Msg)), 1);
+      bearings_ws_unsubscribe(Srv, Id, 't', 1);
+      if (R + Id + Seed) mod 97 = 0 then
+        bearings_ws_close(Srv, Id, 1000, '');
+      bearings_ws_count(Srv);
+    end;
+end;
+
+procedure TTestCapiWs.Calls_by_id_while_connections_end;
+const
+  NC = 16;
+  NT = 4;
+var
+  C: array[0..NC - 1] of TWsClient;
+  H: array[0..NT - 1] of THammer;
+  I, Pct: Integer;
+begin
+  Pct := StrToIntDef(GetEnvironmentVariable('WD_ITER'), 100);
+  for I := 0 to NC - 1 do
+    C[I] := TWsClient.Create(Port, '/ws');
+  for I := 1 to 500 do
+    if bearings_ws_count(Srv) = NC then
+      Break
+    else
+      Sleep(10);
+  AssertEquals('all open', NC, Integer(bearings_ws_count(Srv)));
+  for I := 0 to NT - 1 do
+  begin
+    H[I] := THammer.Create(True);
+    H[I].Srv := Srv;
+    H[I].MaxId := NC + 4;           { and a few ids no connection has }
+    H[I].Rounds := 1 + 200 * Pct div 100;
+    H[I].Seed := I;
+    H[I].Start;
+  end;
+  { half of the clients vanish meanwhile }
+  for I := 0 to NC div 2 - 1 do
+  begin
+    Sleep(2);
+    FreeAndNil(C[I]);
+  end;
+  for I := 0 to NT - 1 do
+  begin
+    H[I].WaitFor;
+    H[I].Free;
+  end;
+  for I := NC div 2 to NC - 1 do
+    FreeAndNil(C[I]);
+  for I := 1 to 500 do
+    if bearings_ws_count(Srv) = 0 then
+      Break
+    else
+      Sleep(10);
+  AssertEquals('every connection ended', 0, Integer(bearings_ws_count(Srv)));
 end;
 
 procedure WriteFile;

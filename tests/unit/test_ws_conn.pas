@@ -18,7 +18,7 @@ program test_ws_conn;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   Classes, SysUtils, ctypes, fpcunit, testregistry, consoletestrunner, bearings.rt.sys,
-  bearings.rt.loop, bearings.rt.buf, bearings.rt.net, bearings.rt.stream, bearings.ws.frame,
+  bearings.rt.loop, bearings.rt.buf, bearings.rt.net, bearings.rt.stream, bearings.ws.frame, bearings.ws.topics,
   bearings.ws.conn, bearings.test.ws;
 
 type
@@ -110,6 +110,7 @@ type
     procedure Forced_abort_releases_everything;
     procedure Default_config_pings;
     procedure Frames_leave_together_at_the_next_run;
+    procedure Publishes_leave_in_one_write_per_connection;
     procedure Prepared_frames_queued_by_reference;
     procedure Mixed_queue_keeps_order_through_partial_writes;
     procedure Queued_frames_released_at_abort;
@@ -847,6 +848,61 @@ begin
   T.Eof := True;
   Send('');
   AssertFreed;
+end;
+
+procedure TTestWsConn.Publishes_leave_in_one_write_per_connection;
+var
+  Topics: TWsTopics;
+  T2: TMemTransport;
+  H2: TRecHandler;
+  U2: TUpgraded;
+  WS2: TWebSocket;
+  Calls1, Calls2, I: Integer;
+  Want, Got2, Pending2: RawByteString;
+begin
+  Open(Cfg0);
+  T2 := TMemTransport.Create;
+  H2 := TRecHandler.Create;
+  Topics := TWsTopics.Create;
+  try
+    U2 := TUpgraded.CreateFrom(L, T2, Default(TBytesView), nil, False);
+    WS2 := TWebSocket.Create(H2, Cfg0, False);
+    WS2.Start(U2);
+    Spin;
+    Topics.Subscribe(WS, 'room');
+    Topics.Subscribe(WS2, 'room');
+    Spin;
+    Frames;
+    T2.Outp := '';
+    Calls1 := T.WriteCalls;
+    Calls2 := T2.WriteCalls;
+    { ten publishes, one loop iteration: each subscriber's ten frames
+      leave in one write }
+    Want := '';
+    for I := 1 to 10 do
+    begin
+      Topics.Publish('room', 'm' + IntToStr(I));
+      Want := Want + '1:m' + IntToStr(I) + '|';
+    end;
+    Spin(1);
+    AssertEquals('one write for the first subscriber', Calls1 + 1, T.WriteCalls);
+    AssertEquals('one write for the second', Calls2 + 1, T2.WriteCalls);
+    AssertEquals(Want, Frames);
+    Pending2 := T2.Outp;
+    Got2 := ServerFramesLog(Pending2);
+    AssertEquals(Want, Got2);
+    { the end of both connections, before the registry goes }
+    T.Eof := True;
+    T2.Eof := True;
+    U.Wake;
+    U2.Wake;
+    Spin(4);
+    AssertFreed;
+  finally
+    Topics.Free;
+    T2.Free;
+    H2.Free;
+  end;
 end;
 
 procedure TTestWsConn.Prepared_frames_queued_by_reference;

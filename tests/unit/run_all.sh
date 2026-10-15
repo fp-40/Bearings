@@ -186,6 +186,26 @@ elif [ -x "$VG" ] || command -v "$VG" > /dev/null 2>&1; then
     fi
   done
 fi
+# The C interface (test_capi, real sockets) under drd: its registry of
+# WebSockets is used from threads that are not the server's (the host
+# program's), while the connections end on the workers.
+DC="$DR/capi"
+mkdir -p "$DC/u"
+# shellcheck disable=SC2086
+if ! fpc -Mobjfpc -Sh -O2 -gl -Cr -Co -Ct -Sa -dWD_DRD $FU -FU"$DC/u" -FE"$DC" \
+    "$ROOT/tests/unit/test_capi.pas" > "$DC/test_capi.build.log" 2>&1; then
+  echo "test_capi (drd): BUILD FAILED (see $DC/test_capi.build.log)"
+  FAIL=1
+elif [ -x "$VG" ] || command -v "$VG" > /dev/null 2>&1; then
+  if (cd "$DC" && WD_ITER=20 "$VG" --tool=drd --fair-sched=yes --suppressions="$ROOT/tools/drd.supp" \
+      ./test_capi --all --format=plain > "$DC/run.out" 2> "$DC/run.err"); then R=0; else R=$?; fi
+  DE=$(sed -n 's/.*ERROR SUMMARY: \([0-9]*\) errors.*/\1/p' "$DC/run.err" | tail -n 1)
+  DL=$(grep -m 1 -E 'Time:[0-9:.]+ N:[0-9]+ E:' "$DC/run.out" || echo '?')
+  echo "test_capi (drd): $DL (exit $R), drd errors: ${DE:-?}"
+  if [ "$R" -ne 0 ] || [ "${DE:-x}" != "0" ] || ! echo "$DL" | grep -q ' E:0 F:0 '; then
+    FAIL=1
+  fi
+fi
 # S7 fix round 5 (deviation S7-34): the end-to-end worker stress
 # (tests/unit/stress_workers.pas through TServer), natively and under drd;
 # STRESS_SEEDS (default 3) and STRESS_DRD_RUNS (default 1) set its size
