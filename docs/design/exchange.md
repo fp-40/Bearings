@@ -253,8 +253,11 @@ and payload in one string) that can be sent to many connections.
 arrives whole in one read goes to `OnText`/`OnBinary` straight from the read
 block; a fragmented message, or one split across reads, is joined in a
 reassembly buffer, bounded by `MaxMessage` (1009 above it). A send is
-written at once when nothing is queued (header and payload in one `writev`),
-else queued; the queue holds copied bytes and prepared frames by reference
+queued, never written at once: the next run of the connection writes the
+whole queue, so the frames a loop iteration sends to one connection (the
+messages of many publishes) leave in one system call instead of one each
+(broadcast fan-out went from about 0.27 to 4.7 million deliveries per second
+on one loop). The queue holds copied bytes and prepared frames by reference
 (frames of `WS_SHARE_MIN`, 1 KiB, or more; smaller ones are copied), at most
 `WS_MAX_IOV` segments per `writev`. Backpressure: a data send is refused with
 `wsFull` while `SendHighWater` or more bytes are queued (`OnWritable` follows

@@ -31,8 +31,10 @@ type
     Outp: RawByteString;
     Budget: Int64;                   { bytes the next writes may take; -1 = any }
     WriteErr: cint;
+    WriteCalls: Integer;             { Write and WriteV calls: the system calls a socket would make }
     ShutDown, Closed: Boolean;
     constructor Create;
+    function Take(Buf: PByte; Len: SizeInt): SizeInt;
     function Read(Buf: PByte; Len: SizeInt): SizeInt; override;
     function Write(Buf: PByte; Len: SizeInt): SizeInt; override;
     function WriteV(Iov: PSysIoVec; Count: Integer): SizeInt; override;
@@ -107,7 +109,7 @@ type
     procedure Server_shutdown_closes_with_1001;
     procedure Forced_abort_releases_everything;
     procedure Default_config_pings;
-    procedure Prepared_frame_written_at_once;
+    procedure Frames_leave_together_at_the_next_run;
     procedure Prepared_frames_queued_by_reference;
     procedure Mixed_queue_keeps_order_through_partial_writes;
     procedure Queued_frames_released_at_abort;
@@ -156,6 +158,12 @@ begin
 end;
 
 function TMemTransport.Write(Buf: PByte; Len: SizeInt): SizeInt;
+begin
+  Inc(WriteCalls);
+  Result := Take(Buf, Len);
+end;
+
+function TMemTransport.Take(Buf: PByte; Len: SizeInt): SizeInt;
 var
   S: RawByteString;
 begin
@@ -179,12 +187,13 @@ var
   I: Integer;
   R: SizeInt;
 begin
+  Inc(WriteCalls);
   Result := 0;
   for I := 0 to Count - 1 do
   begin
     if Iov[I].Len = 0 then
       Continue;
-    R := Write(Iov[I].Base, Iov[I].Len);
+    R := Take(Iov[I].Base, Iov[I].Len);
     if R < 0 then
     begin
       if Result = 0 then
@@ -818,17 +827,23 @@ begin
   AssertTrue('a ping comes well before the idle timeout', 2 * C.PingIntervalMs <= C.IdleTimeoutMs);
 end;
 
-procedure TTestWsConn.Prepared_frame_written_at_once;
+procedure TTestWsConn.Frames_leave_together_at_the_next_run;
 var
   F: TWsFrame;
+  Calls: Integer;
 begin
   Open(Cfg0);
   F := WsTextFrame('to everyone');
+  Calls := T.WriteCalls;
   AssertTrue(WS.SendFrame(F) = wsOk);
   AssertTrue(WS.SendFrame(F) = wsOk);
+  AssertTrue(WS.SendText('and this') = wsOk);
+  AssertEquals('queued, not written yet', Calls, T.WriteCalls);
+  AssertEquals('a small frame is copied: nothing kept', 1, StringRefCount(F));
+  Spin(1);
   AssertEquals(0, WS.Queued);
-  AssertEquals('nothing kept', 1, StringRefCount(F));
-  AssertEquals('1:to everyone|1:to everyone|', Frames);
+  AssertEquals('one write for the three', Calls + 1, T.WriteCalls);
+  AssertEquals('1:to everyone|1:to everyone|1:and this|', Frames);
   T.Eof := True;
   Send('');
   AssertFreed;
@@ -869,9 +884,10 @@ begin
   Open(Cfg0);
   A := WsBinaryFrame(Pattern(3000));
   B := WsBinaryFrame(Pattern(200));
-  { a partial direct write: the rest of A is queued by reference, from the middle }
+  { a partial write: the rest of A stays queued by reference, from the middle }
   T.Budget := 100;
   AssertTrue(WS.SendFrame(A) = wsOk);
+  Spin(1);
   AssertEquals(Length(A) - 100, WS.Queued);
   AssertTrue(WS.SendText('one') = wsOk);
   AssertTrue(WS.SendFrame(B) = wsOk);

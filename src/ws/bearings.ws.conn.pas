@@ -67,10 +67,14 @@
   instead of filling the server's memory. Reading resumes when a data send
   would be accepted again (fewer than SendHighWater bytes queued).
 
-  Sending. A frame is written to the socket at once when nothing is queued
-  (header and payload in one writev); what the socket does not take goes
-  to the output queue, which is written when the socket becomes writable.
-  The queue is a list of segments: copied bytes (kept together in one
+  Sending. A frame is never written at once: it goes to the output queue,
+  and the next run of the connection (Step, woken by the send) writes the
+  queue, with one writev for up to WS_MAX_IOV segments; what the socket
+  does not take is written when it becomes writable. So the frames a loop
+  iteration sends to one connection (for example, the messages of many
+  publishes) leave in one system call, not one each: 75 frames per call in
+  a broadcast benchmark, where writing each at once made one call per
+  frame. The queue is a list of segments: copied bytes (kept together in one
   buffer; consecutive copied frames form one segment) and prepared frames
   (TWsFrame, bearings.ws.frame) held by reference. A flush writes up to
   WS_MAX_IOV segments with one writev. A data send is refused with wsFull when SendHighWater or more
@@ -1062,12 +1066,14 @@ begin
   Result := FCloseSent or FEnded or FFinished or (FFailed and (Opcode <> WS_OP_CLOSE));
 end;
 
+{ A frame is queued, never written at once: the run of the connection
+  (Step) writes the whole queue with one writev. So the frames a loop
+  iteration sends to a connection (the messages of many publishes, for
+  example) leave together, instead of one system call each. }
 function TWebSocket.QueueFrame(Opcode: Byte; P: PByte; Len: SizeInt; Control: Boolean): TWsSendResult;
 var
   Hdr: array[0..WS_MAX_HEADER - 1] of Byte;
   H: Integer;
-  Iov: array[0..1] of TSysIoVec;
-  W, Total, Skip: SizeInt;
 begin
   if Refused(Opcode, Control) then
     Exit(wsClosed);
@@ -1077,49 +1083,18 @@ begin
     Exit(wsFull);
   end;
   H := WsEncodeHeader(@Hdr[0], True, Opcode, Len);
-  Total := H + Len;
-  W := 0;
-  if (FQueued = 0) and (FU.Transport <> nil) then
-  begin
-    { nothing queued: straight to the socket }
-    Iov[0].Base := @Hdr[0];
-    Iov[0].Len := H;
-    Iov[1].Base := P;
-    Iov[1].Len := Len;
-    if Len > 0 then
-      W := FU.Transport.WriteV(@Iov[0], 2)
-    else
-      W := FU.Transport.Write(@Hdr[0], H);
-    if W = -ESysEAGAIN then
-      W := 0
-    else if W < 0 then
-    begin
-      if not FInStep then
-        FU.Wake;
-      IoFailed('write', -W);
-      Exit(wsClosed);
-    end;
-  end;
-  if W < Total then
-  begin
-    { the rest is copied to the queue }
-    if W < H then
-    begin
-      PushCopy(@Hdr[W], H - W);
-      Skip := 0;
-    end
-    else
-      Skip := W - H;
-    PushCopy(P + Skip, Len - Skip);
-    if not FInStep then
-      FU.Wake;                       { flushed by Step when the socket is writable }
-  end;
+  PushCopy(@Hdr[0], H);
+  PushCopy(P, Len);
+  if not FInStep then
+    FU.Wake;                         { Step flushes the queue }
   Result := wsOk;
 end;
 
+{ the same for a prepared frame: copied when small, shared by reference
+  when it is WS_SHARE_MIN bytes or more }
 function TWebSocket.QueuePrepared(const F: TWsFrame; Control: Boolean): TWsSendResult;
 var
-  W, N: SizeInt;
+  N: SizeInt;
 begin
   if Refused(0, Control) then
     Exit(wsClosed);
@@ -1129,29 +1104,12 @@ begin
     Exit(wsFull);
   end;
   N := Length(F);
-  W := 0;
-  if (FQueued = 0) and (FU.Transport <> nil) then
-  begin
-    W := FU.Transport.Write(PByte(F), N);
-    if W = -ESysEAGAIN then
-      W := 0
-    else if W < 0 then
-    begin
-      if not FInStep then
-        FU.Wake;
-      IoFailed('write', -W);
-      Exit(wsClosed);
-    end;
-  end;
-  if W < N then
-  begin
-    if N - W < WS_SHARE_MIN then
-      PushCopy(PByte(F) + W, N - W)
-    else
-      PushShared(F, W);
-    if not FInStep then
-      FU.Wake;
-  end;
+  if N < WS_SHARE_MIN then
+    PushCopy(PByte(F), N)
+  else
+    PushShared(F, 0);
+  if not FInStep then
+    FU.Wake;                         { Step flushes the queue }
   Result := wsOk;
 end;
 
