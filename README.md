@@ -65,6 +65,12 @@ build/tools/bin/fpc-aarch64 -Mobjfpc -Sh hello.pas
 
 Re-run the script after changing the library: the installed units are a copy. `fpmake.pp` lists the units and the compiler options (`-O2`); the script adds the two directories fpmake needs (`--prefix`, and `--globalunitdir`, where the compiler's own units are, which fpmake needs to check the dependency on the RTL). `PREFIX` overrides `~/.fppkg`. The fpmake output stays in `units/` and `build/fpmake/` (ignored by git).
 
+## Other languages
+
+`src/capi/` makes the server a C library, `libbearings.so`: `bearings.capi.pas` holds the routines and explains the model, `libbearings.pas` exports them, and `bearings.h` declares them for C. Every request runs a callback on the worker pool. With a WebSocket path, the server also accepts WebSockets there, checks their Origin, and hands their events to a second callback, also on the worker pool; the topics of `bearings.ws.topics` are reached by the connection's id.
+
+`python/` is the Python package built on it, `pybearings` (imported as `bearings`): a WSGI server. Its README has the details.
+
 ## Version and license
 
 Version: `bearings.version.BEARINGS_VERSION` (0.1.0).

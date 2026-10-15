@@ -17,3 +17,8 @@ __pycache__/
 *.orig
 *.rej
 .DS_Store
+# python/: compiled by python/hatch_build.py
+/python/src/bearings/libbearings.so
+/python/src/bearings/bearings.h
+/python/.venv/
+/python/dist/
