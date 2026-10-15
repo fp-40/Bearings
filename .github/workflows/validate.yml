@@ -12,7 +12,7 @@ on:
 
 jobs:
   lint:
-    name: lint
+    name: validate
     runs-on: ubuntu-latest
 
     steps:
