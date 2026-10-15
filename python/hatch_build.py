@@ -5,12 +5,17 @@ machine). A wheel gets it from a directory of its own per CPU, so a wheel
 for another CPU leaves the editable install alone: `PYBEARINGS_FPC` names
 the compiler, for example the ARM64 cross compiler of
 tools/get-cross-aarch64.sh, and the wheel is tagged for the CPU that
-compiler targets (`fpc -iTP`).
+compiler targets (`fpc -iTP`), and for the newest glibc symbol version
+libbearings.so needs (`objdump -T`).
 
     PYBEARINGS_FPC=../build/tools/bin/fpc-aarch64 uv build --wheel
+
+The Pascal sources are in src/ of the repository, or in pascal/ of an
+unpacked sdist (force-include in pyproject.toml).
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,9 +24,6 @@ from pathlib import Path
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
-# the oldest glibc whose symbols libbearings.so uses (objdump -T), on
-# x86_64 and aarch64 alike
-MANYLINUX = "manylinux_2_34"
 UNITS = ("rt", "http", "http1", "server", "ws", "capi")
 
 # fpc -iTP -> the wheel's platform tag
@@ -29,6 +31,27 @@ CPUS = {
     "x86_64": "x86_64",
     "aarch64": "aarch64",
 }
+
+
+def manylinux(library: Path) -> str:
+    """The manylinux tag for `library`: the newest glibc symbol version it
+    needs, which is the oldest glibc that loads it."""
+    objdump = shutil.which("objdump")
+    if not objdump:
+        raise RuntimeError("tagging the pybearings wheel needs objdump (binutils)")
+
+    symbols = subprocess.run(
+        [objdump, "-T", str(library)], check=True, capture_output=True, text=True
+    ).stdout
+    versions = {
+        tuple(int(n) for n in v.split("."))
+        for v in re.findall(r"\bGLIBC_(\d+(?:\.\d+)+)\b", symbols)
+    }
+    if not versions:
+        raise RuntimeError(f"no glibc symbol in {library}: is it linked against glibc?")
+
+    major, minor = max(versions)[:2]
+    return f"manylinux_{major}_{minor}"
 
 
 class CustomBuildHook(BuildHookInterface):
@@ -46,8 +69,12 @@ class CustomBuildHook(BuildHookInterface):
         if cpu not in CPUS:
             raise RuntimeError(f"pybearings builds for {', '.join(CPUS)}, not {cpu}")
 
-        root = Path(self.root).parent  # the repository
-        src = root / "src"
+        if (Path(self.root) / "pascal").is_dir():  # an unpacked sdist
+            root = Path(self.root)
+            src = root / "pascal"
+        else:  # python/ of the repository
+            root = Path(self.root).parent
+            src = root / "src"
         if version == "editable":
             out = Path(self.root) / "src" / "bearings"  # imported from here
         else:
@@ -80,4 +107,4 @@ class CustomBuildHook(BuildHookInterface):
             build_data["force_include"][str(out / "bearings.h")] = "bearings/bearings.h"
 
         build_data["pure_python"] = False
-        build_data["tag"] = f"py3-none-{MANYLINUX}_{CPUS[cpu]}"
+        build_data["tag"] = f"py3-none-{manylinux(out / 'libbearings.so')}_{CPUS[cpu]}"

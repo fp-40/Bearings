@@ -30,7 +30,7 @@ mkdir -p "$OUT"
 rm -rf "$OUT/dist"
 (cd "$HERE" && PYBEARINGS_FPC="$FPC" uv build --wheel --out-dir "$OUT/dist" > "$OUT/build.log" 2>&1) \
   || { echo "test-aarch64: the build failed (see $OUT/build.log)"; exit 1; }
-WHEEL=$(ls "$OUT"/dist/pybearings-*-manylinux_2_34_aarch64.whl)
+WHEEL=$(ls "$OUT"/dist/pybearings-*-manylinux_*_aarch64.whl)
 UV_PYTHON_INSTALL_DIR=$OUT/pythons uv python install --no-bin "$PY" > "$OUT/python.log" 2>&1 \
   || { echo "test-aarch64: no $PY (see $OUT/python.log)"; exit 1; }
 # uv python find skips an interpreter of another CPU: the installed one

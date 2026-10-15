@@ -13,35 +13,33 @@ jobs:
 
   build:
     needs: validate
-    name: wheel ${{ matrix.runner }}
+    name: build ${{ matrix.runner }}
     strategy:
       matrix:
-        # x86_64 and aarch64; the hook tags each wheel for the CPU it built on
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        # x86_64 and aarch64: the hook tags each wheel for the CPU it built
+        # on, and for the newest glibc symbol libbearings.so needs
+        include:
+          # the sdist too, once: its wheel is built from it, which tests it
+          - runner: ubuntu-24.04
+            build: uv build
+          - runner: ubuntu-24.04-arm
+            build: uv build --wheel
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: ./.github/actions/setup
 
-      # Only the wheel: the sdist would hold python/ alone, without the
-      # Pascal sources in ../src that hatch_build.py compiles
-      - name: "Builds the wheel"
-        run: cd python && uv build --wheel
+      - name: "Builds the package"
+        run: cd python && ${{ matrix.build }}
 
-      # The wheel is tagged manylinux_2_34 (hatch_build.py): fail if the
-      # runner's glibc gave libbearings.so a newer symbol
-      - name: "Checks the glibc symbols"
-        run: |
-          newest=$(objdump -T build/python-$(uname -m)/libbearings.so \
-            | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
-          echo "newest symbol: $newest"
-          [ "$(printf '%s\nGLIBC_2.34\n' "$newest" | sort -V | tail -1)" = GLIBC_2.34 ]
+      - name: "Lists the files"
+        run: ls -l python/dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: wheel-${{ matrix.runner }}
-          path: python/dist/*.whl
+          name: dist-${{ matrix.runner }}
+          path: python/dist/*
 
   upload:
     needs: build
@@ -56,7 +54,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: wheel-*
+          pattern: dist-*
           path: dist
           merge-multiple: true
 
@@ -64,4 +62,4 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: "Uploads to PyPI"
-        run: uv publish --trusted-publishing always dist/*.whl
+        run: uv publish --trusted-publishing always dist/*
