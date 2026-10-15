@@ -26,8 +26,9 @@
     to do. A connection that is Closing cannot subscribe.
   - Subscribe and Unsubscribe on the connection's loop thread take effect
     at once. From another thread (a TWsWorkerHandler method) they are
-    posted to the loop and take effect shortly after; a publish in between
-    may miss the new subscriber. Same as uWebSockets.
+    posted to the loop and take effect shortly after, but in order: a
+    publish made after Subscribe returned reaches the new subscriber, and
+    one made after Unsubscribe returned does not.
   - Messages published by one thread reach each subscriber in that order.
     A connection subscribed to two patterns that both match gets the
     message once.
@@ -692,7 +693,13 @@ begin
   if GetCurrentThreadId = AtomicLoadThreadId(WS.Loop.ThreadId) then
     DoSubscribe(WS, Pattern)
   else
+  begin
+    { The loop's table exists before the post: a publish made after this
+      returns posts to that loop too, behind the subscription (the inbox
+      runs in posting order), so the new subscriber gets it. }
+    TableFor(WS.Loop);
     PostOp(WS, Pattern, True);
+  end;
 end;
 
 procedure TWsTopics.Unsubscribe(WS: TWebSocket; const Pattern: RawByteString);
