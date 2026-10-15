@@ -14,6 +14,8 @@ The event loops are Bearings' own threads and never run Python. Every request ru
 
 With `websocket=`, a `WebSocketHandler`, the server also accepts WebSockets on `ws_path`: its `opened`, `received` and `closed` run on the worker pool, one event at a time per connection, and `ws_send`, `ws_close`, `subscribe`, `unsubscribe` and `publish` reach the connections by id, from any thread. A publish goes to every subscriber of a topic, encoded once.
 
+With `raw=True`, the server calls `app(head, input, listener)` instead of a WSGI app. `head` is the request head as Bearings sends it (the method, path, query, version, client address and port, then a name and a value per header, each followed by `"\0"`), `input` is the body and `listener` says where the server listens. The app returns `(status, headers, body)`. A framework that builds its own request object saves building an environ only to take it apart again. `RawHandler` describes the arguments.
+
 The package loads `libbearings.so` (`src/capi/` in this repository) with cffi in ABI mode, so it needs no C compiler: building the wheel needs Free Pascal 3.2.2 (`fpc`), which `hatch_build.py` runs.
 
 ## Development

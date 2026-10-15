@@ -3,6 +3,9 @@
 `WsgiHandler` is the callback the server calls on a worker thread, once per
 request, with the exchange and the request head (`bearings.h`). The
 exchange is valid only during the call: `Input` refuses to read after it.
+
+`RawHandler` is the callback with `Server(app, raw=True)`: the app gets the
+head as Bearings sends it, without an environ, and returns its response.
 """
 import io
 import os
@@ -154,7 +157,8 @@ class Response:
 
     def __init__(self, ex: t.Any) -> None:
         self.ex = ex
-        self.status: str | None = None
+        # the WSGI status line, or the code a raw app returned
+        self.status: str | int | None = None
         self.headers: list[tuple[str, str]] = []
         self.streaming = False
 
@@ -176,7 +180,8 @@ class Response:
     def _head(self) -> tuple[int, bytes]:
         if self.status is None:
             raise AssertionError("the app did not call start_response")
-        code = int(self.status[:3])
+        status = self.status
+        code = status if isinstance(status, int) else int(status[:3])
         headers = "".join(f"{name}\0{value}\0" for name, value in self.headers)
         return code, headers.encode("latin-1")
 
@@ -350,12 +355,7 @@ class WsgiHandler:
         try:
             environ = self.environ(ffi.unpack(head, length), ex)
             result = self.app(environ, response.start_response)
-            try:
-                response.send(result, environ["REQUEST_METHOD"])
-            finally:
-                close = getattr(result, "close", None)
-                if close is not None:
-                    close()
+            _send(response, result, environ["REQUEST_METHOD"])
         except _ClientGone:
             pass
         except BaseException:
@@ -365,3 +365,79 @@ class WsgiHandler:
             response.ex = None
             if environ is not None:
                 environ["wsgi.input"]._ex = None
+
+
+class Listener:
+    """Where the server listens, for a raw app: what WSGI puts in
+    `SERVER_NAME`, `SERVER_PORT`, `wsgi.url_scheme` and `SERVER_SOFTWARE`.
+    One object for every request."""
+
+    __slots__ = ("name", "port", "url_scheme", "software")
+
+    def __init__(self, name: str, port: int | None, url_scheme: str) -> None:
+        self.name = name
+        # None on a Unix socket
+        self.port = port
+        self.url_scheme = url_scheme
+        self.software = f"bearings/{VERSION}"
+
+    def __repr__(self) -> str:
+        return f"<Listener {self.url_scheme}://{self.name}:{self.port}>"
+
+
+class RawHandler(WsgiHandler):
+    """The server's callback with `raw=True`: calls `app(head, input, listener)`.
+
+    - `head` is the request head as Bearings sends it, decoded as latin-1:
+      fields ended by `"\0"`, the method, the path (percent-escapes kept),
+      the query (without the `?`), the version (`"HTTP/1.1"`), the
+      client's address and port (empty on a Unix socket), then a name and
+      a value per header field, in the order received and with the names
+      as the client wrote them.
+    - `input` is the body, the `wsgi.input` of WSGI.
+    - `listener` is the `Listener`, the same object every time.
+
+    The app returns `(status, headers, body)`: the status code, a list of
+    `(name, value)` and the body, as bytes or as what a WSGI app returns
+    (an iterable of bytes, or a `FileWrapper`).
+
+    Skipping the environ is the point: the app builds its request from the
+    head with no `HTTP_*` names to undo. The WebSocket handshake still
+    gets an environ (`environ()`).
+    """
+
+    def listening_on(self, port: int) -> None:
+        super().listening_on(port)
+        self.listener = Listener(
+            self.unix_path or self.host, None if self.unix_path else port, self.url_scheme
+        )
+
+    def __call__(self, ctx: t.Any, ex: t.Any, head: t.Any, length: int) -> None:
+        response = Response(ex)
+        body = Input(ex)
+        try:
+            text = ffi.unpack(head, length).decode("latin-1")
+            status, headers, result = self.app(text, body, self.listener)
+            response.status = status
+            response.headers = headers
+            if isinstance(result, bytes):  # sent with its length, as a list of one
+                result = [result]
+            _send(response, result, text[: text.index("\0")])
+        except _ClientGone:
+            pass
+        except BaseException:
+            traceback.print_exc(file=sys.stderr)
+            response.fail()
+        finally:
+            response.ex = None
+            body._ex = None
+
+
+def _send(response: Response, result: t.Any, method: str) -> None:
+    """Send the app's result, then close it if it can be closed."""
+    try:
+        response.send(result, method)
+    finally:
+        close = getattr(result, "close", None)
+        if close is not None:
+            close()

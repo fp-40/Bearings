@@ -1,4 +1,4 @@
-"""The server: Bearings' event loops and worker pool, with a WSGI app."""
+"""The server: Bearings' event loops and worker pool, with a WSGI app (or a raw one)."""
 import ipaddress
 import os
 import re
@@ -9,7 +9,7 @@ import typing as t
 
 from ._ffi import INVALID, OK, ffi, lib
 from .websocket import WebSocketHandler, WsDispatch
-from .wsgi import WsgiHandler
+from .wsgi import RawHandler, WsgiHandler
 
 
 ACCESS_LOGS = {None: 0, "json": 1, "combined": 2}
@@ -45,7 +45,13 @@ class Server:
 
     Arguments:
         app:
-            The WSGI app.
+            The WSGI app; with `raw=True`, a raw app.
+        raw [False]:
+            Call `app(head, input, listener)` instead of the WSGI
+            `app(environ, start_response)`: the app gets the request head
+            as Bearings sends it and returns `(status, headers, body)`.
+            It saves building an environ the app would take apart again.
+            `RawHandler` describes the arguments.
         host ["0.0.0.0"]:
             The address to listen on.
         port [0]:
@@ -112,6 +118,7 @@ class Server:
         self,
         app: t.Callable,
         *,
+        raw: bool = False,
         host: str = "0.0.0.0",
         port: int = 0,
         unix_path: str | None = None,
@@ -139,7 +146,8 @@ class Server:
         if access_log not in ACCESS_LOGS:
             raise ValueError(f"access_log must be one of {list(ACCESS_LOGS)}")
         self.host = host
-        self._handler = WsgiHandler(app, host=host, unix_path=unix_path, url_scheme=url_scheme)
+        handler = RawHandler if raw else WsgiHandler
+        self._handler = handler(app, host=host, unix_path=unix_path, url_scheme=url_scheme)
         # kept alive with the config: the struct only points to them
         self._strings: list = []
         config = ffi.new("bearings_config *")
