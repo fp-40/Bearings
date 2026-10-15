@@ -23,8 +23,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Install system dependencies
+        run: sudo apt-get install -y fpc-3.2.2
+
       - name: "Installs dependencies"
-        run: cd python && uv sync --group dev --python ${{ matrix.python }}
+        run: cd python && uv sync --group test --python ${{ matrix.python }}
 
       - name: "Lint"
         run: cd python && make lint
