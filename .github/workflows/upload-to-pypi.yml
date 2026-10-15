@@ -9,50 +9,59 @@ on:
 
 jobs:
   validate:
-    name: validate
+    uses: ./.github/workflows/validate.yml
+
+  build:
+    needs: validate
+    name: wheel ${{ matrix.runner }}
     strategy:
       matrix:
-        python: ['3.14t', '3.15t']
-      fail-fast: false
-    runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.experimental || false }}
-
+        # x86_64 and aarch64; the hook tags each wheel for the CPU it built on
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+      - uses: ./.github/actions/setup
 
-      - name: Install system dependencies
-        run: sudo apt-get install -y fpc-3.2.2
+      # Only the wheel: the sdist would hold python/ alone, without the
+      # Pascal sources in ../src that hatch_build.py compiles
+      - name: "Builds the wheel"
+        run: cd python && uv build --wheel
 
-      - name: "Installs dependencies"
-        run: cd python && uv sync --group dev --python ${{ matrix.python }}
+      # The wheel is tagged manylinux_2_34 (hatch_build.py): fail if the
+      # runner's glibc gave libbearings.so a newer symbol
+      - name: "Checks the glibc symbols"
+        run: |
+          newest=$(objdump -T build/python-$(uname -m)/libbearings.so \
+            | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          echo "newest symbol: $newest"
+          [ "$(printf '%s\nGLIBC_2.34\n' "$newest" | sort -V | tail -1)" = GLIBC_2.34 ]
 
-      - name: "Lint"
-        run: cd python && make lint
-
-      - name: "Test"
-        run: cd python && make test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.runner }}
+          path: python/dist/*.whl
 
   upload:
-    needs: validate
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/bearings
+      url: https://pypi.org/project/pybearings
     permissions:
       # Required for PyPI Trusted Publishing
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      - name: "Builds the package"
-        run: cd python && uv build
-
       - name: "Uploads to PyPI"
-        run: cd python && uv publish --trusted-publishing always
+        run: uv publish --trusted-publishing always dist/*.whl

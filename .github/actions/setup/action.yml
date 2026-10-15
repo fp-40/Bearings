@@ -1,0 +1,12 @@
+name: Setup
+description: Installs uv and Free Pascal 3.2.2, which hatch_build.py compiles libbearings.so with
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+
+    - name: Install system dependencies
+      shell: bash
+      run: sudo apt-get install -y fpc-3.2.2
