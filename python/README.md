@@ -22,3 +22,19 @@ The package loads `libbearings.so` (`src/capi/` in this repository) with cffi in
 uv sync --python 3.14t     # compiles libbearings.so into src/bearings/
 uv run pytest
 ```
+
+## Wheels
+
+`uv build --wheel` builds the wheel for this machine's CPU
+(`manylinux_2_34_x86_64` here). For ARM64, give it the cross compiler of
+`tools/get-cross-aarch64.sh`; the wheel is tagged for the CPU that compiler
+targets:
+
+```sh
+PYBEARINGS_FPC=../build/tools/bin/fpc-aarch64 uv build --wheel   # manylinux_2_34_aarch64
+```
+
+`./test-aarch64.sh` does that, installs the wheel in a free-threaded CPython
+for ARM64 run under qemu-user, and runs the tests against it. qemu-user runs
+on the host's memory model, which is stronger than ARM's: it shows that the
+wheel builds, loads and works, not races that only ARM hardware has.
