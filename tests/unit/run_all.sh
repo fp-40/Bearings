@@ -29,7 +29,16 @@
 # role.rs, body decoder vs decode.rs) run from their own scripts:
 # tests/unit/test_parser_diff.sh, test_role_diff.sh, test_codec_diff.sh.
 # Usage: tests/unit/run_all.sh
-# Env: TARGET=aarch64 cross-compiles the suites for ARM64 with
+# Env: TIER picks the steps (default all):
+#        fast  the fpcunit suites, their heaptrc runs, the split fuzz with
+#              FUZZ_SEEDS 100 and the hot-path asm check (make test; CI)
+#        full  the drd runs, the stress, the echo under memcheck and the
+#              split fuzz with FUZZ_SEEDS 2000 (make test-full)
+#        all   both, the split fuzz once with 2000 seeds
+#      SUITE_TIMEOUT (seconds, default 600) and DRD_TIMEOUT (default 3600)
+#      bound each run: a suite that hangs fails the run instead of
+#      blocking it (timeout(1) exits 124, printed as TIMEOUT).
+#      TARGET=aarch64 cross-compiles the suites for ARM64 with
 #      build/tools/bin/fpc-aarch64 and runs them under qemu with
 #      build/tools/bin/run-aarch64 (both from tools/get-cross-aarch64.sh),
 #      in build/unit-aarch64: the fpcunit suites and their heaptrc runs
@@ -59,12 +68,28 @@ case $TARGET in
     export BEARINGS_RUNNER=$RUN ;;
   *) echo "run_all: unknown TARGET $TARGET (x86_64 or aarch64)"; exit 1 ;;
 esac
+TIER=${TIER:-all}
+case $TIER in
+  fast) FUZZ_SEEDS=${FUZZ_SEEDS:-100} ;;
+  full|all) FUZZ_SEEDS=${FUZZ_SEEDS:-2000} ;;
+  *) echo "run_all: unknown TIER $TIER (fast, full or all)"; exit 1 ;;
+esac
+export FUZZ_SEEDS
+TO=${SUITE_TIMEOUT:-600}
+DTO=${DRD_TIMEOUT:-3600}
+# the exit status of a run, with a note when timeout(1) stopped it
+timed_out() {   # status
+  [ "$1" -eq 124 ] && echo " TIMEOUT"
+  return 0
+}
 mkdir -p "$OUT"
 # absolute: the drd runs cd into $OUT/drd (a relative OUT_DIR broke their paths)
 OUT=$(cd "$OUT" && pwd)
 FU="-Fu$ROOT/src/rt -Fu$ROOT/src/http -Fu$ROOT/src/http1 -Fu$ROOT/src/server -Fu$ROOT/src/ws -Fu$ROOT/src/capi -Fu$ROOT/tests/support -Fu$ROOT/tests/unit"
 FAIL=0
 TOTAL=0
+# --- TIER fast: the fpcunit suites, then their heaptrc runs
+if [ "$TIER" != full ]; then
 for T in test_parser test_codec test_role test_headers_validate \
     test_rt_sys test_rt_timer test_rt_loop test_rt_net test_rt_readbuf test_h1_io \
     test_h1_conn test_body_chan test_exchange test_h1_dispatch test_workers test_server \
@@ -82,12 +107,12 @@ for T in test_parser test_codec test_role test_headers_validate \
     continue
   fi
   # shellcheck disable=SC2086
-  if $RUN "$OUT/$T" --all --format=plain > "$OUT/$T.out" 2>&1; then R=0; else R=$?; fi
+  if timeout "$TO" $RUN "$OUT/$T" --all --format=plain > "$OUT/$T.out" 2>&1; then R=0; else R=$?; fi
   # the fpcunit summary line (a suite may log to stderr before it)
   LINE=$(grep -m 1 -E '^ Time:[0-9:.]+ N:[0-9]+ E:' "$OUT/$T.out" || head -n 1 "$OUT/$T.out")
   N=$(echo "$LINE" | sed -n 's/.* N:\([0-9]*\) .*/\1/p')
   TOTAL=$((TOTAL + ${N:-0}))
-  echo "$T:$LINE (exit $R)"
+  echo "$T:$LINE (exit $R)$(timed_out $R)"
   if [ "$R" -ne 0 ] || ! echo "$LINE" | grep -q ' E:0 F:0 '; then
     FAIL=1
   fi
@@ -111,14 +136,15 @@ for T in test_h1_conn test_body_chan test_exchange test_h1_dispatch test_workers
   fi
   rm -f "$HT/$T.heap"
   # shellcheck disable=SC2086
-  if HEAPTRC="log=$HT/$T.heap" $RUN "$HT/$T" --all --format=plain > "$HT/$T.out" 2>&1; then R=0; else R=$?; fi
+  if HEAPTRC="log=$HT/$T.heap" timeout "$TO" $RUN "$HT/$T" --all --format=plain > "$HT/$T.out" 2>&1; then R=0; else R=$?; fi
   U=$(sed -n 's/^\([0-9]*\) unfreed memory blocks.*/\1/p' "$HT/$T.heap" 2>/dev/null | head -n 1)
   HL=$(grep -m 1 -E '^ Time:[0-9:.]+ N:[0-9]+ E:' "$HT/$T.out" || head -n 1 "$HT/$T.out")
-  echo "$T (heaptrc): $HL (exit $R), unfreed blocks: ${U:-?}"
+  echo "$T (heaptrc): $HL (exit $R)$(timed_out $R), unfreed blocks: ${U:-?}"
   if [ "$R" -ne 0 ] || [ "${U:-x}" != "0" ]; then
     FAIL=1
   fi
 done
+fi  # TIER fast
 if [ "$TARGET" != x86_64 ]; then
   echo "run_all ($TARGET): the drd, stress, echo, split-fuzz and hot-asm steps run on x86_64 only; skipped"
   [ "$FAIL" -eq 0 ] && echo "run_all ($TARGET): passed" || echo "run_all ($TARGET): FAILED"
@@ -132,6 +158,8 @@ fi
 # (--fair-sched=no) lets a thread that spins (the tests' CpuRelax loops)
 # take the lock back again and again while the thread it waits for cannot
 # run (valgrind's manual on --fair-sched; deviation S7-25)
+# --- TIER full: the drd runs, the stress and the echo under memcheck
+if [ "$TIER" != fast ]; then
 VG=${VALGRIND:-$ROOT/build/tools/bin/valgrind}
 DR="$OUT/drd"
 mkdir -p "$DR/u"
@@ -146,11 +174,11 @@ elif ! { [ -x "$VG" ] || command -v "$VG" > /dev/null 2>&1; }; then
 else
   I=1
   while [ "$I" -le "${DRD_RUNS:-3}" ]; do
-    if (cd "$DR" && WD_ITER=20 "$VG" --tool=drd --fair-sched=yes --suppressions="$ROOT/tools/drd.supp" \
+    if (cd "$DR" && WD_ITER=20 timeout "$DTO" "$VG" --tool=drd --fair-sched=yes --suppressions="$ROOT/tools/drd.supp" \
         ./test_workers --all --format=plain > "$DR/run-$I.out" 2> "$DR/run-$I.err"); then R=0; else R=$?; fi
     DE=$(sed -n 's/.*ERROR SUMMARY: \([0-9]*\) errors.*/\1/p' "$DR/run-$I.err" | tail -n 1)
     DL=$(grep -m 1 -E '^ Time:[0-9:.]+ N:[0-9]+ E:' "$DR/run-$I.out" || echo '?')
-    echo "test_workers (drd run $I):$DL (exit $R), drd errors: ${DE:-?}"
+    echo "test_workers (drd run $I):$DL (exit $R)$(timed_out $R), drd errors: ${DE:-?}"
     if [ "$R" -ne 0 ] || [ "${DE:-x}" != "0" ] || ! echo "$DL" | grep -q ' E:0 F:0 '; then
       FAIL=1
     fi
@@ -175,12 +203,12 @@ if ! fpc -Mobjfpc -Sh -O2 -gl -Cr -Co -Ct -Sa -dWD_DRD $FU -FU"$DW/u" -FE"$DW" \
   FAIL=1
 elif [ -x "$VG" ] || command -v "$VG" > /dev/null 2>&1; then
   for S in TTestWsWorker TTestWsTopics; do
-    if (cd "$DW" && WD_ITER=20 "$VG" --tool=drd --fair-sched=yes --suppressions="$ROOT/tools/drd.supp" \
+    if (cd "$DW" && WD_ITER=20 timeout "$DTO" "$VG" --tool=drd --fair-sched=yes --suppressions="$ROOT/tools/drd.supp" \
         ./test_ws_echo --suite=$S --format=plain > "$DW/run-$S.out" 2> "$DW/run-$S.err"); then R=0; else R=$?; fi
     DE=$(sed -n 's/.*ERROR SUMMARY: \([0-9]*\) errors.*/\1/p' "$DW/run-$S.err" | tail -n 1)
     # a --suite run prints "SuiteList Time:..." (no leading space) with the totals
     DL=$(grep -m 1 -E 'Time:[0-9:.]+ N:[0-9]+ E:' "$DW/run-$S.out" || echo '?')
-    echo "test_ws_echo $S (drd): $DL (exit $R), drd errors: ${DE:-?}"
+    echo "test_ws_echo $S (drd): $DL (exit $R)$(timed_out $R), drd errors: ${DE:-?}"
     if [ "$R" -ne 0 ] || [ "${DE:-x}" != "0" ] || ! echo "$DL" | grep -q ' E:0 F:0 '; then
       FAIL=1
     fi
@@ -197,11 +225,11 @@ if ! fpc -Mobjfpc -Sh -O2 -gl -Cr -Co -Ct -Sa -dWD_DRD $FU -FU"$DC/u" -FE"$DC" \
   echo "test_capi (drd): BUILD FAILED (see $DC/test_capi.build.log)"
   FAIL=1
 elif [ -x "$VG" ] || command -v "$VG" > /dev/null 2>&1; then
-  if (cd "$DC" && WD_ITER=20 "$VG" --tool=drd --fair-sched=yes --suppressions="$ROOT/tools/drd.supp" \
+  if (cd "$DC" && WD_ITER=20 timeout "$DTO" "$VG" --tool=drd --fair-sched=yes --suppressions="$ROOT/tools/drd.supp" \
       ./test_capi --all --format=plain > "$DC/run.out" 2> "$DC/run.err"); then R=0; else R=$?; fi
   DE=$(sed -n 's/.*ERROR SUMMARY: \([0-9]*\) errors.*/\1/p' "$DC/run.err" | tail -n 1)
   DL=$(grep -m 1 -E 'Time:[0-9:.]+ N:[0-9]+ E:' "$DC/run.out" || echo '?')
-  echo "test_capi (drd): $DL (exit $R), drd errors: ${DE:-?}"
+  echo "test_capi (drd): $DL (exit $R)$(timed_out $R), drd errors: ${DE:-?}"
   if [ "$R" -ne 0 ] || [ "${DE:-x}" != "0" ] || ! echo "$DL" | grep -q ' E:0 F:0 '; then
     FAIL=1
   fi
@@ -219,11 +247,12 @@ else
   echo "test_rt_echo: FAILED: no valgrind at $VG (run tools/get-tools.sh, or set VALGRIND)"
   FAIL=1
 fi
+fi  # TIER full
 # S9 split fuzz (docs/design.md section 9; tests/unit/test_split_fuzz.pas): the
 # conformance case inputs and the M2 parser corpus (20 000 random entries,
 # seed 1, with httparse's test inputs when found) in random reads with random EAGAIN and partial writes, compared
 # with one-read runs; built with -Ci -Cr -Co -Ct -Sa -gh -gl -dWD_DEBUG,
-# heaptrc must report 0 unfreed blocks. FUZZ_SEEDS (default 2000) seeds.
+# heaptrc must report 0 unfreed blocks. FUZZ_SEEDS seeds (set by TIER above).
 FZ="$OUT/split-fuzz"
 mkdir -p "$FZ/u"
 python3 -I "$ROOT/tests/unit/test_split_fuzz_cases.py" "$FZ/cases.bin" "$ROOT/conformance/cases/h1" \
@@ -239,17 +268,19 @@ if ! fpc -Mobjfpc -Sh -O2 -Ci -Cr -Co -Ct -Sa -gh -gl -dWD_DEBUG $FU -Fu"$ROOT/c
   FAIL=1
 else
   rm -f "$FZ/heap.txt" "$FZ"/fail-*.txt
-  if FUZZ_DATA="$FZ" HEAPTRC="log=$FZ/heap.txt" "$FZ/test_split_fuzz" --all --format=plain \
+  if FUZZ_DATA="$FZ" HEAPTRC="log=$FZ/heap.txt" timeout "$DTO" "$FZ/test_split_fuzz" --all --format=plain \
       > "$FZ/out.txt" 2>&1; then R=0; else R=$?; fi
   U=$(sed -n 's/^\([0-9]*\) unfreed memory blocks.*/\1/p' "$FZ/heap.txt" 2>/dev/null | head -n 1)
   HL=$(grep -m 1 -E '^ Time:[0-9:.]+ N:[0-9]+ E:' "$FZ/out.txt" || echo '?')
-  echo "test_split_fuzz:$HL (exit $R), unfreed blocks: ${U:-?}"
+  echo "test_split_fuzz ($FUZZ_SEEDS seeds):$HL (exit $R)$(timed_out $R), unfreed blocks: ${U:-?}"
   grep '^split fuzz: [0-9e]' "$FZ/out.txt" | sed 's/^/  /'
   if [ "$R" -ne 0 ] || [ "${U:-x}" != "0" ] || ! echo "$HL" | grep -q ' E:0 F:0 '; then
     FAIL=1
   fi
 fi
-# shellcheck disable=SC2086
-OUT_DIR="$OUT/check-hot-asm" sh "$ROOT/tools/check-hot-asm.sh" ${HOT_ASM_ARGS:---s7} || FAIL=1
-[ "$FAIL" -eq 0 ] && echo "run_all: passed" || echo "run_all: FAILED"
+if [ "$TIER" != full ]; then
+  # shellcheck disable=SC2086
+  OUT_DIR="$OUT/check-hot-asm" sh "$ROOT/tools/check-hot-asm.sh" ${HOT_ASM_ARGS:---s7} || FAIL=1
+fi
+[ "$FAIL" -eq 0 ] && echo "run_all ($TIER): passed" || echo "run_all ($TIER): FAILED"
 exit $FAIL

@@ -123,8 +123,8 @@ the worker the handler sends with `PostText`, `PostBinary` and
 `PostFrame`, and closes with `PostClose(Code, Reason)`; `SendText` and
 `CloseWith` are loop-thread calls and must not be used there. A post
 returns `wsFull` when `SendHighWater` bytes are already posted and not
-yet moved to the output; `OnWritable` then runs on the worker once they
-were. Backpressure on the way in: when the connection's queued, unhandled
+yet moved to the output, which happens while the output queue is below
+`SendHighWater`; `OnWritable` then runs on the worker once they were. Backpressure on the way in: when the connection's queued, unhandled
 messages reach `ReceiveHighWater` bytes the loop stops reading that socket
 until the worker has drained the queue, so a client cannot fill memory
 faster than the handler works. An exception from a handler method fails

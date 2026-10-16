@@ -139,11 +139,14 @@ function bearings_read(Ex: TExchange; Buf: PByte; Max: csize_t): PtrInt; cdecl;
 function bearings_body_error(Ex: TExchange; Buf: PAnsiChar; Len: csize_t): csize_t; cdecl;
 function bearings_is_canceled(Ex: TExchange): cint; cdecl;
 
-{ A response with a body of known length; the body is copied. }
+{ A response with a body of known length; the body is copied. With a
+  body (BLen > 0), a Content-Length among the headers is left out: the
+  server writes the body's length. }
 function bearings_respond(Ex: TExchange; Status: cint; Headers: PAnsiChar; HLen: csize_t;
   Body: PByte; BLen: csize_t): cint; cdecl;
 { A response whose body is Len bytes of the file Fd from Offset, sent with
-  sendfile(2). The server owns Fd from the call on and closes it, even
+  sendfile(2); a Content-Length among the headers is left out (the server
+  writes Len). The server owns Fd from the call on and closes it, even
   when the call fails. }
 function bearings_respond_file(Ex: TExchange; Status: cint; Headers: PAnsiChar; HLen: csize_t;
   Fd: cint; Offset, Len: cint64): cint; cdecl;
@@ -580,8 +583,14 @@ begin
   Buf[N] := #0;
 end;
 
-{ Fills the response head; False (and an empty header list) on an invalid field. }
-function SetHead(Ex: TExchange; Status: cint; Headers: PAnsiChar; HLen: csize_t): Boolean;
+{ Fills the response head; False (and an empty header list) on an invalid field.
+  KnownBody: the body's length is known (bearings_respond with a body,
+  bearings_respond_file), so a Content-Length field is left out and the
+  encoder writes that length: the encoder writes the field as given and
+  assumes it matches (as hyper), and a wrong one (a gzip middleware that
+  kept the old one, say) would break the framing of the connection. }
+function SetHead(Ex: TExchange; Status: cint; Headers: PAnsiChar; HLen: csize_t;
+  KnownBody: Boolean): Boolean;
 var
   RH: THttpHeaders;
   I, NameEnd, ValueEnd, Limit: SizeInt;
@@ -599,8 +608,13 @@ begin
     ValueEnd := NameEnd + 1;
     while (ValueEnd < Limit) and (Headers[ValueEnd] <> #0) do
       Inc(ValueEnd);
-    if (ValueEnd > Limit) or
-      (RH.TryAdd(PByte(Headers + I), NameEnd - I, PByte(Headers + NameEnd + 1),
+    if ValueEnd > Limit then
+    begin
+      RH.Clear;
+      Exit(False);
+    end;
+    if not (KnownBody and (NameEnd - I = 14) and (StrLIComp(Headers + I, 'content-length', 14) = 0))
+      and (RH.TryAdd(PByte(Headers + I), NameEnd - I, PByte(Headers + NameEnd + 1),
         ValueEnd - NameEnd - 1) <> hcOk) then
     begin
       RH.Clear;
@@ -853,7 +867,8 @@ var
   S: RawByteString;
 begin
   try
-    if not SetHead(Ex, Status, Headers, HLen) then
+    { no body: a HEAD response keeps the application's Content-Length }
+    if not SetHead(Ex, Status, Headers, HLen, BLen > 0) then
       Exit(BEARINGS_BAD_HEADER);
     if BLen = 0 then
       Result := Answer(Ex.Respond(BodyEmpty))
@@ -871,7 +886,7 @@ function bearings_respond_file(Ex: TExchange; Status: cint; Headers: PAnsiChar; 
   Fd: cint; Offset, Len: cint64): cint; cdecl;
 begin
   try
-    if not SetHead(Ex, Status, Headers, HLen) then
+    if not SetHead(Ex, Status, Headers, HLen, True) then
     begin
       FpClose(Fd);
       Exit(BEARINGS_BAD_HEADER);
@@ -887,7 +902,7 @@ function bearings_begin_stream(Ex: TExchange; Status: cint; Headers: PAnsiChar;
   HLen: csize_t): cint; cdecl;
 begin
   try
-    if not SetHead(Ex, Status, Headers, HLen) then
+    if not SetHead(Ex, Status, Headers, HLen, False) then
       Exit(BEARINGS_BAD_HEADER);
     Result := Answer(Ex.BeginStream);
   except

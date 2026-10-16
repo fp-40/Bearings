@@ -907,6 +907,7 @@ var
   P: TServerEncodeParams;
   Dst: TBytes;
   DstLen: SizeInt;
+  Raised: Boolean;
 
   procedure Bad(const V: RawByteString);
   begin
@@ -957,6 +958,20 @@ begin
     AssertEquals('HTTP/1.1 200 OK'#13#10'content-length: 1,1'#13#10#13#10,
       EncodeP(200, blkNone, 0, hmHead, H, Enc, Res));
     AssertEquals(QWord(0), Enc.Remaining);
+    {$IFOPT C+}
+    { Known, a value that parses and differs from the body: an assertion
+      with -Sa (hyper's debug_assert) }
+    H.Clear;
+    H.Add('content-length', '9');
+    Raised := False;
+    try
+      EncodeP(200, blkKnown, 5, hmGet, H, Enc, Res);
+    except
+      on E: EAssertionFailed do
+        Raised := True;
+    end;
+    AssertTrue('9 for a body of 5 bytes', Raised);
+    {$ENDIF}
   finally
     H.Free;
   end;

@@ -22,7 +22,8 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   {$IFDEF WD_DRD}cmem,{$ENDIF}            { the C heap: drd sees the blocks (as test_ws_echo) }
   Classes, SysUtils, SyncObjs, fpcunit, testregistry, consoletestrunner, Sockets, BaseUnix,
-  ctypes, bearings.rt.sync, bearings.http.exchange, bearings.ws.frame, bearings.test.ws, bearings.capi;
+  ctypes, bearings.version, bearings.rt.sync, bearings.http.exchange, bearings.ws.frame, bearings.test.ws,
+  bearings.capi;
 
 const
   CRLF = #13#10;
@@ -349,6 +350,7 @@ type
     procedure The_ignored_text;
     procedure Unknown_ids;
     procedure Calls_by_id_while_connections_end;
+    procedure Stop_with_websockets_open;
   end;
 
   { sends, subscribes, publishes and closes by id, over and over }
@@ -526,7 +528,7 @@ end;
 
 procedure TTestCapiHttp.The_version;
 begin
-  AssertEquals('0.1.0', StrPas(bearings_version));
+  AssertEquals(BEARINGS_VERSION, StrPas(bearings_version));
 end;
 
 procedure TTestCapiHttp.A_taken_port_fails_with_the_reason;
@@ -663,6 +665,43 @@ begin
   finally
     C.Free;
   end;
+end;
+
+procedure TTestCapiWs.Stop_with_websockets_open;
+var
+  C, D: TWsClient;
+  F: TServerFrame;
+  I: Integer;
+begin
+  { a stop with two connections open: one answers the close, one does not
+    (closed at the deadline). Both get their closed event, the registry
+    is empty once the server stopped, and freeing it leaks nothing (the
+    heaptrc run of this suite). }
+  C := TWsClient.Create(Port, '/ws');
+  D := TWsClient.Create(Port, '/ws');
+  try
+    for I := 1 to 500 do
+      if bearings_ws_count(Srv) = 2 then
+        Break
+      else
+        Sleep(10);
+    AssertEquals('two open', 2, Integer(bearings_ws_count(Srv)));
+    bearings_server_stop(Srv, 300);
+    F := C.Next;
+    AssertEquals('C: the close', WS_OP_CLOSE, Integer(F.Opcode));
+    AssertEquals('C: going away', 1001, CloseCode(F));
+    C.Send(WS_OP_CLOSE, F.Payload);
+    fpShutdown(C.Fd, SHUT_WR);
+    bearings_server_wait(Srv);
+    AssertEquals('the registry is empty', 0, Integer(bearings_ws_count(Srv)));
+  finally
+    C.Free;
+    D.Free;
+  end;
+  AssertTrue('C closed with 1001', WaitEvent('closed 1001 server shutdown'));
+  AssertTrue('D closed without a close frame', WaitEvent('closed 1006 '));
+  bearings_server_free(Srv);
+  Srv := nil;
 end;
 
 procedure TTestCapiWs.Origins;

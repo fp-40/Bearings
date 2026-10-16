@@ -2,7 +2,9 @@
 
 `WsgiHandler` is the callback the server calls on a worker thread, once per
 request, with the exchange and the request head (`bearings.h`). The
-exchange is valid only during the call: `Input` refuses to read after it.
+exchange is valid only during the call: `Input` and `Response.write()`
+refuse to use it after, also from another thread (a lock per request
+orders their calls with its end).
 
 `RawHandler` is the callback with `Server(app, raw=True)`: the app gets the
 head as Bearings sends it, without an environ, and returns its response.
@@ -11,6 +13,7 @@ import io
 import os
 import stat
 import sys
+import threading
 import traceback
 import typing as t
 from urllib.parse import unquote_to_bytes
@@ -19,6 +22,9 @@ from ._ffi import BAD_HEADER, CANCELED, CLIENT_GONE, OK, VERSION, ffi, lib
 
 
 READ_SIZE = 65536
+# the most one read asks the server for: `read(n)` of a large n allocates
+# as the body arrives, not n bytes up front (n comes from the client)
+MAX_READ = 1 << 20
 ERROR_BODY = b"Internal Server Error\n"
 ERROR_HEADERS = b"content-type\0text/plain; charset=utf-8\0"
 
@@ -62,8 +68,9 @@ class FileWrapper:
 class Input:
     """`wsgi.input`: the request body, read from the client as the app asks."""
 
-    def __init__(self, ex: t.Any) -> None:
+    def __init__(self, ex: t.Any, lock: threading.Lock) -> None:
         self._ex = ex
+        self._lock = lock  # the request's: its end sets `_ex` to None under it
         self._buf = b""
         self._ended = False
 
@@ -71,21 +78,29 @@ class Input:
         """At most `size` bytes from the client; `b""` at the end of the body."""
         if self._ended:
             return b""
-        if self._ex is None:
-            raise ValueError("the request has ended: its body can't be read anymore")
-        buf = _alloc("char[]", size)
-        n = lib.bearings_read(self._ex, buf, size)
-        if n > 0:
-            return ffi.buffer(buf, n)[:]
-        if n == 0:
-            self._ended = True
-            return b""
-        if n == CLIENT_GONE:
-            raise ClientDisconnected("the client disconnected")
+        with self._lock:
+            if self._ex is None:
+                raise ValueError("the request has ended: its body can't be read anymore")
+            buf = _alloc("char[]", size)
+            n = lib.bearings_read(self._ex, buf, size)
+            if n > 0:
+                return ffi.buffer(buf, n)[:]
+            if n == 0:
+                self._ended = True
+                return b""
+            if n == CLIENT_GONE:
+                raise ClientDisconnected("the client disconnected")
+            raise BodyError(self._error())
+
+    def _error(self) -> str:
+        """The server's message for the body error (under the lock)."""
         size = 256
-        message = ffi.new("char[]", size)
-        lib.bearings_body_error(self._ex, message, size)
-        raise BodyError(ffi.string(message).decode(errors="replace"))
+        while True:
+            message = ffi.new("char[]", size)
+            n = lib.bearings_body_error(self._ex, message, size)
+            if n < size:  # it fit; else nothing was copied: n is its length
+                return ffi.string(message, n).decode(errors="replace")
+            size = n + 1
 
     def read(self, size: int | None = -1) -> bytes:
         if size is None or size < 0:
@@ -100,7 +115,7 @@ class Input:
             chunks.append(self._buf)
             self._buf = b""
         while have < size:
-            chunk = self._receive(max(size - have, READ_SIZE))
+            chunk = self._receive(min(max(size - have, READ_SIZE), MAX_READ))
             if not chunk:
                 break
             chunks.append(chunk)
@@ -153,10 +168,11 @@ class _ClientGone(Exception):
 class Response:
     """`start_response` and the sending of the app's result."""
 
-    __slots__ = ("ex", "status", "headers", "streaming")
+    __slots__ = ("ex", "lock", "status", "headers", "streaming")
 
-    def __init__(self, ex: t.Any) -> None:
+    def __init__(self, ex: t.Any, lock: threading.Lock) -> None:
         self.ex = ex
+        self.lock = lock  # the request's: its end sets `ex` to None under it
         # the WSGI status line, or the code a raw app returned
         self.status: str | int | None = None
         self.headers: list[tuple[str, str]] = []
@@ -183,6 +199,10 @@ class Response:
         status = self.status
         code = status if isinstance(status, int) else int(status[:3])
         headers = "".join(f"{name}\0{value}\0" for name, value in self.headers)
+        # a NUL ends a name or a value in what the server reads: one in the
+        # app's header would make the rest a field of its own
+        if headers.count("\0") != 2 * len(self.headers):
+            raise ValueError(f"a NUL in a response header in {self.headers!r}")
         return code, headers.encode("latin-1")
 
     def _check(self, result: int) -> None:
@@ -199,9 +219,12 @@ class Response:
         """The `write()` of `start_response`, for apps that push the body."""
         if not data:
             return
-        if not self.streaming:
-            self._begin()
-        self._check(lib.bearings_write(self.ex, data, len(data)))
+        with self.lock:
+            if self.ex is None:
+                raise RuntimeError("the request has ended: write() can't send anymore")
+            if not self.streaming:
+                self._begin()
+            self._check(lib.bearings_write(self.ex, data, len(data)))
 
     def _begin(self) -> None:
         code, headers = self._head()
@@ -265,6 +288,8 @@ class Response:
         except (OSError, ValueError, AttributeError):  # closed, or no tell()
             return False
         length = info.st_size - offset
+        # at most the app's Content-Length; the server writes the length it
+        # sends in place of that header
         for name, value in self.headers:
             if name.lower() == "content-length" and value.isdigit():
                 length = min(length, int(value))
@@ -300,10 +325,17 @@ class WsgiHandler:
         self.host = host
         self.unix_path = unix_path
         self.url_scheme = url_scheme
-        self.listening_on(0)
+        # set by listening_on(): the server accepts before it can be told its
+        # port, so a request that comes first waits for it
+        self._listening = threading.Event()
+        self._configure(0)
 
     def listening_on(self, port: int) -> None:
         """The port the server listens on, once it does (`SERVER_PORT`)."""
+        self._configure(port)
+        self._listening.set()
+
+    def _configure(self, port: int) -> None:
         self._base: dict[str, t.Any] = {
             "SCRIPT_NAME": "",
             "SERVER_NAME": self.unix_path or self.host,
@@ -319,23 +351,25 @@ class WsgiHandler:
             "wsgi.file_wrapper": FileWrapper,
         }
 
-    def environ(self, head: bytes, ex: t.Any = None) -> dict:
-        """The head as an environ; without `ex` (a WebSocket's handshake),
+    def environ(self, head: bytes, body: Input | None = None) -> dict:
+        """The head as an environ; without `body` (a WebSocket's handshake),
         with an empty `wsgi.input`."""
+        if not self._listening.is_set():
+            self._listening.wait()
         parts = head.decode("latin-1").split("\0")
         method, path, query, version, address, port = parts[:6]
         environ = self._base.copy()
         environ["REQUEST_METHOD"] = method
         # PEP 3333: the path decoded, as bytes in a latin-1 str
         environ["PATH_INFO"] = (
-            unquote_to_bytes(path).decode("latin-1") if "%" in path else path
+            unquote_to_bytes(path.encode("latin-1")).decode("latin-1") if "%" in path else path
         )
         environ["QUERY_STRING"] = query
         environ["RAW_URI"] = environ["REQUEST_URI"] = f"{path}?{query}" if query else path
         environ["SERVER_PROTOCOL"] = version
         environ["REMOTE_ADDR"] = address
         environ["REMOTE_PORT"] = port
-        environ["wsgi.input"] = Input(ex) if ex is not None else io.BytesIO()
+        environ["wsgi.input"] = body if body is not None else io.BytesIO()
         for i in range(6, len(parts) - 1, 2):
             name = parts[i]
             if "_" in name:  # it would read as the same variable as one with "-"
@@ -350,10 +384,12 @@ class WsgiHandler:
         return environ
 
     def __call__(self, ctx: t.Any, ex: t.Any, head: t.Any, length: int) -> None:
-        response = Response(ex)
-        environ = None
+        lock = threading.Lock()
+        response = Response(ex, lock)
+        # kept here: middleware may put another stream in `wsgi.input`
+        body = Input(ex, lock)
         try:
-            environ = self.environ(ffi.unpack(head, length), ex)
+            environ = self.environ(ffi.unpack(head, length), body)
             result = self.app(environ, response.start_response)
             _send(response, result, environ["REQUEST_METHOD"])
         except _ClientGone:
@@ -362,9 +398,7 @@ class WsgiHandler:
             traceback.print_exc(file=sys.stderr)
             response.fail()
         finally:
-            response.ex = None
-            if environ is not None:
-                environ["wsgi.input"]._ex = None
+            _end(response, body)
 
 
 class Listener:
@@ -406,15 +440,18 @@ class RawHandler(WsgiHandler):
     gets an environ (`environ()`).
     """
 
-    def listening_on(self, port: int) -> None:
-        super().listening_on(port)
+    def _configure(self, port: int) -> None:
+        super()._configure(port)
         self.listener = Listener(
             self.unix_path or self.host, None if self.unix_path else port, self.url_scheme
         )
 
     def __call__(self, ctx: t.Any, ex: t.Any, head: t.Any, length: int) -> None:
-        response = Response(ex)
-        body = Input(ex)
+        lock = threading.Lock()
+        response = Response(ex, lock)
+        body = Input(ex, lock)
+        if not self._listening.is_set():
+            self._listening.wait()
         try:
             text = ffi.unpack(head, length).decode("latin-1")
             status, headers, result = self.app(text, body, self.listener)
@@ -429,8 +466,15 @@ class RawHandler(WsgiHandler):
             traceback.print_exc(file=sys.stderr)
             response.fail()
         finally:
-            response.ex = None
-            body._ex = None
+            _end(response, body)
+
+
+def _end(response: Response, body: Input) -> None:
+    """The request ended: its exchange is no longer valid. Under the lock, so
+    a read or a write from another thread is either done or refused."""
+    with response.lock:
+        response.ex = None
+        body._ex = None
 
 
 def _send(response: Response, result: t.Any, method: str) -> None:

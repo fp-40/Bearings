@@ -253,7 +253,7 @@ and payload in one string) that can be sent to many connections.
 arrives whole in one read goes to `OnText`/`OnBinary` straight from the read
 block; a fragmented message, or one split across reads, is joined in a
 reassembly buffer, bounded by `MaxMessage` (1009 above it). A send is
-queued, never written at once: the next run of the connection writes the
+queued, not written at once: the next run of the connection writes the
 whole queue, so the frames a loop iteration sends to one connection (the
 messages of many publishes) leave in one system call instead of one each
 (broadcast fan-out went from about 0.27 to 4.7 million deliveries per second
@@ -261,7 +261,13 @@ on one loop). The queue holds copied bytes and prepared frames by reference
 (frames of `WS_SHARE_MIN`, 1 KiB, or more; smaller ones are copied), at most
 `WS_MAX_IOV` segments per `writev`. Backpressure: a data send is refused with
 `wsFull` while `SendHighWater` or more bytes are queued (`OnWritable` follows
-when the queue went down to half), and the connection stops reading while
+when the queue went down to half); a send outside a run of the connection (a
+publish) that finds the queue at the mark writes the queue first and is
+refused only if the socket did not take enough, so the publishes of one loop
+iteration are not dropped for a client that reads. A run that ends with work
+no event will start (the edge-triggered socket gives no EPOLLIN for bytes
+left unread, nor EPOLLOUT after a write that met no EAGAIN) wakes itself
+again. The connection stops reading while
 the queue is over the mark, so a client that sends faster than it reads is
 slowed down by TCP. Control frames are always queued. Pings go out every
 `PingIntervalMs` and any received byte resets the idle timer, so with the
@@ -279,7 +285,10 @@ lose the close frame. `Abort` closes without the handshake; `OnClose` gets
 `PostText`, `PostBinary`, `PostFrame`, `AddRef` and `Release`. A post copies
 the message (or takes a reference on a prepared frame) into a list under a
 spin lock, bounded by `SendHighWater` too, and posts an `lmCall` message
-that moves it into the output queue. A thread that uses a `TWebSocket` holds
+that moves it into the output queue while the queue is below the mark (the
+rest waits in the list, where it still counts against new posts; a
+`PostClose` takes everything before it out). So the list and the queue are
+each bounded by `SendHighWater` and one message. A thread that uses a `TWebSocket` holds
 a reference (`AddRef` on the loop thread, for example in `OnOpen`); the loop
 holds one until the connection ends, and the last `Release` frees the
 object. A broadcast from another thread is cheaper as one `TLoop.Post` per

@@ -125,14 +125,15 @@ begin
       Break;
     Inc(I);
   end;
-  if (I + 1 >= Len) then
+  if (I + 1 >= Len) or (I + 1 >= PROXY_V1_MAX) then
   begin
-    if Len >= PROXY_V1_MAX then
-      Exit(ppError);                 { no CRLF where the line must have ended }
+    { no CRLF yet: an error once the line has had its PROXY_V1_MAX bytes
+      (a CRLF that ends at byte PROXY_V1_MAX + 1 is one too late, however
+      the bytes were split in reads) }
+    if I + 1 >= PROXY_V1_MAX then
+      Exit(ppError);
     Exit(ppNeedMore);
   end;
-  if not ((P[I] = 13) and (P[I + 1] = 10)) then
-    Exit(ppError);
   Used := I + 2;
   SetString(Line, PAnsiChar(P) + 6, I - 6);  { after "PROXY " }
   Pos := 1;

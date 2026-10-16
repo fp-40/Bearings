@@ -50,5 +50,9 @@ Framing headers are the encoder's: it writes `Content-Length` for
 chunked` otherwise (HTTP/1.1), and `Date` unless the application set one
 (`AutoDateHeader`). A `Content-Length` or `Transfer-Encoding` header set
 by the application that is invalid or contradicts the body makes the
-response a user error: the connection closes. On a request header list
+response a user error: the connection closes. One exception, as in
+hyper: with a body of known length (`Respond`), the application's
+`Content-Length` is written as given and assumed to match; a wrong one
+breaks the framing of the connection. Builds with assertions (`-Sa`)
+check it. The C interface leaves that header out and writes the length. On a request header list
 (`Ex.Headers`) the application only reads.

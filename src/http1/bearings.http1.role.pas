@@ -1197,6 +1197,14 @@ begin
                     (assumed to match); later ones are dropped }
                   if not IsNameWritten then
                   begin
+                    {$IFOPT C+}
+                    { as hyper's debug_assert: with assertions on (-Sa, the
+                      test builds), a value that does not match the body
+                      stops the program; it would break the connection's
+                      framing (the C interface leaves such a field out) }
+                    if ContentLengthParse(VP, VL, L) then
+                      Assert(L = BodyLen, 'Content-Length does not match the body length');
+                    {$ENDIF}
                     EncKind := ekLength;
                     EncLen := BodyLen;
                     W.WriteName(D, @STR_CONTENT_LENGTH[0], 14);

@@ -24,7 +24,10 @@ it waits for a database). It answers with exactly one of
 `bearings_respond`, `bearings_respond_file` or `bearings_begin_stream`
 (then `bearings_write`, and `bearings_finish` or `bearings_abort_stream`)
 before it returns. The exchange is valid only during the callback; a
-callback that returns without answering gets a 500.
+callback that returns without answering gets a 500. When the body's
+length is known (`bearings_respond` with a body, `bearings_respond_file`),
+a `Content-Length` among the headers is left out and the server writes
+that length: a wrong one would break the framing of the connection.
 
 `bearings_server_new` blocks every signal while it starts the server's
 threads, which inherit that mask: the process's signals go to the threads

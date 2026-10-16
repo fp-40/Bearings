@@ -3,6 +3,7 @@ import os
 import socket
 import sys
 import threading
+from importlib.metadata import version
 
 import pytest
 
@@ -36,7 +37,8 @@ def test_environ_of_a_request(serve):
         "RAW_URI": "/a%20b/%C3%B1?x=1&y=%20",
         "SERVER_PROTOCOL": "HTTP/1.1",
         "SERVER_NAME": "127.0.0.1",
-        "SERVER_SOFTWARE": "bearings/0.1.0",
+        # one version for the library and the package (tools/check-version.sh)
+        "SERVER_SOFTWARE": f"bearings/{version('pybearings')}",
         "REMOTE_ADDR": "127.0.0.1",
         "wsgi.url_scheme": "http",
         "wsgi.input_terminated": True,
@@ -496,3 +498,92 @@ def test_requests_in_parallel(serve):
     for thread in threads:
         thread.join()
     assert results == {n: f"/{n}".encode() for n in range(4)}
+
+
+def test_write_after_the_request_ended(serve):
+    kept = []
+
+    def app(environ, start_response):
+        kept.append(start_response("200 OK", []))
+        return [b"ok"]
+
+    client = serve(app)
+    assert client.request().body == b"ok"
+    errors = []
+
+    def late():  # from another thread, once the exchange is gone
+        try:
+            kept[0](b"too late")
+        except RuntimeError as exc:
+            errors.append(str(exc))
+
+    thread = threading.Thread(target=late)
+    thread.start()
+    thread.join()
+    assert errors == ["the request has ended: write() can't send anymore"]
+
+
+def test_middleware_that_replaces_the_input(serve, capfd):
+    kept = []
+
+    def app(environ, start_response):
+        original = environ["wsgi.input"]
+        kept.append(original)
+        environ["wsgi.input"] = io.BytesIO(original.read(2))  # as some middleware does
+        start_response("200 OK", [])
+        return [environ["wsgi.input"].read()]
+
+    client = serve(app)
+    assert client.request("POST", "/", body=b"body").body == b"bo"
+    assert capfd.readouterr().err == ""
+    with pytest.raises(ValueError, match="request has ended"):
+        kept[0].read()  # the original stream was ended all the same
+
+
+def test_a_wrong_content_length_is_replaced(serve):
+    # a middleware that changed the body and kept the old length, say
+    client = serve(respond_with(headers=[("Content-Length", "100")], body=[b"hello"]))
+    answer = client.raw(
+        b"GET / HTTP/1.1\r\nHost: x\r\n\r\n"
+        b"GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+    )
+    # both answers, each framed by the length of its body
+    assert answer.count(b"HTTP/1.1 200 OK\r\n") == 2
+    assert answer.lower().count(b"content-length: 5\r\n") == 2
+    assert b"content-length: 100" not in answer.lower()
+
+
+def test_head_keeps_the_content_length(serve):
+    client = serve(respond_with(headers=[("Content-Length", "100")], body=[b"x" * 100]))
+    response = client.request("HEAD")
+    assert response.getheader("Content-Length") == "100"
+    assert response.body == b""
+
+
+def test_a_file_shorter_than_its_content_length(serve, tmp_path):
+    path = tmp_path / "short.txt"
+    path.write_bytes(b"0123456789")
+
+    def app(environ, start_response):
+        start_response("200 OK", [("Content-Length", "50")])
+        return FileWrapper(open(path, "rb"))
+
+    response = serve(app).request()
+    assert response.getheader("Content-Length") == "10"
+    assert response.body == b"0123456789"
+
+
+def test_a_nul_in_a_header_is_refused(serve, capfd):
+    client = serve(respond_with(headers=[("X-A", "v\0Set-Cookie\0evil")], body=[b"x"]))
+    response = client.request()
+    assert response.status == 500
+    assert response.getheader("Set-Cookie") is None
+    assert "a NUL in a response header" in capfd.readouterr().err
+
+
+def test_read_of_a_size_larger_than_the_body(serve):
+    # the size may come from the client (CONTENT_LENGTH): nothing that
+    # large is allocated before the bytes arrive
+    client = serve(body_app(lambda stream: stream.read(10**12)))
+    assert client.request("POST", "/", body=b"abc").body == b"abc"
+

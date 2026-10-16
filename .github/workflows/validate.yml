@@ -35,3 +35,29 @@ jobs:
 
       - name: "Test"
         run: cd python && make test
+
+  pascal:
+    name: pascal (fast tier)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Free Pascal 3.2.2 (and uv, unused here)
+      - uses: ./.github/actions/setup
+
+      - name: "Unit tests"
+        run: make test-pascal
+
+      - name: "Upload the test logs"
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pascal-test-logs
+          # the logs, not the binaries
+          path: |
+            build/unit/**/*.log
+            build/unit/**/*.out
+            build/unit/**/*.txt
+            build/unit/**/*.heap

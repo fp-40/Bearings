@@ -1061,6 +1061,11 @@ begin
   AssertTrue('bad port', Parse('PROXY TCP4 10.1.2.3 10.0.0.1 65536 80'#13#10) = ppError);
   AssertTrue('port not a number', Parse('PROXY TCP4 10.1.2.3 10.0.0.1 5x 80'#13#10) = ppError);
   AssertTrue('missing field', Parse('PROXY TCP4 10.1.2.3 10.0.0.1 5555'#13#10) = ppError);
+  { the bound is the line's length, CRLF included, whatever follows it }
+  AssertTrue('107 bytes', Parse('PROXY UNKNOWN ' + StringOfChar('x', 91) + #13#10'GET / HTTP/1.1') = ppOk);
+  AssertEquals(107, Used);
+  AssertTrue('108 bytes', Parse('PROXY UNKNOWN ' + StringOfChar('x', 92) + #13#10'GET / HTTP/1.1') = ppError);
+  AssertTrue('108 bytes, alone', Parse('PROXY UNKNOWN ' + StringOfChar('x', 92) + #13#10) = ppError);
   AssertTrue('extra field', Parse('PROXY TCP4 10.1.2.3 10.0.0.1 5555 80 x'#13#10) = ppError);
   AssertTrue('lowercase', Parse('proxy TCP4 10.1.2.3 10.0.0.1 5555 80'#13#10) = ppError);
 end;

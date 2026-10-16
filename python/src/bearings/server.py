@@ -15,6 +15,11 @@ from .wsgi import RawHandler, WsgiHandler
 ACCESS_LOGS = {None: 0, "json": 1, "combined": 2}
 _ERRNO = re.compile(r"errno (\d+)")
 
+# The servers started and not yet freed: C calls their callbacks (cffi
+# closures that live as long as their Server), so a server stays alive
+# while it runs even when the program dropped its last reference.
+_running: set["Server"] = set()
+
 
 def _address(host: str) -> str:
     """Bearings listens on an address: a host name is looked up, and its
@@ -187,6 +192,10 @@ class Server:
         )
         self._server = None
         self._lock = threading.Lock()
+        # the calls into the server under way (from any thread): wait()
+        # frees it only when there are none
+        self._users = 0
+        self._idle = threading.Condition(self._lock)
 
     def _keep(self, text: str) -> t.Any:
         """A C string the config points to, alive as long as the server."""
@@ -196,9 +205,11 @@ class Server:
     @property
     def port(self) -> int:
         """The port it listens on (0 on a Unix socket)."""
-        if self._server is None:
-            raise RuntimeError("the server is not running")
-        return lib.bearings_server_port(self._server)
+        server = self._enter()
+        try:
+            return lib.bearings_server_port(server)
+        finally:
+            self._leave()
 
     def start(self) -> None:
         with self._lock:
@@ -212,6 +223,7 @@ class Server:
             if server == ffi.NULL:
                 raise _error(ffi.string(err).decode(errors="replace"))
             self._server = server
+            _running.add(self)
             self._handler.listening_on(lib.bearings_server_port(server))
 
     def stop(self, grace: float = 30) -> None:
@@ -223,26 +235,38 @@ class Server:
 
     def wait(self) -> None:
         """Block until the server stopped, then free it."""
-        server = self._server
-        if server is None:
-            return
-        lib.bearings_server_wait(server)  # another thread may call stop() meanwhile
         with self._lock:
-            if self._server is server:
-                self._server = None
-                lib.bearings_server_free(server)
+            server = self._server
+            if server is None:
+                return
+            self._users += 1  # another thread may wait() too
+        try:
+            lib.bearings_server_wait(server)  # another thread may call stop() meanwhile
+        finally:
+            with self._lock:
+                self._users -= 1
+                if self._server is server:
+                    self._server = None  # no new call starts
+                    while self._users:
+                        self._idle.wait()
+                    lib.bearings_server_free(server)
+                    _running.discard(self)
+                elif not self._users:
+                    self._idle.notify_all()
 
     def metrics(self) -> str:
         """The counters, in the Prometheus text format (with `metrics=True`)."""
-        if self._server is None:
-            raise RuntimeError("the server is not running")
-        size = 0  # the first call asks for the length
-        while True:
-            buf = ffi.new("char[]", size) if size else ffi.NULL
-            n = lib.bearings_metrics(self._server, buf, size)
-            if n < size:
-                return ffi.string(buf, n).decode()
-            size = n + 256  # the counters may grow a digit before the next call
+        server = self._enter()
+        try:
+            size = 0  # the first call asks for the length
+            while True:
+                buf = ffi.new("char[]", size) if size else ffi.NULL
+                n = lib.bearings_metrics(server, buf, size)
+                if n < size:
+                    return ffi.string(buf, n).decode()
+                size = n + 256  # the counters may grow a digit before the next call
+        finally:
+            self._leave()
 
     # WebSockets, by the id `WebSocketHandler.opened()` got; from any thread
 
@@ -250,12 +274,20 @@ class Server:
         """Send a text message. False when nothing was sent: the connection
         is closing or gone, or behind by `send_high_water` bytes."""
         data = message.encode()
-        return lib.bearings_ws_send(self._running(), ws, data, len(data)) == OK
+        server = self._enter()
+        try:
+            return lib.bearings_ws_send(server, ws, data, len(data)) == OK
+        finally:
+            self._leave()
 
     def ws_close(self, ws: int, code: int = 1000, reason: str = "") -> bool:
         """Start the close handshake. False when the connection is already
         closing or gone."""
-        return lib.bearings_ws_close(self._running(), ws, code, reason.encode()) == OK
+        server = self._enter()
+        try:
+            return lib.bearings_ws_close(server, ws, code, reason.encode()) == OK
+        finally:
+            self._leave()
 
     def subscribe(self, ws: int, topic: str) -> bool:
         """Subscribe a connection to a topic, or to a pattern of them: levels
@@ -268,7 +300,11 @@ class Server:
 
     def _subscription(self, call: t.Callable, ws: int, topic: str) -> bool:
         data = topic.encode()
-        result = call(self._running(), ws, data, len(data))
+        server = self._enter()
+        try:
+            result = call(server, ws, data, len(data))
+        finally:
+            self._leave()
         if result == INVALID:
             raise ValueError(f"not a valid topic: {topic!r}")
         return result == OK
@@ -279,7 +315,11 @@ class Server:
         closed, with `close_on_backpressure`). False after `stop()`."""
         name = topic.encode()
         data = message.encode()
-        result = lib.bearings_ws_publish(self._running(), name, len(name), data, len(data))
+        server = self._enter()
+        try:
+            result = lib.bearings_ws_publish(server, name, len(name), data, len(data))
+        finally:
+            self._leave()
         if result == INVALID:
             raise ValueError(f"not a valid topic: {topic!r}")
         return result == OK
@@ -287,13 +327,25 @@ class Server:
     @property
     def websockets(self) -> int:
         """The WebSockets open."""
-        return lib.bearings_ws_count(self._running())
+        server = self._enter()
+        try:
+            return lib.bearings_ws_count(server)
+        finally:
+            self._leave()
 
-    def _running(self) -> t.Any:
-        server = self._server
-        if server is None:
-            raise RuntimeError("the server is not running")
-        return server
+    def _enter(self) -> t.Any:
+        """The server, for a call into it; `_leave()` after the call."""
+        with self._lock:
+            if self._server is None:
+                raise RuntimeError("the server is not running")
+            self._users += 1
+            return self._server
+
+    def _leave(self) -> None:
+        with self._lock:
+            self._users -= 1
+            if not self._users:
+                self._idle.notify_all()
 
     def __enter__(self) -> "Server":
         self.start()
@@ -317,6 +369,8 @@ def serve(
     print its port, for example). `options` are those of `Server`. Call it from the main thread: it
     installs the handlers of those two signals while it runs.
     """
+    # first: if the options are wrong, nothing is left installed
+    server = Server(app, **options)
     stopping = []
 
     def on_signal(signum: int, frame: t.Any) -> None:
@@ -331,7 +385,6 @@ def serve(
     previous = {
         signum: signal.signal(signum, on_signal) for signum in (signal.SIGINT, signal.SIGTERM)
     }
-    server = Server(app, **options)
     try:
         server.start()
         if started is not None:

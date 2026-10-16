@@ -64,7 +64,9 @@ ssize_t bearings_read(bearings_exchange *ex, char *buf, size_t max);
 size_t bearings_body_error(bearings_exchange *ex, char *buf, size_t len);
 int bearings_is_canceled(bearings_exchange *ex);
 
-/* 0 ok, 1 canceled or already answered, -1 invalid header, -3 internal error. */
+/* 0 ok, 1 canceled or already answered, -1 invalid header, -3 internal error.
+   With a body of known length (blen > 0; a file), a Content-Length among
+   the headers is left out: the server writes the length. */
 int bearings_respond(bearings_exchange *ex, int status, const char *headers, size_t hlen,
                      const char *body, size_t blen);
 int bearings_respond_file(bearings_exchange *ex, int status, const char *headers, size_t hlen,

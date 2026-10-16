@@ -276,3 +276,59 @@ def test_the_reason_a_port_cannot_be_listened_on():
         assert error.value.errno == errno.EADDRINUSE
     finally:
         taken.close()
+
+
+def test_a_server_whose_last_reference_is_dropped():
+    import gc
+
+    from bearings import server as server_module
+
+    server = Server(hello, host="127.0.0.1", loops=1, workers=1)
+    server.start()
+    port = server.port
+    del server
+    gc.collect()  # the callbacks C calls must outlive the reference
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn.request("GET", "/")
+    assert conn.getresponse().read() == b"hello"
+    conn.close()
+    (running,) = server_module._running
+    running.stop(grace=1)
+    running.wait()
+    assert not server_module._running
+
+
+def test_calls_from_other_threads_while_the_server_is_freed():
+    from bearings import WebSocketHandler
+
+    for _ in range(20):
+        server = Server(hello, host="127.0.0.1", loops=1, workers=1, websocket=WebSocketHandler())
+        server.start()
+        outcomes = []
+
+        def hammer(server=server, outcomes=outcomes):
+            try:
+                while True:
+                    server.publish("news", "x")
+                    server.websockets  # noqa: B018
+            except RuntimeError:  # the server stopped: no use-after-free
+                outcomes.append("stopped")
+
+        threads = [threading.Thread(target=hammer) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        server.stop(grace=0)
+        server.wait()
+        for thread in threads:
+            thread.join()
+        assert outcomes == ["stopped"] * 4
+
+
+def test_serve_with_a_wrong_option_leaves_the_signals_alone():
+    previous = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)}
+    previous_fd = signal.set_wakeup_fd(-1)
+    signal.set_wakeup_fd(previous_fd)
+    with pytest.raises(ValueError):
+        serve(hello, access_log="nonsense")
+    assert {signum: signal.getsignal(signum) for signum in previous} == previous
+    assert signal.set_wakeup_fd(previous_fd) == previous_fd

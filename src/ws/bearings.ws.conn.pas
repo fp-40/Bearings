@@ -67,7 +67,7 @@
   instead of filling the server's memory. Reading resumes when a data send
   would be accepted again (fewer than SendHighWater bytes queued).
 
-  Sending. A frame is never written at once: it goes to the output queue,
+  Sending. A frame is not written at once: it goes to the output queue,
   and the next run of the connection (Step, woken by the send) writes the
   queue, with one writev for up to WS_MAX_IOV segments; what the socket
   does not take is written when it becomes writable. So the frames a loop
@@ -79,7 +79,9 @@
   (TWsFrame, bearings.ws.frame) held by reference. A flush writes up to
   WS_MAX_IOV segments with one writev. A data send is refused with wsFull when SendHighWater or more
   bytes are queued (the message is not queued; the application waits for
-  OnWritable). A single message larger than SendHighWater is accepted when
+  OnWritable); a send outside a run of the connection (a publish, a loop
+  message) that finds the queue at the mark first writes the queue, and
+  is refused only if the socket did not take enough (AtMark). A single message larger than SendHighWater is accepted when
   the queue is below the mark. Control frames (pong, close) are always
   queued. After the close frame was sent, every send returns wsClosed.
 
@@ -102,8 +104,10 @@
   Sending from another thread. SendText and friends run on the loop thread
   only. Another thread uses PostText / PostBinary: the message is copied
   into a list under a spin lock and a message (TLoop.Post) asks the loop to
-  move it into the output queue. The list is bounded by SendHighWater too
-  (wsFull). To use a TWebSocket from another thread at all, that thread
+  move it into the output queue, while the queue is below SendHighWater
+  (the rest waits in the list). The list is bounded by SendHighWater too
+  (wsFull), so a thread that posts to a client that does not read gets
+  wsFull once the list and the queue are full. To use a TWebSocket from another thread at all, that thread
   needs a reference: AddRef on the loop thread (for example in OnOpen),
   Release when done, from any thread. The loop holds one reference until
   the connection ends; the object is freed when the last reference goes.
@@ -277,6 +281,7 @@ type
     FFinished: Boolean;
     FWantWritable: Boolean;          { a send returned wsFull }
     FReadPaused: Boolean;            { reading stopped: the output queue is over the mark }
+    FWriteBlocked: Boolean;          { the last Flush stopped at EAGAIN or an error: EPOLLOUT (or the end) comes }
     FInStep: Boolean;
     FPeerCode: Word;                 { the client's close code; 1005 none; 1006 no close frame }
     FPeerReason: RawByteString;
@@ -315,13 +320,16 @@ type
     procedure HandleBytes(P: PByte; L: SizeInt);
     procedure HandleControl;
     procedure Deliver(Opcode: Byte; P: PByte; Len: SizeInt);
+    procedure WriteQueue;
     procedure Flush;
     procedure DrainPosted;
+    function PostsLeft: Boolean;
     procedure HandleTimers;
     procedure Fail(Code: Word; const Msg: string);
     procedure IoFailed(const What: string; Errno: cint);
     procedure QueueClose(Code: Word; const Reason: RawByteString);
     function QueueFrame(Opcode: Byte; P: PByte; Len: SizeInt; Control: Boolean): TWsSendResult;
+    function AtMark: Boolean;
     function QueuePrepared(const F: TWsFrame; Control: Boolean): TWsSendResult;
     function Refused(Opcode: Byte; Control: Boolean): Boolean; inline;
     procedure PushSeg(Len: SizeInt; P: PByte; Ref: Pointer);
@@ -712,6 +720,17 @@ begin
       ReadInput;
       Flush;
     end;
+    { work left that no event will start, since the socket is
+      edge-triggered: the last Flush emptied the queue without EAGAIN after
+      the read paused (no EPOLLIN: the unread bytes are not new), or
+      OnWritable queued frames at the end of a Flush that met no EAGAIN (no
+      EPOLLOUT), or DrainPosted left posts in the list for a queue that
+      this run emptied; and sends from Step itself do not wake (FInStep).
+      Run again. }
+    if not FEnded and (FU.Transport <> nil)
+      and ((FReadPaused and not ReadBlocked) or ((FQueued > 0) and not FWriteBlocked)
+        or (not FWriteBlocked and PostsLeft)) then
+      FU.Wake;
     { the end: output flushed, then the write side shut down, then the
       client's end of stream (or the close timeout) }
     if Ending and not FEnded and (Queued = 0) and not FShutDown then
@@ -1077,11 +1096,10 @@ var
 begin
   if Refused(Opcode, Control) then
     Exit(wsClosed);
-  if (not Control) and (FQueued >= FCfg.SendHighWater) then
-  begin
-    FWantWritable := True;
+  if (not Control) and AtMark then
     Exit(wsFull);
-  end;
+  if FEnded then
+    Exit(wsClosed);                  { AtMark's write failed }
   H := WsEncodeHeader(@Hdr[0], True, Opcode, Len);
   PushCopy(@Hdr[0], H);
   PushCopy(P, Len);
@@ -1092,17 +1110,38 @@ end;
 
 { the same for a prepared frame: copied when small, shared by reference
   when it is WS_SHARE_MIN bytes or more }
+{ A data send would go over the mark: SendHighWater bytes or more queued.
+  Outside Step (a publish, a loop message, a timer), the queue may be at
+  the mark only because no run has written it yet: the socket is written
+  first, and the send is refused only if it is still at the mark. A burst
+  of sends in one loop iteration (the publishes of one inbox drain) then
+  goes to the socket as it fills the queue, as it did when every send was
+  written at once, instead of being dropped at the mark for a client that
+  reads. Sets FWantWritable when it refuses. }
+function TWebSocket.AtMark: Boolean;
+begin
+  Result := FQueued >= FCfg.SendHighWater;
+  if Result and not FInStep then
+  begin
+    WriteQueue;
+    if FEnded then
+      FU.Wake;                       { the write failed: Step finishes the connection }
+    Result := FQueued >= FCfg.SendHighWater;
+  end;
+  if Result then
+    FWantWritable := True;
+end;
+
 function TWebSocket.QueuePrepared(const F: TWsFrame; Control: Boolean): TWsSendResult;
 var
   N: SizeInt;
 begin
   if Refused(0, Control) then
     Exit(wsClosed);
-  if (not Control) and (FQueued >= FCfg.SendHighWater) then
-  begin
-    FWantWritable := True;
+  if (not Control) and AtMark then
     Exit(wsFull);
-  end;
+  if FEnded then
+    Exit(wsClosed);                  { AtMark's write failed }
   N := Length(F);
   if N < WS_SHARE_MIN then
     PushCopy(PByte(F), N)
@@ -1123,13 +1162,16 @@ begin
   Result := QueuePrepared(F, Op >= 8);
 end;
 
-procedure TWebSocket.Flush;
+{ Writes the queue until it is empty or the socket is full (EAGAIN; then
+  EPOLLOUT starts the next run). Sets FWriteBlocked. }
+procedure TWebSocket.WriteQueue;
 var
   Iov: array[0..WS_MAX_IOV - 1] of TSysIoVec;
   N, I, K: Integer;
   C: SizeInt;
   W: SizeInt;
 begin
+  FWriteBlocked := False;
   while (FQueued > 0) and not FEnded and (FU.Transport <> nil) do
   begin
     { the first segments, as one writev; copied bytes follow each other in FOut }
@@ -1154,9 +1196,13 @@ begin
     else
       W := FU.Transport.WriteV(@Iov[0], N);
     if W = -ESysEAGAIN then
+    begin
+      FWriteBlocked := True;
       Break;
+    end;
     if W < 0 then
     begin
+      FWriteBlocked := True;
       IoFailed('write', -W);
       Break;
     end;
@@ -1176,18 +1222,45 @@ begin
     FOut.DrainFront(FOutPos);        { keep the copied bytes from growing at the front }
     FOutPos := 0;
   end;
+end;
+
+{ WriteQueue, then OnWritable when a send was refused and the queue went
+  down to half the mark. Step only: OnWritable may send. }
+procedure TWebSocket.Flush;
+begin
+  WriteQueue;
   if FWantWritable and not Closing and (FQueued <= FCfg.SendHighWater div 2) then
   begin
     FWantWritable := False;
-    FHandler.OnWritable(Self);
+    { a handler on the worker pool has no OnWritable for these sends: the
+      wsFull came from a loop-thread send (bearings.ws.topics), which
+      drops the message }
+    if FHandler <> nil then
+      FHandler.OnWritable(Self);
   end;
 end;
 
+function TWebSocket.PostsLeft: Boolean;
+begin
+  FPostLock.Acquire;
+  Result := FPostedCount > 0;
+  FPostLock.Release;
+end;
+
+{ Moves the posted items into the output queue, in order, while it is
+  below the mark; the rest stays in the list (where it still counts
+  against new posts, FPostedBytes) for a later run. So the posts of a
+  thread that keeps getting wsOk cannot grow the output queue past the
+  mark for a client that does not read: the list and the queue are each
+  bounded by SendHighWater and one message. A PostClose in the list takes
+  everything before it out, so the close frame is queued (and its timeout
+  armed) whatever the client reads. }
 procedure TWebSocket.DrainPosted;
 var
-  Items: array of TWsPosted;
-  N, I: Integer;
-  WantWritable: Boolean;
+  Items, Rest: array of TWsPosted;
+  N, I, J: Integer;
+  Left: SizeInt;
+  WantWritable, HasClose: Boolean;
 begin
   FPostLock.Acquire;
   Items := FPosted;
@@ -1198,7 +1271,15 @@ begin
   WantWritable := FPostWritable;
   FPostWritable := False;
   FPostLock.Release;
+  HasClose := False;
   for I := 0 to N - 1 do
+    if Items[I].Opcode = WS_OP_CLOSE then
+      HasClose := True;
+  I := 0;
+  while I < N do
+  begin
+    if (FQueued >= FCfg.SendHighWater) and not HasClose then
+      Break;
     if Items[I].Opcode = 0 then
       QueuePrepared(Items[I].Data, True)
     else if Items[I].Opcode = WS_OP_CLOSE then
@@ -1206,7 +1287,30 @@ begin
       CloseWith((Word(Items[I].Data[1]) shl 8) or Word(Items[I].Data[2]), Copy(Items[I].Data, 3, MaxInt))
     else
       QueueFrame(Items[I].Opcode, PByte(Items[I].Data), Length(Items[I].Data), True);
-  if WantWritable and (FWorker <> nil) then
+    Inc(I);
+  end;
+  if I < N then
+  begin
+    { the rest goes back, before what was posted meanwhile }
+    Left := 0;
+    for J := I to N - 1 do
+      Inc(Left, Length(Items[J].Data));
+    FPostLock.Acquire;
+    if not FPostClosed then
+    begin
+      SetLength(Rest, N - I + FPostedCount);
+      for J := I to N - 1 do
+        Rest[J - I] := Items[J];
+      for J := 0 to FPostedCount - 1 do
+        Rest[N - I + J] := FPosted[J];
+      FPosted := Rest;
+      FPostedCount := Length(Rest);
+      Inc(FPostedBytes, Left);
+      FPostWritable := FPostWritable or WantWritable;
+    end;
+    FPostLock.Release;
+  end
+  else if WantWritable and (FWorker <> nil) then
     Enqueue(weWritable, '');
 end;
 

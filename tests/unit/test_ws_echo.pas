@@ -7,6 +7,7 @@
   stream), the 400 and 426 refusals and a plain request on the same
   service, the subprotocol header, 16 clients on 2 loops at once, a client
   that floods without reading (backpressure; every echo arrives in order),
+  a producer that sends from OnWritable to a client that only reads,
   and a client that disconnects in the middle of a frame (the connection
   object is freed). TTestWsWorker covers the handler on the worker pool
   (TWsWorkerHandler, path /worker): echo in order from a worker thread,
@@ -17,9 +18,9 @@
   pubx, pubbig): fan-out on two loops in order, the wildcards, the
   exclusion of the sender, unsubscribe and the removal at close, subscribe
   and publish from a worker handler, a subscriber that does not read
-  (DroppedMessages, CloseOnBackpressure), and a publish from a plain
-  thread. tests/unit/run_all.sh also runs TTestWsWorker and TTestWsTopics
-  under valgrind drd.
+  (DroppedMessages, CloseOnBackpressure), one on the worker pool that
+  catches up, and a publish from a plain thread. tests/unit/run_all.sh
+  also runs TTestWsWorker and TTestWsTopics under valgrind drd.
   Run: test_ws_echo --all --format=plain
        test_ws_echo --suite=TTestWsWorker --format=plain }
 program test_ws_echo;
@@ -102,9 +103,21 @@ type
   public
     Topic: RawByteString;
     N: Integer;
+    Size: Integer;                   { > 0: binary 'I:' + Size bytes; else text 'tick I' }
     procedure Execute; override;
   end;
 
+  { /produce: the text 'N:Size' starts N binary messages of Size bytes
+    ('I:' and a pattern); each send that returns wsFull resumes in
+    OnWritable, the usual producer of a handler on the loop }
+  TProducer = class(TWebSocketHandler)
+  private
+    FN, FSize, FSent: Integer;
+    procedure Produce(WS: TWebSocket);
+  public
+    procedure OnText(WS: TWebSocket; P: PByte; Len: SizeInt); override;
+    procedure OnWritable(WS: TWebSocket); override;
+  end;
   TEchoCall = class(TServiceCall)
   public
     function Poll(Ex: TExchange): TCallPoll; override;
@@ -171,6 +184,7 @@ type
     procedure Subprotocol_header;
     procedure Many_clients_on_two_loops;
     procedure Flood_without_reading;
+    procedure Sends_from_OnWritable_go_out;
     procedure Disconnect_mid_frame_frees_the_connection;
     procedure Server_stop_closes_websockets;
     procedure Server_stop_aborts_at_the_deadline;
@@ -186,6 +200,7 @@ type
     procedure PostClose_from_the_worker;
     procedure Many_clients_on_two_loops;
     procedure Server_stop_while_a_handler_is_busy;
+    procedure Posts_to_a_client_that_does_not_read_are_bounded;
   end;
 
   TTestWsTopics = class(TTestWsBase)
@@ -204,7 +219,9 @@ type
     procedure Subscribe_and_publish_from_a_worker_handler;
     procedure Slow_subscriber_drops_messages;
     procedure Slow_subscriber_aborted_with_CloseOnBackpressure;
+    procedure Slow_worker_subscriber_catches_up;
     procedure Publish_from_a_plain_thread;
+    procedure A_burst_of_publishes_reaches_a_reader;
     procedure First_subscriber_of_a_loop_gets_the_next_publish;
     procedure Invalid_patterns_and_topics;
   end;
@@ -229,6 +246,7 @@ var
   TopicCloses: LongInt;              { OnClose of the topic handlers }
   TopicDrops: LongInt;               { DroppedMessages of the last closed connection that had any }
   TopicAborts: LongInt;              { OnClose with 1006 }
+  FloodTotal: LongInt;               { bytes the worker's 'flood' got wsOk for; -1 until it ends }
 
 { ---- the topic handlers ---- }
 
@@ -240,7 +258,9 @@ end;
 
 { 'sub P', 'unsub P', 'pub T text', 'pubx T text' (everyone but the
   sender), 'pubbig T N' (N bytes, binary), 'pubframe T text', 'subpub T
-  text' (subscribe to T, then publish to it at once); the answer or '' }
+  text' (subscribe to T, then publish to it at once), 'block MS' (sleeps
+  on the thread of the handler: on the loop, it holds the loop); the
+  answer or '' }
 function TopicCommand(WS: TWebSocket; const Msg: RawByteString): RawByteString;
 var
   Cmd, A, B: RawByteString;
@@ -283,6 +303,8 @@ begin
     Topics.Subscribe(WS, A);
     Topics.Publish(A, B);
   end
+  else if Cmd = 'block' then
+    Sleep(StrToInt(A))
   else
     Result := 'unknown';
 end;
@@ -332,7 +354,10 @@ var
   I: Integer;
 begin
   for I := 1 to N do
-    Topics.Publish(Topic, 'tick ' + IntToStr(I));
+    if Size > 0 then
+      Topics.PublishBinary(Topic, IntToStr(I) + ':' + Pattern(Size))
+    else
+      Topics.Publish(Topic, 'tick ' + IntToStr(I));
 end;
 
 { ---- TWorkerEcho ---- }
@@ -372,9 +397,45 @@ begin
   Inc(FCount);
 end;
 
+{ 'flood': posts 64 KiB binary messages while they are accepted, until
+  they have been refused for 500 ms on end (or 64 MiB went); the bytes
+  accepted go to FloodTotal }
+procedure FloodPosts(WS: TWebSocket);
+var
+  Chunk: RawByteString;
+  Total: Int64;
+  T0: QWord;
+  Going: Boolean;
+begin
+  Chunk := Pattern(65536);
+  Total := 0;
+  T0 := GetTickCount64;
+  Going := True;
+  while Going and (Total < 64 * 1024 * 1024) do
+    case WS.PostBinary(Chunk) of
+      wsOk:
+        begin
+          Inc(Total, Length(Chunk));
+          T0 := GetTickCount64;
+        end;
+      wsFull:
+        if GetTickCount64 - T0 > 500 then
+          Going := False
+        else
+          Sleep(5);
+    else
+      Going := False;
+    end;
+  HappensBefore(@FloodTotal);
+  AtomicStore(FloodTotal, LongInt(Total));
+end;
+
 procedure TWorkerEcho.OnText(WS: TWebSocket; const Msg: RawByteString);
 begin
-  Echo(WS, True, Msg);
+  if Msg = 'flood' then
+    FloodPosts(WS)
+  else
+    Echo(WS, True, Msg);
 end;
 
 procedure TWorkerEcho.OnBinary(WS: TWebSocket; const Msg: RawByteString);
@@ -518,6 +579,32 @@ begin
   Dec(FCount, Sent);
 end;
 
+procedure TProducer.Produce(WS: TWebSocket);
+begin
+  while FSent < FN do
+  begin
+    if WS.SendBinary(IntToStr(FSent + 1) + ':' + Pattern(FSize)) = wsFull then
+      Exit;                          { OnWritable goes on }
+    Inc(FSent);
+  end;
+end;
+
+procedure TProducer.OnText(WS: TWebSocket; P: PByte; Len: SizeInt);
+var
+  S: RawByteString;
+begin
+  SetString(S, PAnsiChar(P), Len);
+  FN := StrToInt(Copy(S, 1, Pos(':', S) - 1));
+  FSize := StrToInt(Copy(S, Pos(':', S) + 1, MaxInt));
+  FSent := 0;
+  Produce(WS);
+end;
+
+procedure TProducer.OnWritable(WS: TWebSocket);
+begin
+  Produce(WS);
+end;
+
 function TEchoCall.Poll(Ex: TExchange): TCallPoll;
 var
   R: TWsHandshake;
@@ -527,6 +614,8 @@ begin
     R := CheckRequest(Ex, ['chat'], ['http://localhost']);
     if R.Ok and PathIs(Ex, '/room') then
       AcceptWebSocket(Ex, R, TRoomHandler.Create, WsCfg)
+    else if R.Ok and PathIs(Ex, '/produce') then
+      AcceptWebSocket(Ex, R, TProducer.Create, WsCfg)
     else if R.Ok and PathIs(Ex, '/worker') then
       AcceptWebSocket(Ex, R, TWorkerEcho.Create, ServerForPool.Workers, WsCfg)
     else if R.Ok and PathIs(Ex, '/topics') then
@@ -717,6 +806,7 @@ begin
   WorkerCloseThread := 0;
   TopicCloses := 0;
   TopicDrops := 0;
+  FloodTotal := -1;
   TopicAborts := 0;
   Topics := TWsTopics.Create;
 end;
@@ -947,6 +1037,41 @@ begin
     AssertEquals('reader', '', R.Error);
     AssertEquals(N, R.Got);
     R.Free;
+    C.SendAll(CFrame(WS_OP_CLOSE, #3#232));
+    AssertTrue(C.Frame(F));
+    AssertEquals(WS_OP_CLOSE, F.Opcode);
+  finally
+    C.Free;
+  end;
+  WaitFreed;
+end;
+
+{ The sends OnWritable makes go out with nothing else to wake the
+  connection: no pings, a client that only reads. OnWritable runs at the
+  end of a write that emptied the queue without EAGAIN, so no EPOLLOUT
+  edge follows; what it queued must still be written. }
+procedure TTestWsEcho.Sends_from_OnWritable_go_out;
+var
+  C: TClient;
+  F: TServerFrame;
+  I: Integer;
+const
+  N = 200;
+  Size = 10000;                      { 2 MB: about eight refills of the 256 KiB mark }
+begin
+  WsCfg.PingIntervalMs := 0;
+  StartServer(1);
+  C := TClient.Connect(Srv.Port);
+  try
+    C.Handshake('', '', '/produce');
+    C.SendAll(CFrame(WS_OP_TEXT, IntToStr(N) + ':' + IntToStr(Size)));
+    for I := 1 to N do
+    begin
+      AssertTrue('message ' + IntToStr(I) + ' of ' + IntToStr(N) + ' (10 s receive timeout)', C.Frame(F));
+      AssertEquals(WS_OP_BINARY, F.Opcode);
+      AssertTrue('message ' + IntToStr(I) + ' in order', AnsiStartsStr(IntToStr(I) + ':', F.Payload));
+      AssertEquals(Length(IntToStr(I)) + 1 + Size, Length(F.Payload));
+    end;
     C.SendAll(CFrame(WS_OP_CLOSE, #3#232));
     AssertTrue(C.Frame(F));
     AssertEquals(WS_OP_CLOSE, F.Opcode);
@@ -1288,6 +1413,49 @@ begin
   AssertEquals(16, WorkerOpens);
   AssertEquals(16, WorkerCloses);
   AssertEquals(0, WorkerOnLoop);
+end;
+
+procedure TTestWsWorker.Posts_to_a_client_that_does_not_read_are_bounded;
+var
+  C: TClient;
+  F: TServerFrame;
+  Total, Got: Int64;
+  I: Integer;
+begin
+  { The worker posts while it gets wsOk to a client that reads nothing:
+    the posts must be refused once the post list and the output queue are
+    full (each about SendHighWater, 256 KiB here, plus the socket's
+    buffers), not accepted into a queue that grows without end. }
+  StartServer(1, 2);
+  C := TClient.Connect(Srv.Port, 65536);
+  try
+    AssertTrue(AnsiStartsStr('HTTP/1.1 101', C.Handshake('', '', '/worker')));
+    C.SendAll(CFrame(WS_OP_TEXT, 'flood'));
+    for I := 1 to 3000 do
+      if AtomicLoad(FloodTotal) >= 0 then
+        Break
+      else
+        Sleep(10);
+    Total := AtomicLoad(FloodTotal);
+    HappensAfter(@FloodTotal);
+    AssertTrue('the worker stopped', Total >= 0);
+    AssertTrue('accepted ' + IntToStr(Total) + ' bytes: bounded', Total < 16 * 1024 * 1024);
+    { everything accepted arrives }
+    Got := 0;
+    while Got < Total do
+    begin
+      AssertTrue('a message after ' + IntToStr(Got) + ' of ' + IntToStr(Total), C.Frame(F));
+      AssertEquals(WS_OP_BINARY, F.Opcode);
+      Inc(Got, Length(F.Payload));
+    end;
+    AssertEquals(Total, Got);
+    C.SendAll(CFrame(WS_OP_CLOSE, #3#232));
+    AssertTrue(C.Frame(F));
+    AssertEquals(WS_OP_CLOSE, F.Opcode);
+  finally
+    C.Free;
+  end;
+  WaitFreed;
 end;
 
 procedure TTestWsWorker.Server_stop_while_a_handler_is_busy;
@@ -1656,6 +1824,95 @@ end;
 procedure TTestWsTopics.Slow_subscriber_aborted_with_CloseOnBackpressure;
 begin
   Slow_subscriber(True);
+end;
+
+procedure TTestWsTopics.Slow_worker_subscriber_catches_up;
+const
+  N = 192;
+  Size = 65536;
+var
+  A, B, C: TClient;
+  F: TServerFrame;
+  TV: TTimeVal;
+  I: Integer;
+begin
+  { A, on the worker pool, falls behind: publishes to it return wsFull
+    (dropped). When it reads again its output queue drains: the
+    connection goes on (a handler on the worker pool has no OnWritable
+    for those sends) and its worker still answers. }
+  StartServer(1, 2);
+  A := nil; B := nil; C := nil;
+  try
+    A := Join(Srv.Port, '/topics-worker', 65536);
+    B := Join(Srv.Port);
+    C := Join(Srv.Port);
+    Sub(A, 'big');
+    Sub(B, 'big');
+    for I := 1 to N do
+    begin
+      C.SendAll(CFrame(WS_OP_TEXT, 'pubbig big ' + IntToStr(Size)));
+      AssertTrue('B message ' + IntToStr(I), B.Frame(F));
+    end;
+    { A reads what was kept, until 500 ms pass with nothing }
+    TV.tv_sec := 0;
+    TV.tv_usec := 500000;
+    fpSetSockOpt(A.Fd, SOL_SOCKET, SO_RCVTIMEO, @TV, SizeOf(TV));
+    while A.Frame(F) do
+      AssertEquals('A: ' + FrameText(F), WS_OP_BINARY, F.Opcode);
+    TV.tv_sec := 10;
+    TV.tv_usec := 0;
+    fpSetSockOpt(A.Fd, SOL_SOCKET, SO_RCVTIMEO, @TV, SizeOf(TV));
+    Sub(A, 'after');
+    CloseAll([A, B, C]);
+  finally
+    A.Free; B.Free; C.Free;
+  end;
+  WaitFreed;
+  AssertEquals(3, TopicCloses);
+  AssertTrue('A dropped messages', TopicDrops > 0);
+  AssertEquals('no abort', 0, TopicAborts);
+end;
+
+procedure TTestWsTopics.A_burst_of_publishes_reaches_a_reader;
+const
+  N = 24;
+  Size = 16384;                      { 384 KiB in one inbox drain: over the 256 KiB mark }
+var
+  A, B: TClient;
+  T: TPublisherThread;
+  F: TServerFrame;
+  I: Integer;
+begin
+  { The publishes of one loop iteration go to a subscriber that reads:
+    the queue at the mark is written to the socket, not dropped from. }
+  StartServer(1);
+  A := nil; B := nil;
+  try
+    A := Join(Srv.Port);
+    B := Join(Srv.Port);
+    Sub(A, 'burst');
+    { B holds the loop: the publishes wait in its inbox, then run in one drain }
+    B.SendAll(CFrame(WS_OP_TEXT, 'block 500'));
+    Sleep(50);
+    T := TPublisherThread.Create(True);
+    T.Topic := 'burst';
+    T.N := N;
+    T.Size := Size;
+    T.Start;
+    T.WaitFor;
+    T.Free;
+    for I := 1 to N do
+    begin
+      AssertTrue('message ' + IntToStr(I), A.Frame(F));
+      AssertEquals(WS_OP_BINARY, F.Opcode);
+      AssertTrue('message ' + IntToStr(I) + ' in order', AnsiStartsStr(IntToStr(I) + ':', F.Payload));
+    end;
+    CloseAll([A, B]);
+  finally
+    A.Free; B.Free;
+  end;
+  WaitFreed;
+  AssertEquals('none dropped', 0, TopicDrops);
 end;
 
 procedure TTestWsTopics.Publish_from_a_plain_thread;
