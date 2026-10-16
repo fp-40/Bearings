@@ -47,7 +47,7 @@ type
   published
     procedure UsableCpus_matches_proc_status;
     procedure DefaultLoopCount_equals_nproc;
-    procedure DefaultLoopCount_under_taskset_0_3_is_4;
+    procedure DefaultLoopCount_under_taskset;
     procedure Cgroup_quota_parser_fixtures;
     procedure Cgroup_limit_of_this_process;
     procedure ParseCpuList_ranges;
@@ -516,23 +516,41 @@ end;
 
 { Under an emulator (TARGET=aarch64 in tests/unit/run_all.sh) the host's
   taskset cannot start this binary directly: BEARINGS_RUNNER names the
-  command to put before it (build/tools/bin/run-aarch64). }
-procedure TTestCpu.DefaultLoopCount_under_taskset_0_3_is_4;
+  command to put before it (build/tools/bin/run-aarch64). The CPUs are
+  taken from those this process may use (a CI runner has 4): up to 4 of
+  them, then the last one alone. }
+procedure TTestCpu.DefaultLoopCount_under_taskset;
 var
-  Runner: string;
+  Runner, Some, Last, Want: string;
+  Cpus: TCpuList;
+  I, N: Integer;
+
+  function Count(const List: string): string;
+  begin
+    if Runner = '' then
+      Result := RunOut('taskset', ['-c', List, ParamStr(0), '--print-loop-count'])
+    else
+      Result := RunOut('taskset', ['-c', List, Runner, ParamStr(0), '--print-loop-count']);
+  end;
+
 begin
   Runner := GetEnvironmentVariable('BEARINGS_RUNNER');
-  if Runner = '' then
+  Cpus := UsableCpus;
+  N := Length(Cpus);
+  if N > 4 then
+    N := 4;
+  Some := '';
+  for I := 0 to N - 1 do
   begin
-    AssertEquals('taskset -c 0-3', '4', RunOut('taskset', ['-c', '0-3', ParamStr(0), '--print-loop-count']));
-    AssertEquals('taskset -c 5', '1', RunOut('taskset', ['-c', '5', ParamStr(0), '--print-loop-count']));
-  end
-  else
-  begin
-    AssertEquals('taskset -c 0-3', '4', RunOut('taskset', ['-c', '0-3', Runner, ParamStr(0), '--print-loop-count']));
-    AssertEquals('taskset -c 5', '1', RunOut('taskset', ['-c', '5', Runner, ParamStr(0), '--print-loop-count']));
+    if I > 0 then
+      Some := Some + ',';
+    Some := Some + IntToStr(Cpus[I]);
   end;
-  AssertEquals('nproc agrees', '4', RunOut('taskset', ['-c', '0-3', 'nproc']));
+  Last := IntToStr(Cpus[High(Cpus)]);
+  Want := IntToStr(N);
+  AssertEquals('taskset -c ' + Some, Want, Count(Some));
+  AssertEquals('taskset -c ' + Last, '1', Count(Last));
+  AssertEquals('nproc agrees', Want, RunOut('taskset', ['-c', Some, 'nproc']));
 end;
 
 procedure WriteText(const Path, Text: string);
