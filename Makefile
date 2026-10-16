@@ -17,11 +17,14 @@
 
 .PHONY: test test-pascal test-python test-full test-autobahn benchmark release
 
-test: test-pascal test-python
+# Each step runs even when one before it failed (a version mismatch does
+# not hide the test results); the target fails at the end if any did.
+test:
+	@status=0; $(MAKE) test-pascal || status=1; $(MAKE) test-python || status=1; exit $$status
 
 test-pascal:
-	tools/check-version.sh
-	TIER=fast tests/unit/run_all.sh
+	@status=0; tools/check-version.sh || status=1; \
+	TIER=fast tests/unit/run_all.sh || status=1; exit $$status
 
 # --reinstall-package: the editable install keeps the libbearings.so it
 # compiled; this compiles it again from the Pascal sources of the tree
