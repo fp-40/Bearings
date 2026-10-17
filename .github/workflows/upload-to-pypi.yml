@@ -26,7 +26,7 @@ jobs:
             build: uv build --wheel
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup
 
@@ -36,7 +36,7 @@ jobs:
       - name: "Lists the files"
         run: ls -l python/dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.runner }}
           path: python/dist/*
@@ -52,14 +52,14 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: dist-*
           path: dist
           merge-multiple: true
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.3.0  # no floating v10 tag
 
       - name: "Uploads to PyPI"
         run: uv publish --trusted-publishing always dist/*

@@ -4,7 +4,7 @@ install:
 
 .PHONY: test
 test:
-	uv run pytest -x src/bearings tests
+	uv run pytest src/bearings tests
 
 .PHONY: lint
 lint:

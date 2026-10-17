@@ -23,7 +23,7 @@ jobs:
 
     steps:
       # before the setup action: it is a file of this repository
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup
 
@@ -42,7 +42,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Free Pascal 3.2.2 (and uv, unused here)
       - uses: ./.github/actions/setup
@@ -52,7 +52,7 @@ jobs:
 
       - name: "Upload the test logs"
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pascal-test-logs
           # the logs, not the binaries

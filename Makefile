@@ -26,10 +26,10 @@ test-pascal:
 	@status=0; tools/check-version.sh || status=1; \
 	TIER=fast tests/unit/run_all.sh || status=1; exit $$status
 
-# --reinstall-package: the editable install keeps the libbearings.so it
-# compiled; this compiles it again from the Pascal sources of the tree
+# uv compiles libbearings.so again when the Pascal sources changed
+# (cache-keys in python/pyproject.toml)
 test-python:
-	cd python && uv sync --quiet --group dev --reinstall-package pybearings
+	cd python && uv sync --quiet --group dev
 	$(MAKE) -C python test
 
 test-full:
