@@ -1,6 +1,6 @@
 [project]
 name = "pybearings"
-version = "0.2.0"
+version = "0.3.0"
 description = "Bearings, the Free Pascal HTTP/1.1 server, as a WSGI server for Python"
 readme = "README.md"
 license = "MIT"

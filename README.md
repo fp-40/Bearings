@@ -82,6 +82,6 @@ Re-run the script after changing the library: the installed units are a copy. `f
 
 ## Version and license
 
-Version: `bearings.version.BEARINGS_VERSION` (0.1.0).
+Version: `bearings.version.BEARINGS_VERSION` (0.3.0).
 
 License: MIT (see `LICENSE`).

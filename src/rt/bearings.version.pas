@@ -10,7 +10,7 @@ interface
 
 const
   { bearings' version }
-  BEARINGS_VERSION = '0.1.0';
+  BEARINGS_VERSION = '0.3.0';
   { the Free Pascal version and target this program was built with }
   FPC_VERSION_TEXT = {$I %FPCVERSION%} + ' (' + {$I %FPCTARGETCPU%} + '-' + {$I %FPCTARGETOS%} + ')';
 
