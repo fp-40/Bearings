@@ -17,6 +17,16 @@ classifiers = [
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+# the editable install keeps the libbearings.so it compiled: build it again
+# when the Pascal sources (or the hook that compiles them) change
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "hatch_build.py" },
+    { file = "../src/**/*.pas" },
+    { file = "../src/**/*.inc" },
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/bearings"]
 # libbearings.so and bearings.h: compiled and added by hatch_build.py
