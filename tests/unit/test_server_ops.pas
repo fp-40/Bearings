@@ -22,7 +22,7 @@
   closes; the count is zero after Stop.
   TTestAccessLog (TServerConfig.AccessLog): JSON lines for a normal, an
   error, a HEAD and an HTTP/1.0 request (fields, escapes, the query); the
-  Combined format; a sink that sleeps does not slow the loop, lines are
+  response's X-Request-ID in the JSON line; the Combined format; a sink that sleeps does not slow the loop, lines are
   dropped and counted. TTestMetrics (TServerConfig.Metrics): counts after a
   known sequence (requests, status classes, bytes, the histogram, closed
   connections by outcome including a parse error, in flight during a slow
@@ -107,6 +107,12 @@ begin
   end
   else if Path = '/small' then
     Ex.Respond(BodyString('small'))
+  else if Path = '/rid' then
+  begin
+    { the request ID an application sends back, with a byte to escape }
+    Ex.ResponseHeaders.Add('X-Request-ID', 'abc-"1"');
+    Ex.Respond(BodyString('rid'));
+  end
   else if Path = '/file' then
   begin
     Fd := FpOpen(FilePath, O_RDONLY or O_CLOEXEC);
@@ -403,6 +409,7 @@ type
   TTestAccessLog = class(TServerCase)
   published
     procedure Json_lines_for_normal_error_and_head_requests;
+    procedure Json_has_the_request_id_of_the_response;
     procedure Combined_format;
     procedure Slow_sink_does_not_block_the_loop;
   end;
@@ -1479,6 +1486,37 @@ begin
       AssertEquals('0', JsonField(L[2], 'http.response.body.size'));
       { 4: HTTP/1.0 }
       AssertEquals('1.0', JsonField(L[3], 'network.protocol.version'));
+    finally
+      L.Free;
+    end;
+  finally
+    Sink.Free;
+  end;
+end;
+
+procedure TTestAccessLog.Json_has_the_request_id_of_the_response;
+var
+  Sink: TMemSink;
+  Fd: cint;
+  L: TStringList;
+begin
+  Sink := TMemSink.Create;
+  try
+    StartServer(LogConfig(1, Sink, alfJson));
+    Fd := Connect(Srv.Port);
+    try
+      GetOnce(Fd, '/rid');
+      AssertEquals(Resp('small'), GetOnce(Fd, '/small'));
+    finally
+      fpClose(Fd);
+    end;
+    StopServer;
+    L := Sink.Lines;
+    try
+      AssertEquals('two lines: ' + Sink.Text, 2, L.Count);
+      AssertEquals('abc-\"1\"', JsonField(L[0], 'http.response.header.x-request-id'));
+      AssertEquals('200', JsonField(L[0], 'http.response.status_code'));
+      AssertEquals('no request id field', 0, Pos('x-request-id', L[1]));
     finally
       L.Free;
     end;

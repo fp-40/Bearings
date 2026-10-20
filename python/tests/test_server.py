@@ -1,4 +1,5 @@
 import http.client
+import json
 import os
 import signal
 import socket
@@ -121,6 +122,21 @@ def test_access_log(capfd):
         conn.close()
     # written by the flusher thread, on the file descriptor 1
     assert '"GET /logged?q=1 HTTP/1.1" 200 5' in capfd.readouterr().out
+
+
+def test_the_json_access_log_has_the_request_id_of_the_response(capfd):
+    def with_id(environ, start_response):
+        start_response("200 OK", [("Content-Type", "text/plain"), ("X-Request-ID", "abc-123")])
+        return [b"hello"]
+
+    with Server(with_id, host="127.0.0.1", loops=1, workers=1, access_log="json") as server:
+        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+        conn.request("GET", "/logged")
+        conn.getresponse().read()
+        conn.close()
+    line = json.loads(capfd.readouterr().out.strip().splitlines()[-1])
+    assert line["http.response.header.x-request-id"] == "abc-123"
+    assert line["url.path"] == "/logged"
 
 
 def test_a_full_queue_is_answered_with_503(serve):

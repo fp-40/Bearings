@@ -708,6 +708,9 @@ begin
     R.Referer := nil;
     R.RefererLen := 0;
   end;
+  { the response head is still the exchange's: read in place, copied by Append }
+  if not D.Ex.Resp.Head.Headers.Get('x-request-id', R.RequestId, R.RequestIdLen) then
+    R.RequestId := nil;
   R.Version := D.Ex.Head.Version;
   R.Status := D.Ex.Resp.Head.Status;
   R.BodyBytes := D.RespBodyBytes;

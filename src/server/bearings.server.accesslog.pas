@@ -10,9 +10,11 @@
   "http.response.body.size", "http.server.request.duration" (seconds, from
   the request head to the complete response, measured with the loop's
   clock, which is sampled once per loop iteration: a request answered in
-  the iteration that read it shows 0) and "user_agent.original"
-  (only when the request had a User-Agent header and the log is told to
-  include it). alfCombined: the Combined Log Format of classic log tools,
+  the iteration that read it shows 0),
+  "http.response.header.x-request-id" (only when the response has an
+  X-Request-ID header, as an application or a proxy behind it sets it to
+  find the request in its own logs) and "user_agent.original" (only when
+  the request had a User-Agent header and the log is told to include it). alfCombined: the Combined Log Format of classic log tools,
     host - - [11/Oct/2026:23:59:59 +0000] "GET /x HTTP/1.1" 200 5 "referer" "agent"
   The JSON is written by hand: '"', '\' and control bytes are escaped, a
   byte sequence that is not valid UTF-8 is written as \u00XX escapes. The
@@ -79,6 +81,7 @@ type
     BodyBytes: QWord;
     DurationNs: Int64;
     UserAgent: PByte;  UserAgentLen: SizeInt;   { nil: none }
+    RequestId: PByte;  RequestIdLen: SizeInt;   { the response's X-Request-ID; nil: none (JSON only) }
     Referer: PByte;  RefererLen: SizeInt;       { nil: none (Combined only) }
   end;
 
@@ -485,6 +488,11 @@ begin
         W.Dec_(Ns div 1000000000);
         W.Byte_(Ord('.'));
         W.DecN((Ns mod 1000000000) div 1000, 6);
+        if R.RequestId <> nil then
+        begin
+          W.Str(',"http.response.header.x-request-id":');
+          W.JsonStr(R.RequestId, R.RequestIdLen);
+        end;
         if UserAgent and (R.UserAgent <> nil) then
         begin
           W.Str(',"user_agent.original":');
