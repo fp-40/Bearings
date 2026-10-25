@@ -11,6 +11,8 @@
     bad host; TListener accepts at most 64 per event; DrainAndClose;
   - TTransport.WriteV default writes the first non-empty slice only;
   - SIGPIPE ignored: a write to a closed peer returns -EPIPE / -ECONNRESET;
+  - RaiseFdLimit raises the soft RLIMIT_NOFILE to the hard limit (or to
+    NR_OPEN_DEFAULT), returns the limit in force, and is idempotent;
   - decision 11 (step H): under a low RLIMIT_NOFILE with a full backlog the
     listener leaves epoll for 1 s (the loop sleeps instead of spinning) and
     accepts the backlog once fds are free; an exception in OnAccept closes
@@ -63,6 +65,7 @@ type
     procedure Loop_create_failure_leaves_fd_0_open;
     procedure Default_WriteV_writes_first_nonempty_slice;
     procedure Write_to_closed_peer_returns_error_not_signal;
+    procedure RaiseFdLimit_raises_soft_to_hard;
   end;
 
   TConnProbe = class(TIoTask)
@@ -857,6 +860,32 @@ begin
   AssertTrue('EPIPE or ECONNRESET, and the process is alive',
     (R = -ESysEPIPE) or (R = -ESysECONNRESET));
   P.Close;
+end;
+
+procedure TTestNet.RaiseFdLimit_raises_soft_to_hard;
+var
+  Old, Lim, After: TRLimit;
+  R: Int64;
+begin
+  AssertEquals('getrlimit', 0, FpGetRLimit(RLIMIT_NOFILE, @Old));
+  try
+    { lowering the soft limit needs no privilege }
+    Lim := Old;
+    Lim.rlim_cur := 256;
+    AssertEquals('setrlimit', 0, FpSetRLimit(RLIMIT_NOFILE, @Lim));
+    R := RaiseFdLimit;
+    AssertEquals('getrlimit after', 0, FpGetRLimit(RLIMIT_NOFILE, @After));
+    AssertTrue('raised above 256', After.rlim_cur > 256);
+    AssertEquals('returns the soft limit in force', Int64(After.rlim_cur), R);
+    if Old.rlim_max <= NR_OPEN_DEFAULT then
+      AssertEquals('soft = hard', Int64(Old.rlim_max), Int64(After.rlim_cur))
+    else
+      AssertTrue('soft = hard or NR_OPEN_DEFAULT',
+        (After.rlim_cur = Old.rlim_max) or (After.rlim_cur = NR_OPEN_DEFAULT));
+    AssertEquals('a second call changes nothing', R, RaiseFdLimit);
+  finally
+    FpSetRLimit(RLIMIT_NOFILE, @Old);
+  end;
 end;
 
 { ---- M5 T-3: SockAddrToStr ---- }

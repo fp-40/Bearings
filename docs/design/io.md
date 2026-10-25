@@ -57,3 +57,5 @@ The closing connection gives the slot back (`TConnHooks.ConnDone`), resumes its 
 An upgraded connection keeps its slot until the upgraded stream is closed or detached (`TConnHooks.UpgradedClosed`). With the limit off the accept path tests one integer.
 
 `SIGPIPE` is ignored process-wide at `Start` (`IgnoreSigPipe`): a write to a reset socket then returns `-EPIPE`, which ends that connection only.
+
+`Start` also raises the soft limit on open descriptors to the hard limit (`RaiseFdLimit`). Every connection is a descriptor, and the soft limit is often low where the hard one is not (1024 and 524288 under systemd); at the soft limit `accept4` fails with `EMFILE` and the listener pauses. A process may raise its soft limit up to the hard one without privilege. When the kernel refuses the hard value (`RLIM_INFINITY`, or above `fs.nr_open`), the default `fs.nr_open` (1048576) is asked for instead; when `setrlimit` fails altogether (seccomp), the limit stays as it was.

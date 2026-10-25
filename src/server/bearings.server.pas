@@ -1351,6 +1351,7 @@ begin
   if not (Assigned(FFactory) or Assigned(FFactoryProc)) then
     raise EServerError.Create('TServer.Start: no service factory');
   IgnoreSigPipe;
+  RaiseFdLimit;
   N := FCfg.Loops;
   if N <= 0 then
     N := DefaultLoopCount;

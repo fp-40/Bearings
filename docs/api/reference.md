@@ -238,7 +238,8 @@ Member | Description | Thread
   `Executed`, `SpinNs`: any thread; `Shutdown`, `Destroy`: the owner, never
   a worker.
 - `bearings.rt.net`: `TListenSpec`, `TAcceptMode`, `TSockAddrStorage`,
-  `SockAddrToStr(Addr)` (the text of `Ex.PeerAddr^`).
+  `SockAddrToStr(Addr)` (the text of `Ex.PeerAddr^`), `RaiseFdLimit`
+  (the soft descriptor limit up to the hard one; `Start` calls it).
 - `bearings.rt.cpu`: `DefaultLoopCount`, `UsableCpus`, `CgroupCpuLimit`,
   `PinCurrentThread`.
 - `bearings.http1.role`: `THttpMethod` (`hmNone`, `hmOptions`, `hmGet`,

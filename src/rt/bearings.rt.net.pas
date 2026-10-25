@@ -58,7 +58,9 @@
   which also calls ResumeFromLimit on every loop's listeners; a timer of
   ACCEPT_PAUSE_MS is the fallback should that call not come. With the
   limit off (MaxConns = 0) the accept path tests one integer and nothing
-  else.
+  else. The process's own limit on open descriptors (RLIMIT_NOFILE) bounds
+  the connections too: RaiseFdLimit, called by the server at Start, raises
+  its soft value to the hard one.
 
   Unix domain sockets. A listener can also be a Unix domain socket (a path
   in the file system) instead of a TCP port: TListenSpec.UnixPath selects
@@ -294,6 +296,24 @@ function SockAddrToStr(const Addr: TSockAddrStorage): RawByteString;
   the signal ignored the write returns -EPIPE instead and only that
   connection ends. }
 procedure IgnoreSigPipe;
+
+{ Raises the process's soft limit on open file descriptors (RLIMIT_NOFILE)
+  to its hard limit. Every connection is a descriptor: once the soft limit
+  is reached, accept4 fails with EMFILE and the listener pauses (see
+  TListener). The soft limit is often low where the hard limit is not
+  (under systemd: 1024 and 524288), and a process may raise the soft limit
+  up to the hard one by itself; only root can raise the hard limit, and
+  this routine does not try. When the kernel refuses the hard limit (it
+  is RLIM_INFINITY or above fs.nr_open), NR_OPEN_DEFAULT is asked for
+  instead. Returns the soft limit in force afterwards (unchanged when
+  setrlimit failed, for example under seccomp), or -1 when getrlimit
+  failed. }
+function RaiseFdLimit: Int64;
+
+const
+  { the kernel's default fs.nr_open: the most a process may ask for
+    without a sysctl change }
+  NR_OPEN_DEFAULT = 1048576;
 
 implementation
 
@@ -896,6 +916,30 @@ end;
 procedure IgnoreSigPipe;
 begin
   fpSignal(SIGPIPE, SignalHandler(SIG_IGN));
+end;
+
+function RaiseFdLimit: Int64;
+var
+  Lim: TRLimit;
+  Want: QWord;
+begin
+  if FpGetRLimit(RLIMIT_NOFILE, @Lim) <> 0 then
+    Exit(-1);
+  Result := Int64(Lim.rlim_cur);
+  Want := Lim.rlim_max;
+  if Want <= Lim.rlim_cur then
+    Exit;
+  Lim.rlim_cur := Want;
+  if FpSetRLimit(RLIMIT_NOFILE, @Lim) = 0 then
+    Exit(Int64(Want));
+  { the hard limit is RLIM_INFINITY or above fs.nr_open: the kernel refuses
+    it; ask for the default fs.nr_open instead }
+  if Want > NR_OPEN_DEFAULT then
+  begin
+    Lim.rlim_cur := NR_OPEN_DEFAULT;
+    if FpSetRLimit(RLIMIT_NOFILE, @Lim) = 0 then
+      Exit(NR_OPEN_DEFAULT);
+  end;
 end;
 
 end.
