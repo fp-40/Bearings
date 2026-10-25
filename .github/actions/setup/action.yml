@@ -9,4 +9,8 @@ runs:
 
     - name: Install system dependencies
       shell: bash
-      run: sudo apt-get install -y fpc-3.2.2
+      # update first: the runner image's package lists go stale and the
+      # mirror answers 404 for the versions they name; no recommends: the
+      # library needs the compiler and the RTL, FCL and base units only,
+      # not the SDL, VLC and GTK development packages fpc recommends
+      run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fpc-3.2.2
