@@ -239,7 +239,8 @@ Member | Description | Thread
   a worker.
 - `bearings.rt.net`: `TListenSpec`, `TAcceptMode`, `TSockAddrStorage`,
   `SockAddrToStr(Addr)` (the text of `Ex.PeerAddr^`), `RaiseFdLimit`
-  (the soft descriptor limit up to the hard one; `Start` calls it).
+  (the soft descriptor limit up to the hard one; `Start` calls it with
+  `TServerConfig.RaiseFdLimit`).
 - `bearings.rt.cpu`: `DefaultLoopCount`, `UsableCpus`, `CgroupCpuLimit`,
   `PinCurrentThread`.
 - `bearings.http1.role`: `THttpMethod` (`hmNone`, `hmOptions`, `hmGet`,

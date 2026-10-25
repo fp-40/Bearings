@@ -402,6 +402,7 @@ type
     procedure Run_until_sigterm_in_child;
     procedure Run_until_signal_ends_on_external_stop;
     procedure Create_with_proc_and_run_until_signal_proc;
+    procedure Start_raises_fd_limit_only_when_configured;
   private
     procedure StopAtStart(Server: TServer);
   end;
@@ -965,6 +966,36 @@ begin
   Cfg := TestConfig(4);
   Cfg.Listen.Mode := amSharedExclusive;
   StopUnderLoad(Self, Cfg);
+end;
+
+procedure TTestServerStop.Start_raises_fd_limit_only_when_configured;
+var
+  Old, Lim, Now: TRLimit;
+  Cfg: TServerConfig;
+begin
+  AssertEquals('getrlimit', 0, FpGetRLimit(RLIMIT_NOFILE, @Old));
+  if Old.rlim_max <= 300 then
+    Exit;                          { nothing to raise }
+  try
+    { lowering the soft limit needs no privilege }
+    Lim := Old;
+    Lim.rlim_cur := 300;
+    AssertEquals('setrlimit', 0, FpSetRLimit(RLIMIT_NOFILE, @Lim));
+    Cfg := TestConfig(1);
+    Cfg.RaiseFdLimit := False;
+    StartServer(Cfg);
+    AssertEquals('getrlimit', 0, FpGetRLimit(RLIMIT_NOFILE, @Now));
+    AssertEquals('unchanged with RaiseFdLimit off', 300, Int64(Now.rlim_cur));
+    Srv.Stop(1000);
+    Srv.Wait;
+    FreeAndNil(Srv);
+    Cfg.RaiseFdLimit := True;
+    StartServer(Cfg);
+    AssertEquals('getrlimit', 0, FpGetRLimit(RLIMIT_NOFILE, @Now));
+    AssertTrue('raised with RaiseFdLimit on', Now.rlim_cur > 300);
+  finally
+    FpSetRLimit(RLIMIT_NOFILE, @Old);
+  end;
 end;
 
 procedure TTestServerStop.Stop_deadline_aborts_unanswered_call;

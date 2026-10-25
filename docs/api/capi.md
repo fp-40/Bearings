@@ -52,6 +52,7 @@ Field | Meaning
 `access_log_user_agent`, `access_log_referer` | 1 = the lines have the request's User-Agent / Referer header
 `access_log_colors` | 1 = the console lines have the level in structlog's ANSI color
 `metrics` | 1 keeps the counters of `bearings_metrics`
+`raise_fd_limit` | 1 = `bearings_server_start` raises the soft limit on open file descriptors to the hard limit (every connection is one; the soft limit is often 1024); off when 0, unlike in `ProductionServerConfig`, because `select(2)` cannot take a descriptor >= 1024 and child processes inherit the limit
 `ws_path` | WebSockets are accepted on this path (`NULL`/`""` = none); other requests to it go to the request callback
 `ws_origins` | the `Origin` values allowed, one per line, compared ignoring case and a final `/`
 `ws_same_host`, `ws_any_port` | also allow an `Origin` whose `host[:port]` is the `Host` header, or any port of its name

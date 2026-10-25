@@ -95,6 +95,11 @@ type
     AccessLogReferer: cint;        { 1 = the lines have the Referer header }
     AccessLogColors: cint;         { 1 = the console format has the level in structlog's ANSI color }
     Metrics: cint;                 { 1 = keep the counters of bearings_metrics }
+    { 1 = bearings_server_start raises the process's soft limit on open
+      file descriptors to the hard limit (TServerConfig.RaiseFdLimit); off
+      when zero, unlike in ProductionServerConfig: the limit is the host
+      program's, and select(2) cannot take a descriptor >= 1024 }
+    RaiseFdLimit: cint;
     { WebSockets: accepted on this path (nil or '' = none); see the unit header }
     WsPath: PAnsiChar;
     WsOrigins: PAnsiChar;          { the Origin values allowed, one per line }
@@ -747,6 +752,7 @@ begin
     else
       SC.AccessLog.MinLevel := llDebug;
     SC.Metrics := Cfg^.Metrics <> 0;
+    SC.RaiseFdLimit := Cfg^.RaiseFdLimit <> 0;
     C := TCServer.Create;
     C.Ctx := Ctx;
     C.Lock := TCriticalSection.Create;

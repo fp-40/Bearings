@@ -2,6 +2,12 @@
 
 All notable changes to Bearings are documented in this file.
 
+# 0.4.1
+
+- **Raising the descriptor limit is now a choice: `TServerConfig.RaiseFdLimit`.** 0.4.0 raised the process's soft limit on open file descriptors to the hard limit at every `Start`. That was wrong for a library: the limit belongs to the whole process, `select()` cannot take a descriptor >= 1024 (the reason systemd leaves the soft limit there), and child processes inherit the raised limit. `ProductionServerConfig` and `BenchmarkServerConfig` set the option; `Default(TServerConfig)` does not.
+- **C API and Python**: `bearings_config_t` has `raise_fd_limit` after `metrics`, and `Server` takes `raise_fd_limit=False`; both are off by default because the host program owns the process. Programs built against the 0.4.0 header must be rebuilt.
+- **test_server**: the load client of the stop-under-load tests retries a connect that ends in `ECONNRESET`, the result Linux gives when the closing listener resets a connection before `connect` returns; the test failed once in CI for that.
+
 # 0.4.0
 
 The access log was reworked. Its lines have the keys of structlog's lines, so a log collector reads the server's lines and a Python application's the same way.

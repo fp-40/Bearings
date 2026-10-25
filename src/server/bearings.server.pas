@@ -221,6 +221,13 @@ type
     { send the systemd watchdog heartbeat (WATCHDOG=1) while every loop
       makes progress; only when WATCHDOG_USEC is set (bearings.rt.sd) }
     Watchdog: Boolean;
+    { Start raises the process's soft limit on open file descriptors to
+      the hard limit (RaiseFdLimit, bearings.rt.net): every connection is a
+      descriptor, and the soft limit is often 1024 where the hard limit is
+      524288. Off by default: the limit is the process's, select(2) cannot
+      take a descriptor >= 1024, and child processes inherit the limit. The
+      production and benchmark presets turn it on. }
+    RaiseFdLimit: Boolean;
   end;
 
   TServer = class;
@@ -1351,7 +1358,8 @@ begin
   if not (Assigned(FFactory) or Assigned(FFactoryProc)) then
     raise EServerError.Create('TServer.Start: no service factory');
   IgnoreSigPipe;
-  RaiseFdLimit;
+  if FCfg.RaiseFdLimit then
+    RaiseFdLimit;
   N := FCfg.Loops;
   if N <= 0 then
     N := DefaultLoopCount;
@@ -1645,6 +1653,7 @@ begin
   Result.WorkerQueueLimit := 0;
   Result.GraceMs := 30000;
   Result.Watchdog := True;
+  Result.RaiseFdLimit := True;
 end;
 
 function ApplySdListenFds(var Cfg: TServerConfig): Integer;
@@ -1686,6 +1695,7 @@ begin
   Result.Workers := NO_WORKER_POOL;
   Result.WorkerQueueLimit := 0;
   Result.GraceMs := 1000;
+  Result.RaiseFdLimit := True;
 end;
 
 end.

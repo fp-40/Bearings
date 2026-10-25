@@ -33,6 +33,7 @@ Field | Meaning
 `AccessLog: TAccessLogConfig` | one line per completed request, off by default (below)
 `Metrics: Boolean` | keep the counters `TServer.Metrics` reports (below)
 `Watchdog: Boolean` | send the systemd watchdog heartbeat while every loop makes progress (below; the production preset sets it)
+`RaiseFdLimit: Boolean` | `Start` raises the soft limit on open descriptors to the hard limit (section "Connection limit"; the production and benchmark presets set it)
 
 `TListenSpec` (unit `bearings.rt.net`): `Host` (`'0.0.0.0'`,
 `'127.0.0.1'`, `'::'`), `Port` (0 = a free port, read it back from
@@ -92,11 +93,17 @@ second timer is the fallback). `TServer.CountedConnections` is the count,
 side. The process's limit on open descriptors (`ulimit -n`, `LimitNOFILE=`
 under systemd) bounds the connections too, since every connection is one:
 at that limit `accept4` fails with `EMFILE` and the listener pauses for
-one second. `Start` raises the soft limit to the hard limit
-(`RaiseFdLimit`, unit `bearings.rt.net`; it returns the limit in force),
+one second. With `RaiseFdLimit` set (the production and benchmark presets
+set it), `Start` raises the soft limit to the hard limit (the routine
+`RaiseFdLimit` of unit `bearings.rt.net`; it returns the limit in force),
 so only the hard limit matters: 524288 under systemd, usually lower in a
-shell (`ulimit -Hn` shows it). Set `MaxConnections` below it when the
-program opens other descriptors (files, database connections). There is no per-IP limit: that policy belongs to the reverse proxy or
+shell (`ulimit -Hn` shows it). It is off in `Default(TServerConfig)`
+because the limit belongs to the whole process: `select(2)` cannot take a
+descriptor numbered 1024 or more (the reason systemd leaves the soft
+limit at 1024), and child processes inherit the raised limit. A program
+that uses `select` with many descriptors open keeps it off. Set
+`MaxConnections` below the limit when the program opens other
+descriptors (files, database connections). There is no per-IP limit: that policy belongs to the reverse proxy or
 the firewall (behind a proxy every connection has the proxy's address); an
 application facing clients directly can close a connection in
 `TConnObserver.OnAccept`, which receives the peer address. With the limit
@@ -241,8 +248,9 @@ WantedBy=multi-user.target
 
 `systemctl start myapp.socket` listens; the service starts on the first
 connection. systemd's default hard limit on open descriptors (524288)
-is enough for most services and `Start` raises the soft limit to it; a
-service that needs more sets `LimitNOFILE=` in `[Service]`. Without systemd the same program can be tried with
+is enough for most services, and with `RaiseFdLimit` set `Start` raises
+the soft limit to it; a service that needs more sets `LimitNOFILE=` in
+`[Service]`. Without systemd the same program can be tried with
 `systemd-socket-activate -l 8080 ./myapp`.
 
 Behind a reverse proxy (nginx on the Unix socket above, HAProxy, a cloud
@@ -307,7 +315,7 @@ shut down (`examples/hello.pas`).
   `CreateWithProc(Cfg, Factory: TServiceProc, Observer = nil)` is the same
   with a plain function as the factory.
 - `Start`: validates `Cfg.H1`, ignores SIGPIPE, raises the soft limit on
-  open descriptors to the hard limit (`RaiseFdLimit`, below), creates the worker pool
+  open descriptors when `RaiseFdLimit` is set (below), creates the worker pool
   (before the services, so a factory may read `Workers`), creates the
   loops, calls the factory once per loop, binds the listening sockets and
   starts the loop threads. Returns when the sockets are bound and the

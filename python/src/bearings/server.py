@@ -98,6 +98,14 @@ class Server:
             default) is colors when stdout is a terminal.
         metrics [False]:
             Keep the counters `Server.metrics()` returns.
+        raise_fd_limit [False]:
+            `start()` raises the process's soft limit on open file
+            descriptors to the hard limit. Every connection is a
+            descriptor, and the soft limit is often 1024 (systemd's and
+            most shells' default) where the hard limit is 524288; at the
+            soft limit the server accepts nothing more. Off by default:
+            the limit is the process's, `select()` cannot take a
+            descriptor >= 1024, and subprocesses inherit the limit.
         url_scheme ["http"]:
             `wsgi.url_scheme`: `"https"` behind a proxy that ends TLS.
         websocket:
@@ -155,6 +163,7 @@ class Server:
         access_log_referer: bool = False,
         access_log_colors: bool | None = None,
         metrics: bool = False,
+        raise_fd_limit: bool = False,
         url_scheme: str = "http",
         websocket: WebSocketHandler | None = None,
         ws_path: str = "/",
@@ -199,6 +208,7 @@ class Server:
             access_log_colors = os.isatty(1)
         config.access_log_colors = int(access_log_colors)
         config.metrics = int(metrics)
+        config.raise_fd_limit = int(raise_fd_limit)
         self._ws_callback = ffi.NULL
         if websocket is not None:
             config.ws_path = self._keep(ws_path)

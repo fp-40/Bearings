@@ -59,8 +59,8 @@
   ACCEPT_PAUSE_MS is the fallback should that call not come. With the
   limit off (MaxConns = 0) the accept path tests one integer and nothing
   else. The process's own limit on open descriptors (RLIMIT_NOFILE) bounds
-  the connections too: RaiseFdLimit, called by the server at Start, raises
-  its soft value to the hard one.
+  the connections too: RaiseFdLimit, called by the server at Start when
+  TServerConfig.RaiseFdLimit is set, raises its soft value to the hard one.
 
   Unix domain sockets. A listener can also be a Unix domain socket (a path
   in the file system) instead of a TCP port: TListenSpec.UnixPath selects

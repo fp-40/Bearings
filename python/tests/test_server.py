@@ -16,6 +16,23 @@ def hello(environ, start_response):
     return [b"hello"]
 
 
+def test_raise_fd_limit(serve):
+    import resource
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if hard <= 300:
+        pytest.skip("the hard limit on open files is too low to test")
+    try:
+        # lowering the soft limit needs no privilege
+        resource.setrlimit(resource.RLIMIT_NOFILE, (300, hard))
+        serve(hello)
+        assert resource.getrlimit(resource.RLIMIT_NOFILE)[0] == 300
+        serve(hello, raise_fd_limit=True)
+        assert resource.getrlimit(resource.RLIMIT_NOFILE)[0] > 300
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft, hard))
+
+
 def test_a_free_port(serve):
     client = serve(hello, port=0)
     assert client.port > 0

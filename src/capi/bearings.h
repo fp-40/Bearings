@@ -30,6 +30,9 @@ typedef struct {
     int access_log_referer;     /* 1 = the lines have the Referer header */
     int access_log_colors;      /* 1 = the console lines have the level in structlog's ANSI color */
     int metrics;                /* 1 = keep the counters of bearings_metrics */
+    int raise_fd_limit;         /* 1 = start raises the soft limit on open file descriptors to the
+                                   hard limit (every connection is one); select(2) cannot take a
+                                   descriptor >= 1024, and child processes inherit the limit */
     /* WebSockets: accepted on this path (NULL or "" = none) */
     const char *ws_path;
     const char *ws_origins;     /* the Origin values allowed, one per line */
