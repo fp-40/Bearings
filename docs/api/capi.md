@@ -47,7 +47,10 @@ Field | Meaning
 `loops`, `workers` | event loops (0 = one per CPU) and worker threads (0 = `min(32, CPUs + 4)`)
 `worker_queue_limit`, `saturated_status` | past this many queued requests, a new one is answered at once with `saturated_status` (503)
 `max_connections` | connections open at once (0 = no limit)
-`access_log` | 0 off, 1 JSON lines, 2 Combined Log Format, on stdout
+`access_log` | 0 off, 1 JSON lines, 2 console lines (`23:59:59.123456Z [info]  200 GET /x  (0.412ms; 16.03 KB)`), on stdout
+`access_log_level` | the access log's lines below this level of Python's `logging` are dropped (0 = none); a line has the level of its status: 40 (error) for a 4xx or a 5xx, 20 (info) for the others
+`access_log_user_agent`, `access_log_referer` | 1 = the lines have the request's User-Agent / Referer header
+`access_log_colors` | 1 = the console lines have the level in structlog's ANSI color
 `metrics` | 1 keeps the counters of `bearings_metrics`
 `ws_path` | WebSockets are accepted on this path (`NULL`/`""` = none); other requests to it go to the request callback
 `ws_origins` | the `Origin` values allowed, one per line, compared ignoring case and a final `/`

@@ -109,11 +109,14 @@ responses to unparsable requests are not logged):
 Field | Meaning
 ----- | -------
 `Enabled` | turn the log on
-`Format` | `alfJson` (default): one JSON object per line with the OpenTelemetry HTTP field names `time` (RFC 3339 UTC, milliseconds), `client.address` (`"unix"` on a Unix socket), `http.request.method`, `url.path`, `url.query` (when present), `network.protocol.version`, `http.response.status_code`, `http.response.body.size`, `http.server.request.duration` (seconds, by the loop's clock, which is sampled once per iteration: a request answered in the iteration that read it shows 0), `http.response.header.x-request-id` (when the response has an `X-Request-ID` header, as an application sets it to find the request in its own logs), `user_agent.original` (when present and `UserAgent` is set); `alfCombined`: the Combined Log Format (`host - - [time] "request line" status bytes "referer" "agent"`)
+`Format` | `alfJson` (default): one JSON object per line with the keys of structlog's lines, so a log collector reads the server's lines and a Python app's the same way: `timestamp` (RFC 3339 UTC, microseconds), `level` (`"error"` for a 4xx or a 5xx, `"info"` for the others), `logger` (`"bearings"`), `event` (the method and the path, `"GET /x"`), `request_id` (when the response has an `X-Request-ID` header, as an application sets it to find the request in its own logs), `method`, `path`, `query` (when present), `status`, `size` (the body bytes), `duration` (seconds, by the loop's clock, which is sampled once per iteration: a request answered in the iteration that read it shows 0), `client` (`"unix"` on a Unix socket), `user_agent` (when present and `UserAgent` is set), `referer` (when present and `Referer` is set); `alfConsole`: one short line for people, `23:59:59.123456Z [info]  200 GET /x?a=1  (0.412ms; 16.03 KB)`: the time of day (UTC), `[level]` padded to the width of `[error]` so that the statuses line up, the status, the method, the request target, the duration in milliseconds and the body size in the largest unit it reaches (`164 bytes`, `1.60 KB`, `15.65 MB`, `1.53 GB`; 1 KB = 1024 bytes; GB above); the other fields are only in the JSON
 `Sink: TLogSink` | where the lines go; nil = stdout (`TFdSink`); an application's own sink overrides `Write(P, Len)`, which runs on the flusher thread and may block
 `BufferBytes` | per-loop buffer size (two areas of this size); 0 = 64 KiB
 `FlushMs` | the flusher thread's period; 0 = 100 ms; a half-full buffer wakes it early
 `UserAgent` | include the User-Agent header
+`Referer` | include the Referer header
+`Colors` | `alfConsole` only: the level in structlog's ANSI color (bright green for info, red for error); the rest of the line has none
+`MinLevel: TLogLevel` | the lines below it are dropped, in both formats: a line has the level of its status (`AccessLevel`: `llError` for a 4xx or a 5xx, `llInfo` for the others), so `llWarning` or `llError` keeps only the requests that failed; `llDebug` (the default) keeps every line
 
 The loop formats each line into its buffer under a spin lock; the flusher
 thread swaps the buffer's two areas and writes the full one to the sink.
@@ -261,7 +264,7 @@ Field | Meaning
 `AutoDateHeader` (True) | add a `Date` header unless the application set one
 `BodyReadTimeoutMs` (0 = off) | longest wait for one request body byte
 `BodyMinRate` (0 = off) | bytes/s the client must keep up after `BodyReadTimeoutMs` of waiting
-`ProxyProtocol` (False) | every connection starts with a PROXY protocol header, v1 or v2 (`bearings.rt.proxyproto`), from the proxy or load balancer in front: the address it carries becomes the peer (`TExchange.PeerAddr`, the access log's `client.address`); a connection without a valid header is closed without a response (outcome `parse`), one closed before any byte is a normal end. Only for listeners that only the proxy can reach: the header is trusted
+`ProxyProtocol` (False) | every connection starts with a PROXY protocol header, v1 or v2 (`bearings.rt.proxyproto`), from the proxy or load balancer in front: the address it carries becomes the peer (`TExchange.PeerAddr`, the access log's `client`); a connection without a valid header is closed without a response (outcome `parse`), one closed before any byte is a normal end. Only for listeners that only the proxy can reach: the header is trusted
 `MaxRequests` (0 = no limit) | most requests one connection serves; the last allowed response carries `Connection: close` (nginx `keepalive_requests`)
 `MaxConnectionMs` (0 = no limit) | once a connection is this old, its next response carries `Connection: close` and closes it; a request in progress is never cut, and an idle connection past the age stays until its next request or the header read timeout (nginx `keepalive_time`)
 `Parser: TParserConfig` | leniency switches of the head parser (`bearings.http1.parser`)

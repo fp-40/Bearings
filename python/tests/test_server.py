@@ -114,14 +114,50 @@ def test_metrics(serve):
     assert 'bearings_responses_total{status="2xx"} 1' in text
 
 
+def _get(server, path, headers=None):
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+    conn.request("GET", path, headers=headers or {})
+    conn.getresponse().read()
+    conn.close()
+
+
 def test_access_log(capfd):
-    with Server(hello, host="127.0.0.1", loops=1, workers=1, access_log="combined") as server:
-        conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
-        conn.request("GET", "/logged?q=1")
-        conn.getresponse().read()
-        conn.close()
+    with Server(hello, host="127.0.0.1", loops=1, workers=1, access_log="console") as server:
+        _get(server, "/logged?q=1")
     # written by the flusher thread, on the file descriptor 1
-    assert '"GET /logged?q=1 HTTP/1.1" 200 5' in capfd.readouterr().out
+    line = capfd.readouterr().out.strip().splitlines()[-1]
+    assert line.endswith("ms; 5 bytes)")
+    assert "Z [info]  200 GET /logged?q=1  (" in line
+    # stdout is not a terminal here: no colors
+    assert "\x1b[" not in line
+
+
+def test_the_console_access_log_with_colors(capfd):
+    with Server(
+        hello, host="127.0.0.1", loops=1, workers=1, access_log="console",
+        access_log_colors=True,
+    ) as server:
+        _get(server, "/logged")
+    line = capfd.readouterr().out.strip().splitlines()[-1]
+    # only the level has a color
+    assert "Z [\x1b[32m\x1b[1minfo\x1b[0m]  200 GET /logged  (" in line
+    assert line.count("\x1b[") == 3
+
+
+def test_the_access_log_has_the_user_agent_and_referer_when_asked(capfd):
+    headers = {"User-Agent": "curl/8", "Referer": "http://x/from"}
+    with Server(hello, host="127.0.0.1", loops=1, workers=1, access_log="json") as server:
+        _get(server, "/plain", headers)
+    with Server(
+        hello, host="127.0.0.1", loops=1, workers=1, access_log="json",
+        access_log_user_agent=True, access_log_referer=True,
+    ) as server:
+        _get(server, "/asked", headers)
+    plain, asked = [json.loads(line) for line in capfd.readouterr().out.strip().splitlines()]
+    assert "user_agent" not in plain
+    assert "referer" not in plain
+    assert asked["user_agent"] == "curl/8"
+    assert asked["referer"] == "http://x/from"
 
 
 def test_the_json_access_log_has_the_request_id_of_the_response(capfd):
@@ -135,8 +171,34 @@ def test_the_json_access_log_has_the_request_id_of_the_response(capfd):
         conn.getresponse().read()
         conn.close()
     line = json.loads(capfd.readouterr().out.strip().splitlines()[-1])
-    assert line["http.response.header.x-request-id"] == "abc-123"
-    assert line["url.path"] == "/logged"
+    assert line["request_id"] == "abc-123"
+    assert line["path"] == "/logged"
+    assert line["event"] == "GET /logged"
+    assert line["logger"] == "bearings"
+
+
+def test_the_access_log_drops_the_lines_below_its_level(capfd):
+    def app(environ, start_response):
+        status = "200 OK" if environ["PATH_INFO"] == "/ok" else "404 Not Found"
+        start_response(status, [("Content-Type", "text/plain")])
+        return [b"hello"]
+
+    with Server(
+        app, host="127.0.0.1", loops=1, workers=1, access_log="json",
+        access_log_level="warning",
+    ) as server:
+        for path in ("/ok", "/missing"):
+            conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
+            conn.request("GET", path)
+            conn.getresponse().read()
+            conn.close()
+    lines = [json.loads(line) for line in capfd.readouterr().out.strip().splitlines()]
+    assert [(line["path"], line["level"]) for line in lines] == [("/missing", "error")]
+
+
+def test_an_unknown_access_log_level():
+    with pytest.raises(ValueError, match="access_log_level"):
+        Server(hello, access_log="json", access_log_level="verbose")
 
 
 def test_a_full_queue_is_answered_with_503(serve):

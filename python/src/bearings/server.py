@@ -12,7 +12,9 @@ from .websocket import WebSocketHandler, WsDispatch
 from .wsgi import RawHandler, WsgiHandler
 
 
-ACCESS_LOGS = {None: 0, "json": 1, "combined": 2}
+ACCESS_LOGS = {None: 0, "json": 1, "console": 2}
+# The levels of Python's logging
+ACCESS_LOG_LEVELS = {"debug": 10, "info": 20, "warning": 30, "error": 40, "critical": 50}
 _ERRNO = re.compile(r"errno (\d+)")
 
 # The servers started and not yet freed: C calls their callbacks (cffi
@@ -79,7 +81,21 @@ class Server:
             Connections open at once; the next ones wait in the kernel's
             accept queue. 0 is no limit.
         access_log:
-            `"json"` or `"combined"`: one line per request on stdout.
+            One line per request on stdout: `"json"`, with the keys of
+            structlog's lines, or `"console"`, a short line for people:
+            `23:59:59.123456Z [info]  200 GET /x  (0.412ms; 16.03 KB)`.
+        access_log_level ["info"]:
+            A line has the level of its status: `"error"` for a 4xx or a
+            5xx, `"info"` for the others. The lines below this level are
+            dropped: `"warning"` or `"error"` keeps only the requests that
+            failed.
+        access_log_user_agent [False]:
+            The lines have the request's User-Agent header.
+        access_log_referer [False]:
+            The lines have the request's Referer header.
+        access_log_colors:
+            The console lines have structlog's colors. `None` (the
+            default) is colors when stdout is a terminal.
         metrics [False]:
             Keep the counters `Server.metrics()` returns.
         url_scheme ["http"]:
@@ -134,6 +150,10 @@ class Server:
         queue_limit: int = 0,
         max_connections: int = 0,
         access_log: str | None = None,
+        access_log_level: str = "info",
+        access_log_user_agent: bool = False,
+        access_log_referer: bool = False,
+        access_log_colors: bool | None = None,
         metrics: bool = False,
         url_scheme: str = "http",
         websocket: WebSocketHandler | None = None,
@@ -150,6 +170,10 @@ class Server:
     ) -> None:
         if access_log not in ACCESS_LOGS:
             raise ValueError(f"access_log must be one of {list(ACCESS_LOGS)}")
+        if access_log_level not in ACCESS_LOG_LEVELS:
+            raise ValueError(
+                f"access_log_level must be one of {list(ACCESS_LOG_LEVELS)}"
+            )
         self.host = host
         handler = RawHandler if raw else WsgiHandler
         self._handler = handler(app, host=host, unix_path=unix_path, url_scheme=url_scheme)
@@ -168,6 +192,12 @@ class Server:
         config.saturated_status = 503 if queue_limit else 0
         config.max_connections = max_connections
         config.access_log = ACCESS_LOGS[access_log]
+        config.access_log_level = ACCESS_LOG_LEVELS[access_log_level]
+        config.access_log_user_agent = int(access_log_user_agent)
+        config.access_log_referer = int(access_log_referer)
+        if access_log_colors is None:
+            access_log_colors = os.isatty(1)
+        config.access_log_colors = int(access_log_colors)
         config.metrics = int(metrics)
         self._ws_callback = ffi.NULL
         if websocket is not None:

@@ -23,7 +23,12 @@ typedef struct {
     int worker_queue_limit;     /* 0 = no limit */
     int saturated_status;       /* with a queue limit: the answer when it is full (503) */
     int max_connections;        /* 0 = no limit */
-    int access_log;             /* 0 off, 1 JSON lines, 2 Combined Log Format (stdout) */
+    int access_log;             /* 0 off, 1 JSON lines, 2 console lines (stdout) */
+    int access_log_level;       /* lines below this level of Python's logging are dropped: 0 = none,
+                                   30 (warning) or 40 (error) keeps the 4xx and 5xx */
+    int access_log_user_agent;  /* 1 = the lines have the User-Agent header */
+    int access_log_referer;     /* 1 = the lines have the Referer header */
+    int access_log_colors;      /* 1 = the console lines have the level in structlog's ANSI color */
     int metrics;                /* 1 = keep the counters of bearings_metrics */
     /* WebSockets: accepted on this path (NULL or "" = none) */
     const char *ws_path;

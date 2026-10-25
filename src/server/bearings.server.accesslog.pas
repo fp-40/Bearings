@@ -1,25 +1,43 @@
 { bearings.server.accesslog - one line per completed request, written
   without blocking the event loops.
 
-  Formats (TAccessLogFormat). alfJson, the default: one JSON object per
-  line with the field names of the OpenTelemetry semantic conventions for
-  HTTP: "time" (RFC 3339, UTC, milliseconds), "client.address" (the peer's
-  IP address; "unix" for a Unix domain socket), "http.request.method",
-  "url.path", "url.query" (only when the target has one),
-  "network.protocol.version" ("1.0" or "1.1"), "http.response.status_code",
-  "http.response.body.size", "http.server.request.duration" (seconds, from
-  the request head to the complete response, measured with the loop's
-  clock, which is sampled once per loop iteration: a request answered in
-  the iteration that read it shows 0),
-  "http.response.header.x-request-id" (only when the response has an
-  X-Request-ID header, as an application or a proxy behind it sets it to
-  find the request in its own logs) and "user_agent.original" (only when
-  the request had a User-Agent header and the log is told to include it). alfCombined: the Combined Log Format of classic log tools,
-    host - - [11/Oct/2026:23:59:59 +0000] "GET /x HTTP/1.1" 200 5 "referer" "agent"
+  Formats (TAccessLogFormat). Both have the keys of structlog's lines, so
+  the server's lines and a Python app's read the same way.
+
+  alfJson, the default: one JSON object per line: "timestamp" (RFC 3339,
+  UTC, microseconds), "level" (see Levels), "logger" (always
+  "bearings"), "event" (the method and the path, "GET /x"), "request_id"
+  (only when the response has an X-Request-ID header, as an application
+  or a proxy behind it sets it to find the request in its own logs),
+  "method", "path", "query" (only when the target has one),
+  "status", "size" (the body bytes),
+  "duration" (seconds, from the request head to the complete response,
+  measured with the loop's clock, which is sampled once per loop
+  iteration: a request answered in the iteration that read it shows 0),
+  "client" (the peer's IP address; "unix" for a Unix domain socket),
+  "user_agent" and "referer" (only when the request had the header and
+  the log is told to include it).
+
+  alfConsole: one short line for people:
+    23:59:59.123456Z [info]  200 GET /x?a=1  (0.412ms; 16.03 KB)
+    23:59:59.124001Z [error] 404 GET /nope  (0.051ms; 9.48 KB)
+  The time of day (UTC), the level padded to the width of "[error]" so
+  that the statuses line up, the status, the method, the request target
+  (the path and the query), then the duration in milliseconds and the
+  body size in the largest unit it reaches: "164 bytes", "1.60 KB",
+  "15.65 MB", "1.53 GB" (1 KB = 1024 bytes, two decimals; GB above). A
+  control byte is written as \xXX. The other fields are only in the JSON.
+  With Colors, the level has structlog's ANSI color: bright green for
+  info, red for error; the rest of the line has none.
+
+  Levels (TLogLevel). A line has the level of its status: "error" for a
+  4xx or a 5xx, "info" for the others. TAccessLog.MinLevel drops the
+  lines below it, in both formats: llWarning or llError keeps only the
+  requests that failed. llDebug, the default, keeps every line.
+
   The JSON is written by hand: '"', '\' and control bytes are escaped, a
-  byte sequence that is not valid UTF-8 is written as \u00XX escapes. The
-  Combined format escapes '"' and '\' with a backslash and control bytes as
-  \xXX. Nothing is allocated per line.
+  byte sequence that is not valid UTF-8 is written as \u00XX escapes (as
+  \xXX in the console format). Nothing is allocated per line.
 
   The buffers. Each loop owns a TLogBuffer: two byte areas of BufferBytes
   each. The loop formats a line straight into the active area under a
@@ -48,10 +66,12 @@ unit bearings.server.accesslog;
 interface
 
 uses
-  ctypes, bearings.rt.sys, bearings.rt.sync, bearings.http1.role;
+  ctypes, bearings.rt.sys, bearings.rt.sync;
 
 type
-  TAccessLogFormat = (alfJson, alfCombined);
+  TAccessLogFormat = (alfJson, alfConsole);
+  { The levels of Python's logging, in order. }
+  TLogLevel = (llDebug, llInfo, llWarning, llError, llCritical);
 
   { Where the lines go. Write gets whole lines; it may block (flusher
     thread). }
@@ -76,13 +96,12 @@ type
     Peer: PSockAddrStorage;
     Method: PByte;  MethodLen: SizeInt;
     Target: PByte;  TargetLen: SizeInt;   { the request target as received (path and query) }
-    Version: THttpVersion;
     Status: Word;
     BodyBytes: QWord;
     DurationNs: Int64;
     UserAgent: PByte;  UserAgentLen: SizeInt;   { nil: none }
-    RequestId: PByte;  RequestIdLen: SizeInt;   { the response's X-Request-ID; nil: none (JSON only) }
-    Referer: PByte;  RefererLen: SizeInt;       { nil: none (Combined only) }
+    RequestId: PByte;  RequestIdLen: SizeInt;   { the response's X-Request-ID; nil: none }
+    Referer: PByte;  RefererLen: SizeInt;       { nil: none }
   end;
 
   TLogArea = record
@@ -100,11 +119,11 @@ type
     FCap: SizeInt;
     FOwner: TAccessLog;
     FFormat: TAccessLogFormat;
-    FUserAgent: Boolean;
+    FColors: Boolean;
     FWoke: Boolean;                  { the flusher was woken for the active area already }
   public
     Dropped: QWord;                  { lines that did not fit (loop thread) }
-    constructor Create(AOwner: TAccessLog; ACap: SizeInt; AFormat: TAccessLogFormat; AUserAgent: Boolean);
+    constructor Create(AOwner: TAccessLog; ACap: SizeInt; AFormat: TAccessLogFormat; AColors: Boolean);
     destructor Destroy; override;
     { Formats R as one line into the active area (loop thread). }
     procedure Append(const R: TAccessRecord);
@@ -126,9 +145,10 @@ type
     FRunning: Boolean;
     procedure FlushAll;
   public
+    MinLevel: TLogLevel;             { the lines below it are dropped; set before Start }
     { Loops buffers of BufferBytes each; Sink = nil means a TFdSink on stdout (owned). }
     constructor Create(Loops: Integer; BufferBytes: SizeInt; AFormat: TAccessLogFormat;
-      AUserAgent: Boolean; Sink: TLogSink; FlushMs: Integer);
+      AColors: Boolean; Sink: TLogSink; FlushMs: Integer);
     { Stops the flusher thread (after a last flush) and frees the buffers. }
     destructor Destroy; override;
     procedure Start;                 { starts the flusher thread }
@@ -140,9 +160,17 @@ type
     property Sink: TLogSink read FSink;
   end;
 
+const
+  LOG_LEVEL_NAMES: array[TLogLevel] of string = ('debug', 'info', 'warning', 'error', 'critical');
+
+{ The level of a line with this status: llError for a 4xx or a 5xx, llInfo
+  for the others. }
+function AccessLevel(Status: Word): TLogLevel;
+
 { Formats R as one line (with the trailing LF) into Dst, at most Cap bytes;
-  returns the length, or -1 when it does not fit. No allocation. }
-function FormatAccessLine(const R: TAccessRecord; Format: TAccessLogFormat; UserAgent: Boolean;
+  returns the length, or -1 when it does not fit. Colors: the console
+  format's ANSI colors. No allocation. }
+function FormatAccessLine(const R: TAccessRecord; Format: TAccessLogFormat; Colors: Boolean;
   Dst: PByte; Cap: SizeInt): SizeInt;
 
 implementation
@@ -165,16 +193,18 @@ type
     procedure Dec2(N: Integer);      { two digits, zero-padded }
     procedure DecN(N: QWord; Digits: Integer);
     procedure Peer(A: PSockAddrStorage);            { the address text: IPv4 directly, IPv6 through SockAddrToStr }
-    procedure Version(V: THttpVersion);
+    procedure JsonChars(S: PByte; N: SizeInt);      { escaped, no quotes }
     procedure JsonStr(S: PByte; N: SizeInt);        { with the quotes }
-    procedure Escaped(S: PByte; N: SizeInt);        { Combined format escapes, no quotes }
-    procedure QuotedStr(S: PByte; N: SizeInt);      { Combined format, with the quotes }
+    procedure ConsoleChars(S: PByte; N: SizeInt);   { control bytes as \xXX }
+    procedure Size(N: QWord);                       { "164 bytes", "1.64 KB", ... }
   end;
 
 const
   HEX: array[0..15] of AnsiChar = '0123456789abcdef';
-  MONTHS: array[1..12] of RawByteString = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug',
-    'Sep', 'Oct', 'Nov', 'Dec');
+  { the level colors of structlog's ConsoleRenderer }
+  RESET = #27'[0m';
+  BRIGHT = #27'[1m';
+  LEVEL_COLORS: array[TLogLevel] of string = (#27'[32m', #27'[32m', #27'[33m', #27'[31m', #27'[31m');
 
 procedure TLineWriter.Byte_(B: Byte);
 begin
@@ -261,18 +291,6 @@ begin
   end;
 end;
 
-procedure TLineWriter.Version(V: THttpVersion);
-begin
-  case V of
-    hv09: Str('0.9');
-    hv10: Str('1.0');
-    hv2: Str('2');
-    hv3: Str('3');
-  else
-    Str('1.1');
-  end;
-end;
-
 { the length of the valid UTF-8 sequence starting at S[0] (2..4), or 0 }
 function Utf8SeqLen(S: PByte; N: SizeInt): Integer;
 var
@@ -313,7 +331,7 @@ begin
   Result := Need;
 end;
 
-procedure TLineWriter.JsonStr(S: PByte; N: SizeInt);
+procedure TLineWriter.JsonChars(S: PByte; N: SizeInt);
 var
   I, L: SizeInt;
   B: Byte;
@@ -326,7 +344,6 @@ var
   end;
 
 begin
-  Byte_(Ord('"'));
   I := 0;
   while I < N do
   begin
@@ -366,38 +383,89 @@ begin
     end;
     Inc(I);
   end;
-  Byte_(Ord('"'));
 end;
 
-procedure TLineWriter.QuotedStr(S: PByte; N: SizeInt);
+procedure TLineWriter.JsonStr(S: PByte; N: SizeInt);
 begin
   Byte_(Ord('"'));
-  Escaped(S, N);
+  JsonChars(S, N);
   Byte_(Ord('"'));
 end;
 
-procedure TLineWriter.Escaped(S: PByte; N: SizeInt);
+procedure TLineWriter.ConsoleChars(S: PByte; N: SizeInt);
 var
-  I: SizeInt;
+  I, L: SizeInt;
   B: Byte;
+
+  procedure X(B: Byte);
+  begin
+    Str('\x');
+    Byte_(Ord(HEX[B shr 4]));
+    Byte_(Ord(HEX[B and 15]));
+  end;
+
 begin
-  for I := 0 to N - 1 do
+  I := 0;
+  while I < N do
   begin
     B := S[I];
-    if (B = Ord('"')) or (B = Ord('\')) then
-    begin
-      Byte_(Ord('\'));
-      Byte_(B);
-    end
-    else if (B < $20) or (B = $7F) then
-    begin
-      Str('\x');
-      Byte_(Ord(HEX[B shr 4]));
-      Byte_(Ord(HEX[B and 15]));
-    end
+    if (B < $20) or (B = $7F) then
+      X(B)
+    else if B < $80 then
+      Byte_(B)
     else
-      Byte_(B);
+    begin
+      L := Utf8SeqLen(S + I, N - I);
+      if L = 0 then
+        X(B)
+      else
+      begin
+        Bytes(S + I, L);
+        Inc(I, L - 1);
+      end;
+    end;
+    Inc(I);
   end;
+end;
+
+procedure TLineWriter.Size(N: QWord);
+const
+  UNITS: array[1..3] of RawByteString = (' KB', ' MB', ' GB');
+var
+  U: Integer;
+  D, Hundredths: QWord;
+
+  { N in hundredths of D bytes, rounded half up; split so that N * 100
+    cannot overflow }
+  function InHundredths(D: QWord): QWord;
+  begin
+    Result := (N div D) * 100 + ((N mod D) * 100 + D div 2) div D;
+  end;
+
+begin
+  if N < 1024 then
+  begin
+    Dec_(N);
+    if N = 1 then
+      Str(' byte')
+    else
+      Str(' bytes');
+    Exit;
+  end;
+  { a value that rounds to 1024.00 of a unit is 1.00 of the next one }
+  U := 1;
+  D := 1024;
+  Hundredths := InHundredths(D);
+  while (U < High(UNITS)) and (Hundredths >= 102400) do
+  begin
+    Inc(U);
+    D := D * 1024;
+    Hundredths := InHundredths(D);
+  end;
+  Dec_(Hundredths div 100);
+  Byte_(Ord('.'));
+  Dec2(Integer(Hundredths mod 100));
+  Str(UNITS[U]);
 end;
 
 { days since 1970-01-01 to a civil date (proleptic Gregorian); the usual
@@ -425,12 +493,12 @@ begin
     Inc(Y);
 end;
 
-procedure SplitTime(TimeUs: Int64; out Y: Int64; out Mo, D, H, Mi, S, Ms: Integer);
+procedure SplitTime(TimeUs: Int64; out Y: Int64; out Mo, D, H, Mi, S, Us: Integer);
 var
   Secs, Days, Rem: Int64;
 begin
   Secs := TimeUs div 1000000;
-  Ms := Integer((TimeUs mod 1000000) div 1000);
+  Us := Integer(TimeUs mod 1000000);
   Days := Secs div 86400;
   Rem := Secs mod 86400;
   CivilFromDays(Days, Y, Mo, D);
@@ -439,20 +507,46 @@ begin
   S := Integer(Rem mod 60);
 end;
 
-function FormatAccessLine(const R: TAccessRecord; Format: TAccessLogFormat; UserAgent: Boolean;
+function AccessLevel(Status: Word): TLogLevel;
+begin
+  if Status >= 400 then
+    Result := llError
+  else
+    Result := llInfo;
+end;
+
+function FormatAccessLine(const R: TAccessRecord; Format: TAccessLogFormat; Colors: Boolean;
   Dst: PByte; Cap: SizeInt): SizeInt;
 var
   W: TLineWriter;
   Y: Int64;
-  Mo, D, H, Mi, S, Ms: Integer;
+  Mo, D, H, Mi, S, Us: Integer;
   Q: SizeInt;
   Ns: QWord;
+  Level: TLogLevel;
+  I: Integer;
+
+
+  procedure Timestamp;
+  begin
+    W.DecN(QWord(Y), 4);  W.Byte_(Ord('-'));  W.Dec2(Mo);  W.Byte_(Ord('-'));  W.Dec2(D);
+    W.Byte_(Ord('T'));  W.Dec2(H);  W.Byte_(Ord(':'));  W.Dec2(Mi);  W.Byte_(Ord(':'));  W.Dec2(S);
+    W.Byte_(Ord('.'));  W.DecN(QWord(Us), 6);  W.Byte_(Ord('Z'));
+  end;
+
+  procedure Duration;
+  begin
+    W.Dec_(Ns div 1000000000);
+    W.Byte_(Ord('.'));
+    W.DecN((Ns mod 1000000000) div 1000, 6);
+  end;
+
 begin
   W.P := Dst;
   W.Len := 0;
   W.Cap := Cap;
   W.Overflow := False;
-  SplitTime(R.TimeUs, Y, Mo, D, H, Mi, S, Ms);
+  SplitTime(R.TimeUs, Y, Mo, D, H, Mi, S, Us);
   if R.DurationNs > 0 then
     Ns := QWord(R.DurationNs)
   else
@@ -461,76 +555,87 @@ begin
   Q := 0;
   while (Q < R.TargetLen) and (R.Target[Q] <> Ord('?')) do
     Inc(Q);
+  Level := AccessLevel(R.Status);
   case Format of
     alfJson:
       begin
-        W.Str('{"time":"');
-        W.DecN(QWord(Y), 4);  W.Byte_(Ord('-'));  W.Dec2(Mo);  W.Byte_(Ord('-'));  W.Dec2(D);
-        W.Byte_(Ord('T'));  W.Dec2(H);  W.Byte_(Ord(':'));  W.Dec2(Mi);  W.Byte_(Ord(':'));  W.Dec2(S);
-        W.Byte_(Ord('.'));  W.DecN(QWord(Ms), 3);  W.Str('Z","client.address":"');
-        W.Peer(R.Peer);                { digits, dots, hex and colons: nothing to escape }
-        W.Str('","http.request.method":');
+        W.Str('{"timestamp":"');
+        Timestamp;
+        W.Str('","level":"');
+        W.Str(LOG_LEVEL_NAMES[Level]);
+        W.Str('","logger":"bearings","event":"');
+        W.JsonChars(R.Method, R.MethodLen);
+        W.Byte_(Ord(' '));
+        W.JsonChars(R.Target, Q);
+        W.Byte_(Ord('"'));
+        if R.RequestId <> nil then
+        begin
+          W.Str(',"request_id":');
+          W.JsonStr(R.RequestId, R.RequestIdLen);
+        end;
+        W.Str(',"method":');
         W.JsonStr(R.Method, R.MethodLen);
-        W.Str(',"url.path":');
+        W.Str(',"path":');
         W.JsonStr(R.Target, Q);
         if Q < R.TargetLen then
         begin
-          W.Str(',"url.query":');
+          W.Str(',"query":');
           W.JsonStr(R.Target + Q + 1, R.TargetLen - Q - 1);
         end;
-        W.Str(',"network.protocol.version":"');
-        W.Version(R.Version);
-        W.Str('","http.response.status_code":');
+        W.Str(',"status":');
         W.Dec_(R.Status);
-        W.Str(',"http.response.body.size":');
+        W.Str(',"size":');
         W.Dec_(R.BodyBytes);
-        W.Str(',"http.server.request.duration":');
-        W.Dec_(Ns div 1000000000);
-        W.Byte_(Ord('.'));
-        W.DecN((Ns mod 1000000000) div 1000, 6);
-        if R.RequestId <> nil then
+        W.Str(',"duration":');
+        Duration;
+        W.Str(',"client":"');
+        W.Peer(R.Peer);                { digits, dots, hex and colons: nothing to escape }
+        W.Byte_(Ord('"'));
+        if R.UserAgent <> nil then
         begin
-          W.Str(',"http.response.header.x-request-id":');
-          W.JsonStr(R.RequestId, R.RequestIdLen);
-        end;
-        if UserAgent and (R.UserAgent <> nil) then
-        begin
-          W.Str(',"user_agent.original":');
+          W.Str(',"user_agent":');
           W.JsonStr(R.UserAgent, R.UserAgentLen);
+        end;
+        if R.Referer <> nil then
+        begin
+          W.Str(',"referer":');
+          W.JsonStr(R.Referer, R.RefererLen);
         end;
         W.Str('}'#10);
       end;
-    alfCombined:
+    alfConsole:
       begin
-        if R.Peer = nil then
-          W.Byte_(Ord('-'))
-        else
-          W.Peer(R.Peer);
-        W.Str(' - - [');
-        W.Dec2(D);  W.Byte_(Ord('/'));  W.Str(MONTHS[Mo]);  W.Byte_(Ord('/'));  W.DecN(QWord(Y), 4);
-        W.Byte_(Ord(':'));  W.Dec2(H);  W.Byte_(Ord(':'));  W.Dec2(Mi);  W.Byte_(Ord(':'));  W.Dec2(S);
-        W.Str(' +0000] "');
-        { the request line, escaped, inside one pair of quotes }
-        W.Escaped(R.Method, R.MethodLen);
-        W.Byte_(Ord(' '));
-        W.Escaped(R.Target, R.TargetLen);
-        W.Str(' HTTP/');
-        W.Version(R.Version);
-        W.Str('" ');
+        { the time of day: the date is the same for many lines }
+        W.Dec2(H);  W.Byte_(Ord(':'));  W.Dec2(Mi);  W.Byte_(Ord(':'));  W.Dec2(S);
+        W.Byte_(Ord('.'));  W.DecN(QWord(Us), 6);  W.Byte_(Ord('Z'));
+        W.Str(' [');
+        if Colors then
+        begin
+          W.Str(LEVEL_COLORS[Level]);
+          W.Str(BRIGHT);
+        end;
+        W.Str(LOG_LEVEL_NAMES[Level]);
+        if Colors then
+          W.Str(RESET);
+        W.Byte_(Ord(']'));
+        { padded to the width of "[error]", so that the statuses line up }
+        for I := Length(LOG_LEVEL_NAMES[Level]) to 5 do
+          W.Byte_(Ord(' '));
+        if Length(LOG_LEVEL_NAMES[Level]) > 5 then
+          W.Byte_(Ord(' '));
         W.Dec_(R.Status);
         W.Byte_(Ord(' '));
-        W.Dec_(R.BodyBytes);
+        W.ConsoleChars(R.Method, R.MethodLen);
         W.Byte_(Ord(' '));
-        if R.Referer <> nil then
-          W.QuotedStr(R.Referer, R.RefererLen)
-        else
-          W.Str('"-"');
-        W.Byte_(Ord(' '));
-        if UserAgent and (R.UserAgent <> nil) then
-          W.QuotedStr(R.UserAgent, R.UserAgentLen)
-        else
-          W.Str('"-"');
-        W.Byte_(10);
+        W.ConsoleChars(R.Target, R.TargetLen);
+        { milliseconds, for people: 0.412ms }
+        W.Str('  (');
+        W.Dec_(Ns div 1000000);
+        W.Byte_(Ord('.'));
+        W.DecN((Ns mod 1000000) div 1000, 3);
+        W.Str('ms; ');
+        W.Size(R.BodyBytes);
+        W.Str(')'#10);
       end;
   end;
   if W.Overflow then
@@ -569,13 +674,13 @@ end;
 { ---- TLogBuffer ---- }
 
 constructor TLogBuffer.Create(AOwner: TAccessLog; ACap: SizeInt; AFormat: TAccessLogFormat;
-  AUserAgent: Boolean);
+  AColors: Boolean);
 begin
   inherited Create;
   FOwner := AOwner;
   FCap := ACap;
   FFormat := AFormat;
-  FUserAgent := AUserAgent;
+  FColors := AColors;
   FActive.Data := GetMem(ACap);
   FOther.Data := GetMem(ACap);
 end;
@@ -592,8 +697,10 @@ var
   N: SizeInt;
   Half: Boolean;
 begin
+  if (FOwner <> nil) and (AccessLevel(R.Status) < FOwner.MinLevel) then
+    Exit;
   FLock.Acquire;
-  N := FormatAccessLine(R, FFormat, FUserAgent, FActive.Data + FActive.Len, FCap - FActive.Len);
+  N := FormatAccessLine(R, FFormat, FColors, FActive.Data + FActive.Len, FCap - FActive.Len);
   if N >= 0 then
     Inc(FActive.Len, N);
   { the flusher is woken once per area, by the line that fills it to the
@@ -640,7 +747,7 @@ begin
 end;
 
 constructor TAccessLog.Create(Loops: Integer; BufferBytes: SizeInt; AFormat: TAccessLogFormat;
-  AUserAgent: Boolean; Sink: TLogSink; FlushMs: Integer);
+  AColors: Boolean; Sink: TLogSink; FlushMs: Integer);
 var
   I: Integer;
 begin
@@ -660,7 +767,7 @@ begin
   FWake := RTLEventCreate;
   SetLength(FBuffers, Loops);
   for I := 0 to Loops - 1 do
-    FBuffers[I] := TLogBuffer.Create(Self, BufferBytes, AFormat, AUserAgent);
+    FBuffers[I] := TLogBuffer.Create(Self, BufferBytes, AFormat, AColors);
 end;
 
 destructor TAccessLog.Destroy;

@@ -410,7 +410,12 @@ type
   published
     procedure Json_lines_for_normal_error_and_head_requests;
     procedure Json_has_the_request_id_of_the_response;
-    procedure Combined_format;
+    procedure The_level_is_the_status_one;
+    procedure Min_level_drops_the_lines_below_it;
+    procedure No_user_agent_or_referer_unless_asked;
+    procedure Console_format;
+    procedure Console_colors;
+    procedure Console_sizes;
     procedure Slow_sink_does_not_block_the_loop;
   end;
 
@@ -1397,6 +1402,7 @@ begin
   Result.AccessLog.Format := Format;
   Result.AccessLog.Sink := Sink;
   Result.AccessLog.UserAgent := True;
+  Result.AccessLog.Referer := True;
   Result.Metrics := True;
 end;
 
@@ -1444,7 +1450,8 @@ begin
     Fd := Connect(Srv.Port);
     try
       AssertEquals(Resp('small'), GetOnce(Fd, '/small'));
-      SendAll(Fd, 'GET /nope?x=1&y=2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'User-Agent: t"e\st/1.0' + CRLF + CRLF);
+      SendAll(Fd, 'GET /nope?x=1&y=2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'User-Agent: t"e\st/1.0' + CRLF
+        + 'Referer: http://x/from' + CRLF + CRLF);
       Got := RecvUntil(Fd, CRLF + CRLF, Eof);
       AssertTrue('404: ' + Got, AnsiStartsStr('HTTP/1.1 404', Got));
       SendAll(Fd, 'HEAD /small HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
@@ -1461,31 +1468,38 @@ begin
     try
       AssertEquals('four lines: ' + Sink.Text, 4, L.Count);
       { 1: a normal GET }
-      AssertEquals('GET', JsonField(L[0], 'http.request.method'));
-      AssertEquals('/small', JsonField(L[0], 'url.path'));
-      AssertEquals('', JsonField(L[0], 'url.query'));
-      AssertEquals('1.1', JsonField(L[0], 'network.protocol.version'));
-      AssertEquals('200', JsonField(L[0], 'http.response.status_code'));
-      AssertEquals('5', JsonField(L[0], 'http.response.body.size'));
-      AssertEquals('127.0.0.1', JsonField(L[0], 'client.address'));
-      AssertTrue('time ' + JsonField(L[0], 'time'), (Length(JsonField(L[0], 'time')) = 24)
-        and (JsonField(L[0], 'time')[11] = 'T') and (JsonField(L[0], 'time')[24] = 'Z'));
-      AssertTrue('duration ' + JsonField(L[0], 'http.server.request.duration'),
-        Pos('.', JsonField(L[0], 'http.server.request.duration')) = 2);
+      AssertEquals('info', JsonField(L[0], 'level'));
+      AssertEquals('bearings', JsonField(L[0], 'logger'));
+      AssertEquals('GET /small', JsonField(L[0], 'event'));
+      AssertEquals('GET', JsonField(L[0], 'method'));
+      AssertEquals('/small', JsonField(L[0], 'path'));
+      AssertEquals('', JsonField(L[0], 'query'));
+      AssertEquals('200', JsonField(L[0], 'status'));
+      AssertEquals('5', JsonField(L[0], 'size'));
+      AssertEquals('127.0.0.1', JsonField(L[0], 'client'));
+      AssertTrue('timestamp ' + JsonField(L[0], 'timestamp'), (Length(JsonField(L[0], 'timestamp')) = 27)
+        and (JsonField(L[0], 'timestamp')[11] = 'T') and (JsonField(L[0], 'timestamp')[27] = 'Z'));
+      AssertTrue('duration ' + JsonField(L[0], 'duration'),
+        Pos('.', JsonField(L[0], 'duration')) = 2);
       AssertEquals('no user agent field', 0, Pos('user_agent', L[0]));
+      AssertEquals('no referer field', 0, Pos('referer', L[0]));
       AssertTrue('starts and ends as an object', (L[0][1] = '{') and (L[0][Length(L[0])] = '}'));
       { 2: an error status, a query, an escaped user agent }
-      AssertEquals('404', JsonField(L[1], 'http.response.status_code'));
-      AssertEquals('/nope', JsonField(L[1], 'url.path'));
-      AssertEquals('x=1&y=2', JsonField(L[1], 'url.query'));
-      AssertEquals('0', JsonField(L[1], 'http.response.body.size'));
-      AssertEquals('t\"e\\st/1.0', JsonField(L[1], 'user_agent.original'));
+      AssertEquals('404', JsonField(L[1], 'status'));
+      AssertEquals('error', JsonField(L[1], 'level'));
+      AssertEquals('GET /nope', JsonField(L[1], 'event'));
+      AssertEquals('/nope', JsonField(L[1], 'path'));
+      AssertEquals('x=1&y=2', JsonField(L[1], 'query'));
+      AssertEquals('0', JsonField(L[1], 'size'));
+      AssertEquals('t\"e\\st/1.0', JsonField(L[1], 'user_agent'));
+      AssertEquals('http://x/from', JsonField(L[1], 'referer'));
       { 3: HEAD: status 200, no body bytes }
-      AssertEquals('HEAD', JsonField(L[2], 'http.request.method'));
-      AssertEquals('200', JsonField(L[2], 'http.response.status_code'));
-      AssertEquals('0', JsonField(L[2], 'http.response.body.size'));
+      AssertEquals('HEAD', JsonField(L[2], 'method'));
+      AssertEquals('200', JsonField(L[2], 'status'));
+      AssertEquals('0', JsonField(L[2], 'size'));
       { 4: HTTP/1.0 }
-      AssertEquals('1.0', JsonField(L[3], 'network.protocol.version'));
+      AssertEquals('200', JsonField(L[3], 'status'));
+      AssertEquals('no version field', 0, Pos('version', L[3]));
     finally
       L.Free;
     end;
@@ -1514,9 +1528,9 @@ begin
     L := Sink.Lines;
     try
       AssertEquals('two lines: ' + Sink.Text, 2, L.Count);
-      AssertEquals('abc-\"1\"', JsonField(L[0], 'http.response.header.x-request-id'));
-      AssertEquals('200', JsonField(L[0], 'http.response.status_code'));
-      AssertEquals('no request id field', 0, Pos('x-request-id', L[1]));
+      AssertEquals('abc-\"1\"', JsonField(L[0], 'request_id'));
+      AssertEquals('200', JsonField(L[0], 'status'));
+      AssertEquals('no request id field', 0, Pos('request_id', L[1]));
     finally
       L.Free;
     end;
@@ -1525,7 +1539,91 @@ begin
   end;
 end;
 
-procedure TTestAccessLog.Combined_format;
+procedure TTestAccessLog.The_level_is_the_status_one;
+begin
+  AssertTrue('200', AccessLevel(200) = llInfo);
+  AssertTrue('302', AccessLevel(302) = llInfo);
+  AssertTrue('399', AccessLevel(399) = llInfo);
+  AssertTrue('400', AccessLevel(400) = llError);
+  AssertTrue('404', AccessLevel(404) = llError);
+  AssertTrue('499', AccessLevel(499) = llError);
+  AssertTrue('500', AccessLevel(500) = llError);
+  AssertTrue('503', AccessLevel(503) = llError);
+end;
+
+procedure TTestAccessLog.Min_level_drops_the_lines_below_it;
+var
+  Sink: TMemSink;
+  Cfg: TServerConfig;
+  Fd: cint;
+  Eof: Boolean;
+  L: TStringList;
+  Got: RawByteString;
+begin
+  Sink := TMemSink.Create;
+  try
+    Cfg := LogConfig(1, Sink, alfJson);
+    Cfg.AccessLog.MinLevel := llError;
+    StartServer(Cfg);
+    Fd := Connect(Srv.Port);
+    try
+      AssertEquals(Resp('small'), GetOnce(Fd, '/small'));
+      SendAll(Fd, 'GET /nope HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
+      Got := RecvUntil(Fd, CRLF + CRLF, Eof);
+      AssertTrue('404: ' + Got, AnsiStartsStr('HTTP/1.1 404', Got));
+    finally
+      fpClose(Fd);
+    end;
+    StopServer;
+    L := Sink.Lines;
+    try
+      AssertEquals('only the 404: ' + Sink.Text, 1, L.Count);
+      AssertEquals('/nope', JsonField(L[0], 'path'));
+      AssertEquals('error', JsonField(L[0], 'level'));
+    finally
+      L.Free;
+    end;
+  finally
+    Sink.Free;
+  end;
+end;
+
+procedure TTestAccessLog.No_user_agent_or_referer_unless_asked;
+var
+  Sink: TMemSink;
+  Cfg: TServerConfig;
+  Fd: cint;
+  L: TStringList;
+begin
+  Sink := TMemSink.Create;
+  try
+    Cfg := LogConfig(1, Sink, alfJson);
+    Cfg.AccessLog.UserAgent := False;
+    Cfg.AccessLog.Referer := False;
+    StartServer(Cfg);
+    Fd := Connect(Srv.Port);
+    try
+      SendAll(Fd, 'GET /small HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'User-Agent: curl/8' + CRLF
+        + 'Referer: http://x/from' + CRLF + CRLF);
+      AssertEquals(Resp('small'), RecvBytes(Fd, Length(Resp('small'))));
+    finally
+      fpClose(Fd);
+    end;
+    StopServer;
+    L := Sink.Lines;
+    try
+      AssertEquals(1, L.Count);
+      AssertEquals('no user agent: ' + L[0], 0, Pos('user_agent', L[0]));
+      AssertEquals('no referer: ' + L[0], 0, Pos('referer', L[0]));
+    finally
+      L.Free;
+    end;
+  finally
+    Sink.Free;
+  end;
+end;
+
+procedure TTestAccessLog.Console_format;
 var
   Sink: TMemSink;
   Fd: cint;
@@ -1534,10 +1632,10 @@ var
 begin
   Sink := TMemSink.Create;
   try
-    StartServer(LogConfig(1, Sink, alfCombined));
+    StartServer(LogConfig(1, Sink, alfConsole));
     Fd := Connect(Srv.Port);
     try
-      SendAll(Fd, 'GET /small?q=1 HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'User-Agent: curl/8' + CRLF
+      SendAll(Fd, 'GET /small?q=1 HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'User-Agent: curl/8 (x)' + CRLF
         + 'Referer: http://x/from' + CRLF + CRLF);
       AssertEquals(Resp('small'), RecvBytes(Fd, Length(Resp('small'))));
     finally
@@ -1548,15 +1646,104 @@ begin
     try
       AssertEquals(1, L.Count);
       S := L[0];
-      AssertTrue(S, AnsiStartsStr('127.0.0.1 - - [', S));
-      AssertTrue('date: ' + S, (S[18] = '/') and (S[22] = '/') and (S[27] = ':') and (Pos(' +0000] "GET /small?q=1 HTTP/1.1" 200 5 "http://x/from" "curl/8"', S) > 0));
-      AssertTrue('ends with the agent', AnsiEndsStr('"curl/8"', S));
+      { the time of day, the level padded to "[error]", the status, the
+        request, the duration and the size; no user agent or referer }
+      AssertTrue('time: ' + S, (S[3] = ':') and (S[6] = ':') and (S[9] = '.') and (S[16] = 'Z'));
+      AssertEquals('head: ' + S, 17, Pos(' [info]  200 GET /small?q=1  (', S));
+      AssertTrue('tail: ' + S, AnsiEndsStr('ms; 5 bytes)', S));
+      AssertEquals('no agent: ' + S, 0, Pos('curl', S));
+      AssertEquals('no referer: ' + S, 0, Pos('from', S));
+      AssertEquals('no colors', 0, Pos(#27, S));
     finally
       L.Free;
     end;
   finally
     Sink.Free;
   end;
+end;
+
+procedure TTestAccessLog.Console_colors;
+var
+  Sink: TMemSink;
+  Cfg: TServerConfig;
+  Fd: cint;
+  Eof: Boolean;
+  L: TStringList;
+  S, Got: RawByteString;
+begin
+  Sink := TMemSink.Create;
+  try
+    Cfg := LogConfig(1, Sink, alfConsole);
+    Cfg.AccessLog.Colors := True;
+    StartServer(Cfg);
+    Fd := Connect(Srv.Port);
+    try
+      SendAll(Fd, 'GET /nope HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
+      Got := RecvUntil(Fd, CRLF + CRLF, Eof);
+      AssertTrue('404: ' + Got, AnsiStartsStr('HTTP/1.1 404', Got));
+    finally
+      fpClose(Fd);
+    end;
+    StopServer;
+    L := Sink.Lines;
+    try
+      AssertEquals(1, L.Count);
+      S := L[0];
+      { only the level has a color: a 4xx is an error, bright red }
+      AssertTrue('level: ' + S, Pos('Z ['#27'[31m'#27'[1merror'#27'[0m] 404 GET /nope  (', S) > 0);
+      AssertEquals('three escapes, all the level''s: ' + S, 3,
+        Length(S) - Length(StringReplace(S, #27, '', [rfReplaceAll])));
+    finally
+      L.Free;
+    end;
+  finally
+    Sink.Free;
+  end;
+end;
+
+procedure TTestAccessLog.Console_sizes;
+const
+  CASES: array[0..13] of record N: QWord; Text: RawByteString; end = (
+    (N: 0; Text: '0 bytes'),
+    (N: 1; Text: '1 byte'),
+    (N: 164; Text: '164 bytes'),
+    (N: 1000; Text: '1000 bytes'),
+    (N: 1023; Text: '1023 bytes'),
+    (N: 1024; Text: '1.00 KB'),
+    (N: 1641; Text: '1.60 KB'),
+    (N: 16412; Text: '16.03 KB'),
+    (N: 164125; Text: '160.28 KB'),
+    (N: 1048575; Text: '1.00 MB'),
+    (N: 1641252; Text: '1.57 MB'),
+    (N: 16412523; Text: '15.65 MB'),
+    (N: 164125234; Text: '156.52 MB'),
+    (N: 1641252345; Text: '1.53 GB'));
+var
+  R: TAccessRecord;
+  Buf: array[0..255] of Byte;
+  N, I: Integer;
+  S: RawByteString;
+begin
+  R := Default(TAccessRecord);
+  R.Method := PByte(PAnsiChar('GET'));
+  R.MethodLen := 3;
+  R.Target := PByte(PAnsiChar('/x'));
+  R.TargetLen := 2;
+  R.Status := 200;
+  R.DurationNs := 412000;
+  for I := 0 to High(CASES) do
+  begin
+    R.BodyBytes := CASES[I].N;
+    N := FormatAccessLine(R, alfConsole, False, @Buf[0], SizeOf(Buf));
+    SetString(S, PAnsiChar(@Buf[0]), N);
+    AssertEquals(IntToStr(CASES[I].N), '00:00:00.000000Z [info]  200 GET /x  (0.412ms; ' + CASES[I].Text
+      + ')'#10, S);
+  end;
+  { a size past 1024 GB stays in GB }
+  R.BodyBytes := 1641252345678;
+  N := FormatAccessLine(R, alfConsole, False, @Buf[0], SizeOf(Buf));
+  SetString(S, PAnsiChar(@Buf[0]), N);
+  AssertTrue(S, AnsiEndsStr('(0.412ms; 1528.54 GB)'#10, S));
 end;
 
 procedure TTestAccessLog.Slow_sink_does_not_block_the_loop;

@@ -82,7 +82,7 @@
   limit (TServerHooks): a request costs one pointer test when they are off,
   and when they are on the loop does the work itself, with no allocation
   and no atomic operation. Config.AccessLog.Enabled writes one line per
-  completed request (JSON by default, or the Combined Log Format) into the
+  completed request (JSON by default, or a console line) into the
   loop's buffer; a flusher thread writes the buffers to the sink (stdout
   unless the configuration names another). What a line needs from the
   request head (method, target, User-Agent, Referer) is copied when the
@@ -192,11 +192,14 @@ type
   { The access log (bearings.server.accesslog). }
   TAccessLogConfig = record
     Enabled: Boolean;
-    Format: TAccessLogFormat;        { alfJson (the default) or alfCombined }
+    Format: TAccessLogFormat;        { alfJson (the default) or alfConsole }
     Sink: TLogSink;                  { nil = stdout; not owned }
     BufferBytes: Integer;            { per loop; 0 = 64 KiB }
     FlushMs: Integer;                { the flusher's period; 0 = 100 }
     UserAgent: Boolean;              { include the User-Agent header }
+    Referer: Boolean;                { include the Referer header }
+    Colors: Boolean;                 { alfConsole: the level in structlog's ANSI color }
+    MinLevel: TLogLevel;             { the lines below it are dropped; llDebug (the default) = none }
   end;
 
   TServerConfig = record
@@ -377,7 +380,7 @@ type
     Metrics: array of TLoopMetrics;  { per loop; written by that loop only }
     Snap: array of TLoopMetrics;     { the copies a snapshot collects }
     Log: TAccessLog;                 { nil when the access log is off }
-    LogUserAgent: Boolean;
+    LogUserAgent, LogReferer: Boolean;
     destructor Destroy; override;
     procedure RequestStarted(D: TH1Dispatcher); override;
     procedure RequestDone(D: TH1Dispatcher); override;
@@ -657,7 +660,7 @@ begin
     Dec(Room, St^.UALen);
   end;
   St^.RefLen := 0;
-  St^.HasRef := D.Ex.Head.Headers.Get('referer', P, N);
+  St^.HasRef := LogReferer and D.Ex.Head.Headers.Get('referer', P, N);
   if St^.HasRef then
     St^.RefLen := StageCopy(Dst, Room, P, N);
 end;
@@ -711,7 +714,6 @@ begin
   { the response head is still the exchange's: read in place, copied by Append }
   if not D.Ex.Resp.Head.Headers.Get('x-request-id', R.RequestId, R.RequestIdLen) then
     R.RequestId := nil;
-  R.Version := D.Ex.Head.Version;
   R.Status := D.Ex.Resp.Head.Status;
   R.BodyBytes := D.RespBodyBytes;
   R.DurationNs := Dur;
@@ -1367,8 +1369,10 @@ begin
     if FCfg.AccessLog.Enabled then
     begin
       FHooks.Log := TAccessLog.Create(N, FCfg.AccessLog.BufferBytes, FCfg.AccessLog.Format,
-        FCfg.AccessLog.UserAgent, FCfg.AccessLog.Sink, FCfg.AccessLog.FlushMs);
+        FCfg.AccessLog.Colors, FCfg.AccessLog.Sink, FCfg.AccessLog.FlushMs);
+      FHooks.Log.MinLevel := FCfg.AccessLog.MinLevel;
       FHooks.LogUserAgent := FCfg.AccessLog.UserAgent;
+      FHooks.LogReferer := FCfg.AccessLog.Referer;
     end;
   end;
   { the listen specs: Listen, then AlsoListen. A Unix socket has one path

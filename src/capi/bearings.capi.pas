@@ -72,7 +72,7 @@ const
 
   BEARINGS_ACCESS_LOG_OFF = 0;
   BEARINGS_ACCESS_LOG_JSON = 1;
-  BEARINGS_ACCESS_LOG_COMBINED = 2;
+  BEARINGS_ACCESS_LOG_CONSOLE = 2;
 
 type
   { Zeroed fields take the defaults of ProductionServerConfig. }
@@ -88,6 +88,12 @@ type
     SaturatedStatus: cint;         { with a queue limit: answered when the queue is full (503) }
     MaxConnections: cint;          { 0 = no limit }
     AccessLog: cint;               { BEARINGS_ACCESS_LOG_* (stdout) }
+    { the access log's lines below this level of Python's logging are
+      dropped: 0 = none; 30 (warning) or 40 (error) keeps the 4xx and 5xx }
+    AccessLogLevel: cint;
+    AccessLogUserAgent: cint;      { 1 = the lines have the User-Agent header }
+    AccessLogReferer: cint;        { 1 = the lines have the Referer header }
+    AccessLogColors: cint;         { 1 = the console format has the level in structlog's ANSI color }
     Metrics: cint;                 { 1 = keep the counters of bearings_metrics }
     { WebSockets: accepted on this path (nil or '' = none); see the unit header }
     WsPath: PAnsiChar;
@@ -719,14 +725,27 @@ begin
       BEARINGS_ACCESS_LOG_OFF: ;
       BEARINGS_ACCESS_LOG_JSON:
         SC.AccessLog.Enabled := True;
-      BEARINGS_ACCESS_LOG_COMBINED:
+      BEARINGS_ACCESS_LOG_CONSOLE:
       begin
         SC.AccessLog.Enabled := True;
-        SC.AccessLog.Format := alfCombined;
+        SC.AccessLog.Format := alfConsole;
       end;
     else
       raise Exception.Create('bearings_server_new: unknown access log format');
     end;
+    SC.AccessLog.UserAgent := Cfg^.AccessLogUserAgent <> 0;
+    SC.AccessLog.Referer := Cfg^.AccessLogReferer <> 0;
+    SC.AccessLog.Colors := Cfg^.AccessLogColors <> 0;
+    if Cfg^.AccessLogLevel >= 50 then
+      SC.AccessLog.MinLevel := llCritical
+    else if Cfg^.AccessLogLevel >= 40 then
+      SC.AccessLog.MinLevel := llError
+    else if Cfg^.AccessLogLevel >= 30 then
+      SC.AccessLog.MinLevel := llWarning
+    else if Cfg^.AccessLogLevel >= 20 then
+      SC.AccessLog.MinLevel := llInfo
+    else
+      SC.AccessLog.MinLevel := llDebug;
     SC.Metrics := Cfg^.Metrics <> 0;
     C := TCServer.Create;
     C.Ctx := Ctx;

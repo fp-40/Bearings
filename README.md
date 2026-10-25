@@ -8,7 +8,7 @@ It runs natively only on Linux (x86_64 and ARM64). On Windows it runs under WSL,
 
 Bearings speaks HTTP/1.1 (and HTTP/1.0) over plain TCP and the WebSocket protocol (RFC 6455) on the event loop.
 
-It listens on TCP or on a Unix domain socket, runs under systemd socket activation with readiness and watchdog notifications, can cap the number of open connections and the requests and lifetime of each, reads the PROXY protocol header (v1 and v2) from a proxy or load balancer in front so that the client's address is known behind it, and can write an access log (JSON lines or the Combined Log Format) and keep metrics with a Prometheus text export.
+It listens on TCP or on a Unix domain socket, runs under systemd socket activation with readiness and watchdog notifications, can cap the number of open connections and the requests and lifetime of each, reads the PROXY protocol header (v1 and v2) from a proxy or load balancer in front so that the client's address is known behind it, and can write an access log (JSON lines with the keys of structlog's, or short console lines) and keep metrics with a Prometheus text export.
 
 It has no TLS and no HTTP/2. For TLS, put a reverse proxy such as NGINX in front of it. The WebSocket code negotiates no extension (no permessage-deflate compression); its handlers run on the loop thread or, for code that blocks, on the worker pool, one event at a time per connection.
 
