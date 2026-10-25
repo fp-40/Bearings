@@ -795,12 +795,17 @@ end;
 
 type
   { keep-alive client: GET Path on a connection until it closes, then a
-    new connection, until a connect is refused }
+    new connection, until a connect is refused. A connect that ends in
+    ECONNRESET or ECONNABORTED counts as a connection closed before a
+    request was read (Empty) and is retried: the kernel gives that result
+    when the connection was established and then reset by the closing
+    listener before connect returned. }
   TLoadClient = class(TThread)
   public
     Port: Word;
     Path, Body: RawByteString;       { '/slow' (100 ms) or '/small' (at once) }
     Full, Empty, Partial, Refused, OtherConnectErrors: Integer;
+    LastOtherErrno: cint;            { the errno of the last OtherConnectErrors }
     procedure Execute; override;
   end;
 
@@ -817,12 +822,20 @@ begin
   while not Terminated do
   begin
     E := TryConnect(Port, Fd);
+    if (E = ESysECONNRESET) or (E = ESysECONNABORTED) then
+    begin
+      Inc(Empty);
+      Continue;
+    end;
     if E <> 0 then
     begin
       if E = ESysECONNREFUSED then
         Inc(Refused)
       else
+      begin
         Inc(OtherConnectErrors);
+        LastOtherErrno := E;
+      end;
       Exit;
     end;
     SetRecvTimeout(Fd, 10);
@@ -876,6 +889,7 @@ const
 var
   Clients: array[0..N - 1] of TLoadClient;
   I, Full, Empty, Partial, Refused, Other: Integer;
+  OtherErrno: cint;
   T0, Took: QWord;
   Fd: cint;
 begin
@@ -908,7 +922,7 @@ begin
   TC.Srv.Stop(Cfg.GraceMs);
   TC.Srv.Wait;
   Took := GetTickCount64 - T0;
-  Full := 0; Empty := 0; Partial := 0; Refused := 0; Other := 0;
+  Full := 0; Empty := 0; Partial := 0; Refused := 0; Other := 0; OtherErrno := 0;
   for I := 0 to N - 1 do
   begin
     Clients[I].WaitFor;
@@ -917,6 +931,8 @@ begin
     Inc(Partial, Clients[I].Partial);
     Inc(Refused, Clients[I].Refused);
     Inc(Other, Clients[I].OtherConnectErrors);
+    if Clients[I].OtherConnectErrors > 0 then
+      OtherErrno := Clients[I].LastOtherErrno;
     Clients[I].Free;
   end;
   TC.AssertTrue('the loops left long before the deadline (' + IntToStr(Took) + ' ms)',
@@ -926,8 +942,8 @@ begin
   TC.AssertEquals('no call dropped before the deadline', 0, Dropped);
   TC.AssertEquals('every request the server received was answered', Calls, Answered);
   TC.AssertEquals('every answer arrived complete', Answered, Full);
+  TC.AssertEquals('no other connect error (errno ' + IntToStr(OtherErrno) + ')', 0, Other);
   TC.AssertEquals('every client ended at a refused connect', N, Refused);
-  TC.AssertEquals('no other connect error', 0, Other);
   TC.AssertTrue('new connections are refused', TryConnect(TC.Srv.Port, Fd) = ESysECONNREFUSED);
   { Empty: connections the server closed before it read a request (idle
     keep-alive connections at GracefulShutdown, connections the drain
