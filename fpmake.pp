@@ -26,7 +26,7 @@ begin
   with Installer do
   begin
     P := AddPackage('bearings');
-    P.Version := '0.3.0';
+    P.Version := '0.4.0';
     P.Author := 'Juan-Pablo Scaletti';
     P.License := 'MIT';
     P.Description := 'HTTP/1.1 and WebSocket server library: an event loop per CPU, a worker pool, raw Linux system calls';
