@@ -1,6 +1,6 @@
  <h1><img src="Bearings.png" height="128" align="middle"/> Bearings</h1>
 
-Bearings is an HTTP/1.1 server library for Free Pascal: an event loop per CPU, a pool of worker threads for code that blocks, an HTTP/1.1 parser and encoder, and a `TServer` that ties them together. An application gives the server a service object; the server calls it once per request with a `TExchange` (the request and its response) and writes the response the service produces.
+Bearings is an HTTP/1.1 server library for Object Pascal (Free Pascal compiler): an event loop per CPU, a pool of worker threads for code that blocks, an HTTP/1.1 parser and encoder, and a `TServer` that ties them together. An application gives the server a service object; the server calls it once per request with a `TExchange` (the request and its response) and writes the response the service produces.
 
 It runs natively only on Linux (x86_64 and ARM64). On Windows it runs under WSL, and on macOS inside a container.
 
