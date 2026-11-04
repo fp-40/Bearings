@@ -212,8 +212,8 @@ Member | Description | Thread
 
 Member | Description | Thread
 ------ | ----------- | ------
-`THyperError` and its predicates (`IsParse`, `IsParseTooLarge`, `IsParseVersionH2`, `IsUser`, `IsIncompleteMessage`, `IsBodyWriteAborted`, `IsShutdown`, `IsTimeout`, `HasIoSource`) | why an HTTP message failed (section 9) | any (plain value)
-`THyperErrorKind`, `THyperUserKind`, `TErrorCause` | its enumerations | -
+`TH1Error` and its predicates (`IsParse`, `IsParseTooLarge`, `IsParseVersionH2`, `IsUser`, `IsIncompleteMessage`, `IsBodyWriteAborted`, `IsShutdown`, `IsTimeout`, `HasIoSource`) | why an HTTP message failed (section 9) | any (plain value)
+`TH1ErrorKind`, `TH1UserKind`, `TErrorCause` | its enumerations | -
 `TPollResult` (`prOk`, `prErr`, `prPending`), `TPollOpt` (`poSome`, `poErr`, `poNone`, `poPending`) | results of the connection code's poll routines | internal
 `EH1Panic` | a program error inside the HTTP/1 code | -
 `TConnOutcome` | how a connection ended | -

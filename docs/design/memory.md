@@ -63,7 +63,7 @@ enough.
 - Hot routines take `PByte` plus length. No `string`, `RawByteString` or
   dynamic-array locals, by-value parameters or temporaries, and no `try`:
   each of these makes FPC emit `fpc_pushexceptaddr` and `fpc_setjmp` on
-  every call. `TEncoder`, `TDecoder`, `TResponseHead`, `THyperError`,
+  every call. `TEncoder`, `TDecoder`, `TResponseHead`, `TH1Error`,
   `TBodyData` and the buffer records have no managed fields; trailer names
   and trailer bytes live in a per-connection scratch (`TConnScratch`) instead
   of managed fields of the codec records; the reason phrase is a slice.

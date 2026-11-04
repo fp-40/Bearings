@@ -196,7 +196,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
 begin
   { io.rs:683-726, server form: split over multiple reads, missing the last
     line ending, then the io blocks (tokio_test's wait) }
@@ -205,7 +205,7 @@ begin
   try
     M.Read('GET / HTTP/1.1' + CRLF).Read('Host: x' + CRLF).ReadPending;
     Io.Init(M, nil);
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue('parse is pending', Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prPending);
     AssertEquals('read buf', 'GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF, ReadBufStr(Io));
     AssertEquals('three reads', 3, M.ReadCalls);
@@ -566,7 +566,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
   E: cint;
 begin
   M := TMockTransport.Create;
@@ -575,7 +575,7 @@ begin
     M.Read('GET /a HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF + 'GET /b HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF).Write('RESP1RESP2');
     Io.Init(M, nil);
     Io.SetFlushPipeline(True);
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue('first request', Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prOk);
     Head.Release;
     AppendStr(Io.HeadersBuf, 'RESP1', nil);
@@ -1056,7 +1056,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   View, Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
   E: cint;
   I: Integer;
   Sizes: array[0..8] of Integer = (100, 20000, 8192, 50000, 5, 16384, 70000, 1, 135318);
@@ -1075,7 +1075,7 @@ begin
       Expected := Expected + Part;
     end;
     Io.Init(M, Pool);
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     if Io.Parse(DefaultParseContext, H, Msg, Head, Err) <> prOk then
       raise Exception.Create('parse');
     Head.Release;
@@ -1159,7 +1159,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
   Part: RawByteString;
   Pool: TBlockPool;
 begin
@@ -1174,7 +1174,7 @@ begin
     M.Read(Part).ReadPending.Read(StringOfChar('b', 20000)).ReadPending;
     Pool.Init(POOL_DEFAULT_MAX_BYTES);
     Io.Init(M, @Pool);
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue(Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prPending);
     AssertEquals(8192, M.ReadLens[0]);
     AssertEquals('strategy unchanged', 8192, Int64(Io.ReadBufStrategy.Next));
@@ -1199,7 +1199,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
   Req1, Req2: RawByteString;
 begin
   { io.rs:201: partial_len = None after a parsed message. A stale
@@ -1212,7 +1212,7 @@ begin
     Req2 := 'GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF;
     M.Read(Copy(Req1, 1, 110)).ReadPending.Read(Copy(Req1, 111, MaxInt) + Req2).ReadPending;
     Io.Init(M, nil);
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue(Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prPending);
     AssertEquals('partial_len', 110, Io.PartialLen);
     AssertTrue(Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prOk);
@@ -1238,7 +1238,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
   Req: RawByteString;
   I: Integer;
 const
@@ -1258,9 +1258,9 @@ begin
       Req := CASES[I];
       M.Read(Req);
       Io.Init(M, nil);
-      Err := Default(THyperError);
+      Err := Default(TH1Error);
       AssertTrue('error', Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prErr);
-      AssertTrue('kind parse', Err.Kind = hekParse);
+      AssertTrue('kind parse', Err.Kind = h1eParse);
       AssertTrue(Format('case %d: parse error', [I]), Err.Parse = ERRS[I]);
       AssertEquals(Format('case %d: role.rs:225 split the head off', [I]), 'XYZ', ReadBufStr(Io));
       AssertTrue('no view handed out', Head.Block = nil);
@@ -1280,7 +1280,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
   Ctx: TH1ParseContext;
   Req: RawByteString;
 begin
@@ -1294,9 +1294,9 @@ begin
     Io.Init(M, nil);
     Ctx := DefaultParseContext;
     Ctx.MaxHeaderSize := 20;
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue('error', Io.Parse(Ctx, H, Msg, Head, Err) = prErr);
-    AssertTrue('too large', (Err.Kind = hekParse) and (Err.Parse = h1peTooLarge));
+    AssertTrue('too large', (Err.Kind = h1eParse) and (Err.Parse = h1peTooLarge));
     AssertEquals('bytes kept', Req, ReadBufStr(Io));
     Io.Done;
   finally
@@ -1309,9 +1309,9 @@ begin
     Req := 'G@T / HTTP/1.1' + CRLF + CRLF;
     M.Read(Req);
     Io.Init(M, nil);
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue('error', Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prErr);
-    AssertTrue('method', (Err.Kind = hekParse) and (Err.Parse = h1peMethod));
+    AssertTrue('method', (Err.Kind = h1eParse) and (Err.Parse = h1peMethod));
     AssertEquals('bytes kept', Req, ReadBufStr(Io));
     Io.Done;
   finally
@@ -1329,7 +1329,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
 begin
   M := TMockTransport.Create;
   H := THttpHeaders.Create;
@@ -1337,9 +1337,9 @@ begin
     M.Read('GET / HTTP/1.1' + CRLF + 'X: ' + StringOfChar('a', 10000));
     Io.Init(M, nil);
     Io.SetMaxBufSize(8192);
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue('error', Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prErr);
-    AssertTrue('too large', (Err.Kind = hekParse) and (Err.Parse = h1peTooLarge));
+    AssertTrue('too large', (Err.Kind = h1eParse) and (Err.Parse = h1peTooLarge));
     AssertEquals('one read of exactly 8192', 1, Length(M.ReadLens));
     AssertEquals(8192, M.ReadLens[0]);
     AssertEquals('buffer full', 8192, Io.ReadBufLen);
@@ -1376,7 +1376,7 @@ begin
     Io.Init(M, @Pool);
     Io.SetMaxBufSize(10000);
     AssertTrue('error', Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prErr);
-    AssertTrue('too large', (Err.Kind = hekParse) and (Err.Parse = h1peTooLarge));
+    AssertTrue('too large', (Err.Kind = h1eParse) and (Err.Parse = h1peTooLarge));
     AssertEquals('buffer stops at max', 10000, Io.ReadBufLen);
     Total := 0;
     for I := 0 to High(M.ReadLens) do
@@ -1397,7 +1397,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
   Ctx: TH1ParseContext;
 begin
   M := TMockTransport.Create;
@@ -1407,9 +1407,9 @@ begin
     Io.Init(M, nil);
     Ctx := DefaultParseContext;
     Ctx.MaxHeaderSize := 100;
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue('error', Io.Parse(Ctx, H, Msg, Head, Err) = prErr);
-    AssertTrue('too large', (Err.Kind = hekParse) and (Err.Parse = h1peTooLarge));
+    AssertTrue('too large', (Err.Kind = h1eParse) and (Err.Parse = h1peTooLarge));
     Io.Done;
   finally
     H.Free;
@@ -1424,16 +1424,16 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
 begin
   M := TMockTransport.Create;
   H := THttpHeaders.Create;
   try
     M.Read('GET / HTTP/1.1' + CRLF);
     Io.Init(M, nil);
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue('error', Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prErr);
-    AssertTrue('incomplete', Err.Kind = hekIncompleteMessage);
+    AssertTrue('incomplete', Err.Kind = h1eIncompleteMessage);
     Io.Done;
   finally
     H.Free;
@@ -1448,16 +1448,16 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
 begin
   M := TMockTransport.Create;
   H := THttpHeaders.Create;
   try
     M.ReadError(ESysECONNRESET);
     Io.Init(M, nil);
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue('error', Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prErr);
-    AssertTrue('io', (Err.Kind = hekIo) and (Err.Cause = ecErrno));
+    AssertTrue('io', (Err.Kind = h1eIo) and (Err.Cause = ecErrno));
     AssertEquals('errno', ESysECONNRESET, Err.Errno);
     Io.Done;
   finally
@@ -1534,7 +1534,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head, Rest: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
   AIo: TTransport;
 begin
   M := TMockTransport.Create;
@@ -1542,7 +1542,7 @@ begin
   try
     M.Read('GET / HTTP/1.1' + CRLF + 'Upgrade: foo' + CRLF + 'Host: x' + CRLF + CRLF + 'LEFTOVER');
     Io.Init(M, nil);
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue(Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prOk);
     AssertTrue('wants upgrade', Msg.WantsUpgrade);
     AppendStr(Io.HeadersBuf, 'unflushed', nil);
@@ -1709,7 +1709,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
   Ctx: TH1ParseContext;
   Part: RawByteString;
 begin
@@ -1725,15 +1725,15 @@ begin
     Io.Init(M, nil);
     Ctx := DefaultParseContext;
     Ctx.MaxHeaderSize := 100;
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue('len = max: error', Io.Parse(Ctx, H, Msg, Head, Err) = prErr);
-    AssertTrue('too large', (Err.Kind = hekParse) and (Err.Parse = h1peTooLarge));
+    AssertTrue('too large', (Err.Kind = h1eParse) and (Err.Parse = h1peTooLarge));
     Io.Done;
     M.Free;
     M := TMockTransport.Create;
     M.Read(Copy(Part, 1, 99)).ReadPending;
     Io.Init(M, nil);
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue('len = max - 1: reads on (Pending)', Io.Parse(Ctx, H, Msg, Head, Err) = prPending);
     Io.Done;
   finally
@@ -1781,7 +1781,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
 begin
   { io.rs:279 returns Ready without writing while pipeline_flush is on and
     the read buffer holds bytes. With an entry queued (here a file),
@@ -1801,7 +1801,7 @@ begin
     Io.SetFlushPipeline(True);
     Got := 'GET /1 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF + 'GET /2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF + 'GET /3 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF;
     AssertEquals(Length(Got), fpSend(Sv[1], PAnsiChar(Got), Length(Got), 0));
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue('request 1', Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prOk);
     Head.Release;
     AssertTrue('requests 2 and 3 still buffered', Io.ReadBufLen > 0);
@@ -1834,7 +1834,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TBytesView;
-  Err: THyperError;
+  Err: TH1Error;
   E: cint;
   Big: RawByteString;
 begin
@@ -1846,7 +1846,7 @@ begin
       .Write('HEAD1' + Big).Write('HEAD2small');
     Io.Init(M, nil);
     Io.SetFlushPipeline(True);
-    Err := Default(THyperError);
+    Err := Default(TH1Error);
     AssertTrue(Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prOk);
     Head.Release;
     AppendStr(Io.HeadersBuf, 'HEAD1', nil);

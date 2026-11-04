@@ -79,7 +79,7 @@
 
   Results. A Pending result means the transport returned EAGAIN (the task
   runs again on the next readiness event) or a timer is armed (its Proc
-  wakes Owner). Errors are THyperError values (bearings.http.error).
+  wakes Owner). Errors are TH1Error values (bearings.http.error).
 
   File bodies: WriteBody and WriteBodyAndEnd encode a bkFile chunk as for
   memory and queue its framing around a qkFile entry (BufferFileFrame):
@@ -147,7 +147,7 @@ type
 
   TConnState = record
     HasError: Boolean;               { Error holds an error for TakeError }
-    Error: THyperError;
+    Error: TH1Error;
     KeepAlive: TKA;
     Method: THttpMethod;             { the current request's method (the encoder needs it for HEAD and CONNECT); hmNone = none }
     ParseCtx: TH1ParseContext;
@@ -249,9 +249,9 @@ type
       automatic error response was buffered (the error follows through
       TakeError). poErr: Err set. }
     function PollReadHead(Headers: THttpHeaders; out Msg: TParsedRequestHead;
-      out Head: TBytesView; out Wants: TWants; var Err: THyperError): TPollOpt;
-    function OnReadHeadError(var Err: THyperError): TPollOpt;
-    function PollReadProxy(var Err: THyperError): TPollOpt;
+      out Head: TBytesView; out Wants: TWants; var Err: TH1Error): TPollOpt;
+    function OnReadHeadError(var Err: TH1Error): TPollOpt;
+    function PollReadProxy(var Err: TH1Error): TPollOpt;
     { Runs the body decoder over the read buffer, reading from the socket
       when the decoder needs more and the buffer is empty. }
     function DecodeFrame(Trailers: THttpHeaders; out View: TBytesView; out DErr: TDecodeError;
@@ -260,15 +260,15 @@ type
       pinned view) or trailers; poNone: the body ended; poPending: wait.
       Trailers: where a trailer frame goes (nil: validated and dropped).
       poErr: Err set, and stored for TakeError too. }
-    function PollReadBody(Trailers: THttpHeaders; out Frame: TInFrame; var Err: THyperError): TPollOpt;
+    function PollReadBody(Trailers: THttpHeaders; out Frame: TInFrame; var Err: TH1Error): TPollOpt;
     { returns NotifyRead and clears it }
     function WantsReadAgain: Boolean;
     { Called while neither a head nor a body can be read (the request was
       read, its response is in progress): detects a client that closed the
       connection in the middle of the exchange. }
-    function PollReadKeepAlive(var Err: THyperError): TPollResult;
+    function PollReadKeepAlive(var Err: TH1Error): TPollResult;
     function IsMidMessage: Boolean;
-    function MidMessageDetectEof(var Err: THyperError): TPollResult;
+    function MidMessageDetectEof(var Err: TH1Error): TPollResult;
     function ForceIoRead(out N: SizeInt; out Errno: cint): TIoPoll;
     { After a response: if the connection is ready for a new head, reads
       from the socket when the buffer is empty and sets NotifyRead, so the
@@ -308,10 +308,10 @@ type
     { Ends the response body: writes the final "0" CRLF CRLF of a chunked
       body. False (Err set, writing closed) when a Content-Length body got
       fewer bytes than declared: the connection cannot be reused. }
-    function EndBody(var Err: THyperError): Boolean;
+    function EndBody(var Err: TH1Error): Boolean;
     { True: an automatic error response was buffered (Err stored for
       TakeError); False: Err must be returned to the caller. }
-    function OnParseError(var Err: THyperError): Boolean;
+    function OnParseError(var Err: TH1Error): Boolean;
     function PollFlush(out Errno: cint): TIoPoll;                    { TH1Io.PollFlush, then TryKeepAlive }
     function PollShutdown(out Errno: cint): TIoPoll;
     procedure PollDrainOrCloseRead;
@@ -319,7 +319,7 @@ type
     { closes at once when idle; otherwise closes after the current response }
     procedure DisableKeepAlive;
     { True when an error was stored: Err gets it and the store is cleared }
-    function TakeError(var Err: THyperError): Boolean;
+    function TakeError(var Err: TH1Error): Boolean;
     { cold helpers }
     function ErrorHeaders: THttpHeaders;
   public
@@ -508,7 +508,7 @@ procedure TH1Conn.Init(AIo: TTransport; APool: PBlockPool; AOwner: TObject);
 begin
   Io.Init(AIo, APool);
   State.HasError := False;
-  State.Error := Default(THyperError);
+  State.Error := Default(TH1Error);
   State.KeepAlive := kaBusy;
   State.Method := hmNone;
   State.ParseCtx := DefaultParseContext;
@@ -673,7 +673,7 @@ end;
   check): the connection ends like one closed between requests. poErr:
   not a valid header (h1peProxyProtocol), EOF inside it, or a socket
   error; no response is written, since the sender is not an HTTP client. }
-function TH1Conn.PollReadProxy(var Err: THyperError): TPollOpt;
+function TH1Conn.PollReadProxy(var Err: TH1Error): TPollOpt;
 var
   PP: TProxyParse;
   Used, N: SizeInt;
@@ -721,7 +721,7 @@ begin
 end;
 
 function TH1Conn.PollReadHead(Headers: THttpHeaders; out Msg: TParsedRequestHead;
-  out Head: TBytesView; out Wants: TWants; var Err: THyperError): TPollOpt;
+  out Head: TBytesView; out Wants: TWants; var Err: TH1Error): TPollOpt;
 var
   R: TPollResult;
   PR: TPollOpt;
@@ -819,7 +819,7 @@ begin
   Result := poSome;
 end;
 
-function TH1Conn.OnReadHeadError(var Err: THyperError): TPollOpt;
+function TH1Conn.OnReadHeadError(var Err: TH1Error): TPollOpt;
 var
   WasMidParse: Boolean;
 begin
@@ -923,7 +923,7 @@ begin
 end;
 
 function TH1Conn.PollReadBody(Trailers: THttpHeaders; out Frame: TInFrame;
-  var Err: THyperError): TPollOpt;
+  var Err: TH1Error): TPollOpt;
 var
   D: TDecodeFrame;
   V: TBytesView;
@@ -1095,7 +1095,7 @@ begin
   State.NotifyRead := False;
 end;
 
-function TH1Conn.PollReadKeepAlive(var Err: THyperError): TPollResult;
+function TH1Conn.PollReadKeepAlive(var Err: TH1Error): TPollResult;
 begin
   Assert(not CanReadHead and not CanReadBody, 'poll_read_keep_alive: can read');
   if IsReadClosed then
@@ -1111,7 +1111,7 @@ begin
   Result := not ((State.Reading = rdInit) and (State.Writing = wrInit));
 end;
 
-function TH1Conn.MidMessageDetectEof(var Err: THyperError): TPollResult;
+function TH1Conn.MidMessageDetectEof(var Err: TH1Error): TPollResult;
 var
   N: SizeInt;
   Errno: cint;
@@ -1470,7 +1470,7 @@ begin
     State.Writing := wrClosed;
 end;
 
-function TH1Conn.EndBody(var Err: THyperError): Boolean;
+function TH1Conn.EndBody(var Err: TH1Error): Boolean;
 var
   Buf: TEncodedBuf;
   NotEof: QWord;
@@ -1505,7 +1505,7 @@ begin
   Result := Scratch.ErrHeaders;
 end;
 
-function TH1Conn.OnParseError(var Err: THyperError): Boolean;
+function TH1Conn.OnParseError(var Err: TH1Error): Boolean;
 var
   Status: Word;
   Head: TResponseHead;
@@ -1521,7 +1521,7 @@ begin
       Exit(False);
     end;
     { only parse errors have an automatic response (400, 414 or 431) }
-    if Err.Kind = hekParse then
+    if Err.Kind = h1eParse then
       Status := ServerErrorStatus(Err.Parse)
     else
       Status := 0;
@@ -1563,7 +1563,7 @@ end;
 procedure TH1Conn.PollDrainOrCloseRead;
 var
   Frame: TInFrame;
-  Err: THyperError;
+  Err: TH1Error;
 begin
   { The application is done but did not read the whole request body. Read
     once and discard what arrives; if the body did not end, close the read
@@ -1572,7 +1572,7 @@ begin
     { do not send 100 Continue: read whatever the client already sent, in
       case the body is small }
     State.Reading := rdBody;
-  Err := Default(THyperError);
+  Err := Default(TH1Error);
   { the frame is discarded; an error (malformed framing, a socket error)
     stays with the connection for TakeError }
   PollReadBody(nil, Frame, Err);
@@ -1603,13 +1603,13 @@ begin
     State.DisableKeepAlive;
 end;
 
-function TH1Conn.TakeError(var Err: THyperError): Boolean;
+function TH1Conn.TakeError(var Err: TH1Error): Boolean;
 begin
   if not State.HasError then
     Exit(False);
   Err := State.Error;
   State.HasError := False;
-  State.Error := Default(THyperError);
+  State.Error := Default(TH1Error);
   Result := True;
 end;
 

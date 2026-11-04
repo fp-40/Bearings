@@ -46,7 +46,7 @@ type
     function View(const S: RawByteString): TBytesView;
     { wakes of the owner task since the last call }
     function Wakes: Integer;
-    function Recv(out S: RawByteString; out E: THyperError): TChanPoll;
+    function Recv(out S: RawByteString; out E: TH1Error): TChanPoll;
   end;
 
   TTestChanRs = class(TChanCase)
@@ -124,12 +124,12 @@ begin
   FLastRuns := FTask.Runs;
 end;
 
-function TChanCase.Recv(out S: RawByteString; out E: THyperError): TChanPoll;
+function TChanCase.Recv(out S: RawByteString; out E: TH1Error): TChanPoll;
 var
   V: TBytesView;
 begin
   S := '';
-  E := Default(THyperError);
+  E := Default(TH1Error);
   Result := FEx.Chan.PollNext(V, E);
   if Result = cnData then
   begin
@@ -143,7 +143,7 @@ end;
 procedure TTestChanRs.Error_queued_behind_accepted_data;
 var
   S: RawByteString;
-  E: THyperError;
+  E: TH1Error;
 begin
   { chan.rs:250-259 }
   FEx.Chan.Open(False);
@@ -160,7 +160,7 @@ end;
 procedure TTestChanRs.Trailers_follow_data_close;
 var
   S: RawByteString;
-  E: THyperError;
+  E: TH1Error;
   Ch: TByteSlice;
 begin
   { chan.rs:261-270 }
@@ -184,7 +184,7 @@ procedure TTestChanRs.Drop_wakes_only_an_open_peer;
 var
   Closed: Boolean;
   S: RawByteString;
-  E: THyperError;
+  E: TH1Error;
 begin
   { chan.rs:272-311 }
   { A receiver dropped after the sender does not wake the sender's stale waker. }
@@ -332,7 +332,7 @@ procedure TTestChanExtra.Want_transitions;
 var
   Closed: Boolean;
   S: RawByteString;
-  E: THyperError;
+  E: TH1Error;
 begin
   { want starts as !wanter; poll_next sets it and wakes the sender only on
     the false -> true transition (and when it takes an item) }
@@ -379,7 +379,7 @@ end;
 procedure TTestChanExtra.Error_does_not_displace_data_and_only_one_pending;
 var
   S: RawByteString;
-  E: THyperError;
+  E: TH1Error;
 begin
   FEx.Chan.Open(False);
   AssertTrue(FEx.Chan.TrySendData(View('d')));
@@ -396,7 +396,7 @@ end;
 procedure TTestChanExtra.Pending_error_wakes_sender_only_on_want_transition;
 var
   S: RawByteString;
-  E: THyperError;
+  E: TH1Error;
   Closed: Boolean;
 begin
   { decision 13 (S4 survivor 4): chan.rs poll_next takes a pending error and
@@ -495,7 +495,7 @@ end;
 procedure TTestChanExtra.Close_sender_twice_wakes_once;
 var
   S: RawByteString;
-  E: THyperError;
+  E: TH1Error;
 begin
   FEx.Chan.Open(False);
   AssertTrue(Recv(S, E) = cnPending);

@@ -248,7 +248,7 @@ type
       error, a size limit (TooLarge), an I/O error, or Incomplete (the peer
       closed the connection before the head was complete). }
     function Parse(const Ctx: TH1ParseContext; Headers: THttpHeaders; out Msg: TParsedRequestHead;
-      out Head: TBytesView; var Err: THyperError): TPollResult;
+      out Head: TBytesView; var Err: TH1Error): TPollResult;
     { One read(2) from the socket into the read buffer: asks for
       Min(ReadBufStrategy.Next, max_buf_size - Len) bytes, so the buffer
       never holds more than max_buf_size; updates the strategy; sets
@@ -873,7 +873,7 @@ begin
 end;
 
 function TH1Io.Parse(const Ctx: TH1ParseContext; Headers: THttpHeaders; out Msg: TParsedRequestHead;
-  out Head: TBytesView; var Err: THyperError): TPollResult;
+  out Head: TBytesView; var Err: TH1Error): TPollResult;
 var
   St: TServerParseStatus;
   CurLen, N: SizeInt;

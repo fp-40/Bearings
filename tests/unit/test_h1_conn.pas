@@ -18,7 +18,7 @@
   response is in KeepAlive; a chunked terminator in its own read; see also
   test_body_chan), the upgrade slot's reference count, and an error head or
   a 100 Continue written while body bytes are queued (it goes behind them).
-  TTestH1Config: bearings.http1.config. TTestHyperError: bearings.http.error.
+  TTestH1Config: bearings.http1.config. TTestH1Error: bearings.http.error.
   TTestConnBodyRate (step UB): the body rate rule (docs/design.md 5.7): off by
   default, one wait of BodyTimeoutMs fails the body (ETIMEDOUT, Reading
   closed, the owner woken by the timer, the error kept for TakeError), a
@@ -64,7 +64,7 @@ type
     FHead: TBytesView;
     FMsg: TParsedRequestHead;
     FWants: TWants;
-    FErr: THyperError;
+    FErr: TH1Error;
     procedure SetUp; override;
     procedure TearDown; override;
     procedure InitConn; virtual;
@@ -182,7 +182,7 @@ type
     procedure Config_fields;
   end;
 
-  TTestHyperError = class(TTestCase)
+  TTestH1Error = class(TTestCase)
   published
     procedure Predicates;
     procedure Outcome_order;
@@ -210,7 +210,7 @@ begin
   FTrailers := THttpHeaders.Create;
   FInited := False;
   FHead := Default(TBytesView);
-  FErr := Default(THyperError);
+  FErr := Default(TH1Error);
 end;
 
 procedure TConnCase.TearDown;
@@ -565,7 +565,7 @@ begin
         FMock.ReadEof;
         InitConn;
         SetTriple(FConn.State, R, W, K);
-        FErr := Default(THyperError);
+        FErr := Default(TH1Error);
         Res := FConn.PollReadKeepAlive(FErr);
         if R = rdClosed then
         begin
@@ -1165,7 +1165,7 @@ begin
     AssertTrue('Closed', FConn.State.Writing = wrClosed);
     AssertFalse('nothing written', FConn.HasBufferedWrite);
     AssertTrue(FConn.TakeError(FErr));
-    AssertTrue('user header', FErr.IsUser and (FErr.User = hukHeader));
+    AssertTrue('user header', FErr.IsUser and (FErr.User = h1uHeader));
   finally
     H.Free;
   end;
@@ -1381,7 +1381,7 @@ begin
   AssertTrue('closed', FConn.IsReadClosed and FConn.IsWriteClosed);
   AssertTrue('notify_read', FConn.State.NotifyRead);
   AssertTrue('error stored', FConn.TakeError(FErr));
-  AssertTrue('io', FErr.Kind = hekIo);
+  AssertTrue('io', FErr.Kind = h1eIo);
   AssertEquals('errno', 104, FErr.Errno);
   FConn.Done;
 
@@ -1431,7 +1431,7 @@ begin
   AssertTrue('buffered bytes: Pending', FConn.MidMessageDetectEof(FErr) = prPending);
   FConn.Io.ReadBuf.Advance(FConn.Io.ReadBuf.Len);
   AssertTrue('io error', FConn.MidMessageDetectEof(FErr) = prErr);
-  AssertTrue('new_io', FErr.Kind = hekIo);
+  AssertTrue('new_io', FErr.Kind = h1eIo);
   AssertTrue('force_io_read error: close()', FConn.IsReadClosed and FConn.IsWriteClosed);
 end;
 
@@ -1483,7 +1483,7 @@ begin
   AssertTrue(ReadHead = poSome);
   AssertTrue('error', ReadBodyStr(S) = poErr);
   AssertTrue('Closed', FConn.State.Reading = rdClosed);
-  AssertTrue('body kind', FErr.Kind = hekBody);
+  AssertTrue('body kind', FErr.Kind = h1eBody);
   AssertTrue('decode cause', FErr.Cause = ecDecode);
   AssertTrue('missing size digit (read_start)', FErr.Decode = deMissingSizeDigit);
   AssertTrue('io source', FErr.HasIoSource);
@@ -1498,7 +1498,7 @@ begin
   AssertTrue(ReadHead = poSome);
   AssertTrue('error', ReadBodyStr(S) = poErr);
   AssertTrue('Closed', FConn.State.Reading = rdClosed);
-  AssertTrue('body io', (FErr.Kind = hekBody) and (FErr.Cause = ecErrno) and (FErr.Errno = 104));
+  AssertTrue('body io', (FErr.Kind = h1eBody) and (FErr.Cause = ecErrno) and (FErr.Errno = 104));
 end;
 
 procedure TTestConnBehavior.Body_eof_is_incomplete_body;
@@ -1958,9 +1958,9 @@ end;
 
 { ================= bearings.http.error ================= }
 
-procedure TTestHyperError.Predicates;
+procedure TTestH1Error.Predicates;
 var
-  E: THyperError;
+  E: TH1Error;
 begin
   E := NewParse(h1peUriTooLong);
   AssertTrue(E.IsParse and E.IsParseTooLarge and not E.IsParseVersionH2);
@@ -1989,11 +1989,11 @@ begin
   AssertTrue(E.IsUser);
 end;
 
-procedure TTestHyperError.Outcome_order;
+procedure TTestH1Error.Outcome_order;
 var
-  E: THyperError;
+  E: TH1Error;
 begin
-  E := Default(THyperError);
+  E := Default(TH1Error);
   AssertTrue(OutcomeOf(prOk, E) = coOk);
   AssertTrue(OutcomeOf(prErr, NewHeaderTimeout) = coTimeout);
   AssertTrue(OutcomeOf(prErr, NewTooLarge) = coParseTooLarge);
@@ -2010,7 +2010,7 @@ begin
   AssertTrue(OutcomeOf(prErr, NewBodyStatic('connection error')) = coOther);
 end;
 
-procedure TTestHyperError.Descriptions;
+procedure TTestH1Error.Descriptions;
 begin
   AssertEquals('connection closed before message completed', ErrorDescription(NewIncomplete, ''));
   AssertEquals('message head is too large', ErrorDescription(NewTooLarge, ''));
@@ -2062,7 +2062,7 @@ end;
 procedure TTestConnBodyRate.One_wait_fails_the_body;
 var
   S: RawByteString;
-  E2: THyperError;
+  E2: TH1Error;
 begin
   PostHead(5, 'ab');
   FMock.ReadPending.ReadPending.ReadPending;
@@ -2080,7 +2080,7 @@ begin
   AssertTrue('fired', FConn.State.BodyTimer.Fired);
   AssertTrue('owner woken by the timer', FTask.Queued);
   AssertTrue('the body fails', ReadBodyStr(S) = poErr);
-  AssertTrue('body io ETIMEDOUT', (FErr.Kind = hekBody) and (FErr.Cause = ecErrno)
+  AssertTrue('body io ETIMEDOUT', (FErr.Kind = h1eBody) and (FErr.Cause = ecErrno)
     and (FErr.Errno = ESysETIMEDOUT));
   AssertTrue('reading closed', FConn.State.Reading = rdClosed);
   AssertTrue('outcome io (not a header timeout)', OutcomeOf(prErr, FErr) = coIo);
@@ -2294,7 +2294,7 @@ begin
   RegisterTest(TTestConnState);
   RegisterTest(TTestConnBehavior);
   RegisterTest(TTestH1Config);
-  RegisterTest(TTestHyperError);
+  RegisterTest(TTestH1Error);
   RegisterTest(TTestConnBodyRate);
   with TTestRunner.Create(nil) do
   try

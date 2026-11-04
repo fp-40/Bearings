@@ -232,7 +232,7 @@ type
     Item: TBytesView;                { the chunk in the slot: a pinned read-buffer view }
     { ItemErr: the error in the slot; PendingErr: an error sent while the slot held data,
       delivered after it }
-    ItemErr, PendingErr: THyperError;
+    ItemErr, PendingErr: TH1Error;
     HasPendingErr: Boolean;
     HasTrailers, TrailersSent: Boolean;   { trailers are in Ex.ReqTrailers (exchange-owned list) }
     { Want: the receiver asked for data; Terminated: the receiver has seen the end }
@@ -257,10 +257,10 @@ type
     function PollReady(out Closed: Boolean): Boolean;
     function TrySendData(const V: TBytesView): Boolean; { False: not sent, V stays with the caller }
     function TrySendTrailers: Boolean;
-    procedure SendError(const E: THyperError);
+    procedure SendError(const E: TH1Error);
     procedure CloseSender;                         { no more data: the receiver sees the end }
     { receiver side: the exchange, for the handler }
-    function PollNext(out V: TBytesView; out E: THyperError): TChanPoll;
+    function PollNext(out V: TBytesView; out E: TH1Error): TChanPoll;
     function TakeTrailers: Boolean;                { True once, when trailers were sent }
     { the handler does not want the rest of the body: releases Held (and Item, once the sender is
       closed too) and unparks a reader parked in a body read (shared exchange: another holder
@@ -285,7 +285,7 @@ type
     function PollReadyImpl(out Closed: Boolean): Boolean;
     function TrySendDataImpl(const V: TBytesView): Boolean;
     function TrySendTrailersImpl: Boolean;
-    procedure SendErrorImpl(const E: THyperError);
+    procedure SendErrorImpl(const E: TH1Error);
     procedure CloseSenderImpl;
   end;
 
@@ -324,7 +324,7 @@ type
     FUser: TObject; FTag: PtrInt;
     FGen: LongWord;                 { bumped per request and at recycle (TWakeTimer check) }
     FUpgrade: TUpgradeSlot;         { the request's upgrade slot; nil without an upgrade request }
-    FBodyErr: THyperError;          { the last body error TryRead returned }
+    FBodyErr: TH1Error;          { the last body error TryRead returned }
     FReasonBuf: TByteVec;           { SetReason's copy (heap) }
     FNextFree: TExchange;           { TExchangePool link }
     FHandler: TBlockingHandler;     { Offload's handler; nil = not offloaded in this request }
@@ -958,7 +958,7 @@ begin
   RunDeferred(W, U);
 end;
 
-procedure TBodyChan.SendError(const E: THyperError);
+procedure TBodyChan.SendError(const E: TH1Error);
 var
   W, U: Boolean;
 begin
@@ -1026,7 +1026,7 @@ begin
   Result := True;
 end;
 
-procedure TBodyChan.SendErrorImpl(const E: THyperError);
+procedure TBodyChan.SendErrorImpl(const E: TH1Error);
 begin
   { an error must not displace data already in the slot: it waits in
     PendingErr and is delivered after the data }
@@ -1066,7 +1066,7 @@ begin
   ReleaseItemIfUnowned;
 end;
 
-function TBodyChan.PollNext(out V: TBytesView; out E: THyperError): TChanPoll;
+function TBodyChan.PollNext(out V: TBytesView; out E: TH1Error): TChanPoll;
 var
   WakeS: Boolean;
 begin
@@ -1471,7 +1471,7 @@ end;
 function TExchange.TryRead(out Chunk: TByteSlice): TBodyReadStatus;
 var
   V: TBytesView;
-  E: THyperError;
+  E: TH1Error;
 begin
   Assert(not FInServiceCall, 'TExchange.TryRead called inside THttpService.Call: Call must not answer or read the body');
   if FShared then
@@ -1525,7 +1525,7 @@ end;
 function TExchange.TryReadShared(out Chunk: TByteSlice): TBodyReadStatus;
 var
   V: TBytesView;
-  E: THyperError;
+  E: TH1Error;
   W, U, Loop_: Boolean;
 begin
   { TryRead on a shared exchange: the same steps under Chan.Lock; the
@@ -1754,7 +1754,7 @@ end;
 
 function TExchange.BodyErrorIsTimeout: Boolean;
 begin
-  Result := (FBodyErr.Kind = hekBody) and (FBodyErr.Cause = ecErrno) and (FBodyErr.Errno = ESysETIMEDOUT);
+  Result := (FBodyErr.Kind = h1eBody) and (FBodyErr.Cause = ecErrno) and (FBodyErr.Errno = ESysETIMEDOUT);
 end;
 
 function TExchange.BodyErrorMessage: string;
@@ -2637,7 +2637,7 @@ begin
     DropUpgrade;
   { no Default(): the FillChar of the whole record was measurable per
     request in profiles; Kind and Cause are what BodyErrorKind / Message read }
-  FBodyErr.Kind := hekNone;
+  FBodyErr.Kind := h1eNone;
   FBodyErr.Cause := ecNone;
   Head.Released := False;
   Head.RequestNo := 0;

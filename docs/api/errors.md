@@ -13,18 +13,18 @@ Exception | Unit | When
 `EWorkerPoolStopped` | `bearings.rt.workers` | `Submit` or `Offload` after `Shutdown` started
 `EH1Panic` | `bearings.http.error` | a program error inside the HTTP/1 code (for example a response version the encoder cannot write); the loop aborts the connection
 
-The HTTP layer's own error value is `THyperError` (unit
-`bearings.http.error`), a plain record: `Kind: THyperErrorKind` says what
+The HTTP layer's own error value is `TH1Error` (unit
+`bearings.http.error`), a plain record: `Kind: TH1ErrorKind` says what
 failed, `Cause: TErrorCause` adds what is known (`ecErrno` with `Errno`,
 `ecDecode` with `Decode`, `ecStatic` with `StaticMsg`, `ecConnText`: the
 text the application passed to `Fail` or `AbortStream`, `ecInner`). The
-kinds: `hekParse` (malformed or too large request head; `Parse` holds the
-parser's reason, `h1peVersionH2` means an HTTP/2 preface), `hekUser` (the
-application did something wrong: `User: THyperUserKind` = `hukService`,
-`hukBody`, `hukHeader`, `hukUnsupportedStatusCode`, `hukManualUpgrade`), `hekBodyWriteAborted` (the response body ended before
-its declared length; `NotEofRemaining` bytes missing), `hekIncompleteMessage`
-(the connection closed in the middle of a message), `hekIo`,
-`hekHeaderTimeout`, `hekBody`, `hekBodyWrite`, `hekShutdown`. The
+kinds: `h1eParse` (malformed or too large request head; `Parse` holds the
+parser's reason, `h1peVersionH2` means an HTTP/2 preface), `h1eUser` (the
+application did something wrong: `User: TH1UserKind` = `h1uService`,
+`h1uBody`, `h1uHeader`, `h1uUnsupportedStatusCode`, `h1uManualUpgrade`), `h1eBodyWriteAborted` (the response body ended before
+its declared length; `NotEofRemaining` bytes missing), `h1eIncompleteMessage`
+(the connection closed in the middle of a message), `h1eIo`,
+`h1eHeaderTimeout`, `h1eBody`, `h1eBodyWrite`, `h1eShutdown`. The
 predicates `IsParse`, `IsParseTooLarge`, `IsParseVersionH2`, `IsUser`,
 `IsIncompleteMessage`, `IsBodyWriteAborted`, `IsShutdown`, `IsTimeout`,
 `HasIoSource` classify one. `ErrorDescription(E, ConnText)` builds the log

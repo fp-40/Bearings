@@ -171,7 +171,7 @@ type
     function PollOutFrame(var B: TOutBody; out Data: TBodyData;
       out Trailers: THttpHeaders): TFramePoll;
     procedure SetErrorText(const S: RawByteString);             { cold }
-    procedure SetBodyError(var Err: THyperError);               { cold: the response body source failed }
+    procedure SetBodyError(var Err: TH1Error);               { cold: the response body source failed }
     procedure AcquireExchange; inline;
     procedure ResponseDone; inline;                              { Hooks.RequestDone, when there are hooks }
     procedure ReleaseExchange;
@@ -256,14 +256,14 @@ type
       disabled, and an idle connection is closed at once. }
     procedure GracefulShutdown;
     { The poll routines (see the unit header). Err is set when prErr / poErr is returned. }
-    function PollCatch(out D: TDispatched; var Err: THyperError): TPollResult;
-    function PollInner(out D: TDispatched; var Err: THyperError): TPollResult;
-    function PollLoop(var Err: THyperError): TPollResult;
-    function PollRead(var Err: THyperError): TPollResult;
-    function PollReadHead(var Err: THyperError): TPollResult;
-    function PollWrite(var Err: THyperError): TPollResult;
-    function PollFlush(var Err: THyperError): TPollResult;
-    function PollMsg(var Err: THyperError): TPollOpt;           { polls the service call }
+    function PollCatch(out D: TDispatched; var Err: TH1Error): TPollResult;
+    function PollInner(out D: TDispatched; var Err: TH1Error): TPollResult;
+    function PollLoop(var Err: TH1Error): TPollResult;
+    function PollRead(var Err: TH1Error): TPollResult;
+    function PollReadHead(var Err: TH1Error): TPollResult;
+    function PollWrite(var Err: TH1Error): TPollResult;
+    function PollFlush(var Err: TH1Error): TPollResult;
+    function PollMsg(var Err: TH1Error): TPollOpt;           { polls the service call }
     function RecvMsg(const Msg: TParsedRequestHead; const Head: TBytesView;
       Wants: TWants): Boolean;                                  { starts the service call }
     procedure Close_;                                           { stop reading and writing }
@@ -272,7 +272,7 @@ type
     procedure ClearBodyRx;                                      { releases BodyRx }
     { After PollCatch returned prOk or prErr: hand the connection on (upgrade or
       parts), release everything, report the outcome to the observer, free the task. }
-    procedure Finish(R: TPollResult; D: TDispatched; var Err: THyperError);
+    procedure Finish(R: TPollResult; D: TDispatched; var Err: TH1Error);
     property PendingUpgrade: TUpgradePending read FPendingUpgrade;
     property RequestCount: LongWord read FRequestNo;
     property NextConn: TH1Dispatcher read FNextConn;      { the loop's connection list }
@@ -519,7 +519,7 @@ begin
   FErrorText := S;
 end;
 
-procedure TH1Dispatcher.SetBodyError(var Err: THyperError);
+procedure TH1Dispatcher.SetBodyError(var Err: TH1Error);
 begin
   { the error text is the source's own text, when it gave one }
   Err := NewUserBody;
@@ -596,7 +596,7 @@ procedure TH1Dispatcher.Run;
 var
   R: TPollResult;
   D: TDispatched;
-  Err: THyperError;
+  Err: TH1Error;
 begin
   {$ifdef WD_DEBUG}
   FDbgReads := Conn.Io.PendingReads;
@@ -609,7 +609,7 @@ begin
   LastRunMs := Loop.NowMs;
   StallBodyRead := False;
   {$endif}
-  Err.Kind := hekNone;
+  Err.Kind := h1eNone;
   R := PollCatch(D, Err);
   if R = prPending then
   begin
@@ -625,7 +625,7 @@ begin
   Finish(R, D, Err);
 end;
 
-function TH1Dispatcher.PollCatch(out D: TDispatched; var Err: THyperError): TPollResult;
+function TH1Dispatcher.PollCatch(out D: TDispatched; var Err: TH1Error): TPollResult;
 begin
   { PollInner, plus: on an error, a request body still being received gets
     the error, so the service's body read fails instead of seeing a normal end }
@@ -641,7 +641,7 @@ begin
   end;
 end;
 
-function TH1Dispatcher.PollInner(out D: TDispatched; var Err: THyperError): TPollResult;
+function TH1Dispatcher.PollInner(out D: TDispatched; var Err: TH1Error): TPollResult;
 var
   Errno: cint;
 begin
@@ -694,7 +694,7 @@ begin
   Result := prOk;
 end;
 
-function TH1Dispatcher.PollLoop(var Err: THyperError): TPollResult;
+function TH1Dispatcher.PollLoop(var Err: TH1Error): TPollResult;
 var
   I: Integer;
   R: TPollResult;
@@ -754,11 +754,11 @@ begin
   Result := prPending;
 end;
 
-function TH1Dispatcher.PollRead(var Err: THyperError): TPollResult;
+function TH1Dispatcher.PollRead(var Err: TH1Error): TPollResult;
 var
   ChanClosed: Boolean;
   Frame: TInFrame;
-  BErr: THyperError;
+  BErr: TH1Error;
 begin
   { Reads the next request head, or passes request body data to the
     service, or (neither) checks the idle connection for EOF. }
@@ -796,7 +796,7 @@ begin
           Ex.Chan.CloseSender;
           Continue;
         end;
-        BErr.Kind := hekNone;
+        BErr.Kind := h1eNone;
         case Conn.PollReadBody(Ex.ReqTrailers, Frame, BErr) of
           poSome:
             if Frame.Kind = ifData then
@@ -861,7 +861,7 @@ begin
   end;
 end;
 
-function TH1Dispatcher.PollReadHead(var Err: THyperError): TPollResult;
+function TH1Dispatcher.PollReadHead(var Err: TH1Error): TPollResult;
 var
   Msg: TParsedRequestHead;
   Head: TBytesView;
@@ -938,7 +938,7 @@ begin
   end;
 end;
 
-function TH1Dispatcher.PollWrite(var Err: THyperError): TPollResult;
+function TH1Dispatcher.PollWrite(var Err: TH1Error): TPollResult;
 var
   F: TFramePoll;
   Data: TBodyData;
@@ -1105,7 +1105,7 @@ begin
   end;
 end;
 
-function TH1Dispatcher.PollFlush(var Err: THyperError): TPollResult;
+function TH1Dispatcher.PollFlush(var Err: TH1Error): TPollResult;
 var
   Errno: cint;
 begin
@@ -1146,7 +1146,7 @@ begin
   Result := ReadDone and WriteDone;
 end;
 
-function TH1Dispatcher.PollMsg(var Err: THyperError): TPollOpt;
+function TH1Dispatcher.PollMsg(var Err: TH1Error): TPollOpt;
 begin
   { Polling the call is where the application's handler code runs (on the
     loop thread); Call itself only creates the call. }
@@ -1348,7 +1348,7 @@ begin
     DropAll;
 end;
 
-procedure TH1Dispatcher.Finish(R: TPollResult; D: TDispatched; var Err: THyperError);
+procedure TH1Dispatcher.Finish(R: TPollResult; D: TDispatched; var Err: TH1Error);
 var
   T: TTransport;
   Rest: TBytesView;

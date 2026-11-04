@@ -1,36 +1,36 @@
 { bearings.http.error - error values of the HTTP layer, poll results and
   connection outcomes.
 
-  THyperError says why reading or writing an HTTP message failed: the
+  TH1Error says why reading or writing an HTTP message failed: the
   request head could not be parsed, the application failed, the client
   closed the connection in the middle of a request, a socket call failed, a
   timeout expired, and so on. Kind says what failed; Cause adds what else
   is known (an errno, a body decoder error, a fixed text). It is a plain
   record without managed fields, so copying it is a memory copy and a
-  routine with a THyperError local gets no implicit exception frame.
+  routine with a TH1Error local gets no implicit exception frame.
 
-  Kinds (THyperErrorKind):
-    hekParse              the request head is malformed or too large (Parse
+  Kinds (TH1ErrorKind):
+    h1eParse              the request head is malformed or too large (Parse
                           holds the parser's reason; h1peVersionH2 means the
                           client sent the HTTP/2 connection preface).
-    hekUser               the application did something wrong (User holds
+    h1eUser               the application did something wrong (User holds
                           what): its service or body source failed, it set
                           a Content-Length or Transfer-Encoding header that
                           is invalid or contradicts the response, it
                           answered with a 1xx status, it took an upgrade
                           the wrong way.
-    hekBodyWriteAborted   the application's response body ended before the
+    h1eBodyWriteAborted   the application's response body ended before the
                           length it declared (NotEofRemaining bytes were
                           missing). It counts as a user error: IsUser is
                           True for it, and OutcomeOf tests IsUser first.
-    hekIncompleteMessage  the connection closed before a message was
+    h1eIncompleteMessage  the connection closed before a message was
                           complete.
-    hekIo                 a socket read or write failed (Cause = ecErrno).
-    hekHeaderTimeout      the client did not send a complete request head in
+    h1eIo                 a socket read or write failed (Cause = ecErrno).
+    h1eHeaderTimeout      the client did not send a complete request head in
                           time.
-    hekBody, hekBodyWrite reading the request body or writing the response
+    h1eBody, h1eBodyWrite reading the request body or writing the response
                           body failed.
-    hekShutdown           shutting down the write side of the socket failed.
+    h1eShutdown           shutting down the write side of the socket failed.
 
   Causes (TErrorCause): ecErrno an errno from a system call; ecDecode an
   error found by the request body decoder (bearings.http1.decode: a bad chunk
@@ -68,28 +68,28 @@ type
   TPollResult = (prOk, prErr, prPending);        { done, failed (see Err), or not yet }
   TPollOpt = (poSome, poErr, poNone, poPending);  { an item, failed, no more items, or not yet }
 
-  THyperErrorKind = (hekNone, hekParse, hekUser, hekIncompleteMessage, hekIo, hekHeaderTimeout,
-    hekBody, hekBodyWrite, hekBodyWriteAborted, hekShutdown);
-  THyperUserKind = (hukNone, hukBody, hukService, hukUnsupportedStatusCode, hukManualUpgrade,
-    hukHeader);
+  TH1ErrorKind = (h1eNone, h1eParse, h1eUser, h1eIncompleteMessage, h1eIo, h1eHeaderTimeout,
+    h1eBody, h1eBodyWrite, h1eBodyWriteAborted, h1eShutdown);
+  TH1UserKind = (h1uNone, h1uBody, h1uService, h1uUnsupportedStatusCode, h1uManualUpgrade,
+    h1uHeader);
   TErrorCause = (ecNone, ecErrno, ecDecode, ecStatic, ecConnText, ecInner);
 
   { Plain data: no managed fields, no owned objects (see the unit header). }
-  THyperError = record
-    Kind: THyperErrorKind;
-    Parse: TH1ParseError;            { hekParse (h1peVersionH2 for the h2 preface) }
-    User: THyperUserKind;            { hekUser }
+  TH1Error = record
+    Kind: TH1ErrorKind;
+    Parse: TH1ParseError;            { h1eParse (h1peVersionH2 for the h2 preface) }
+    User: TH1UserKind;            { h1eUser }
     Cause: TErrorCause;
     Errno: cint;                     { ecErrno: the errno }
     Decode: TDecodeError;            { ecDecode: the body decoder's error }
     StaticMsg: PAnsiChar;            { ecStatic: 'connection error', ... }
-    InnerKind: THyperErrorKind;      { ecInner: the wrapped kind (one level only) }
-    NotEofRemaining: QWord;          { hekBodyWriteAborted }
+    InnerKind: TH1ErrorKind;      { ecInner: the wrapped kind (one level only) }
+    NotEofRemaining: QWord;          { h1eBodyWriteAborted }
     { ecConnText: the text is in the owning connection's FErrorText (cold RawByteString field) }
     function IsParse: Boolean;  function IsParseTooLarge: Boolean;  function IsParseVersionH2: Boolean;
     function IsUser: Boolean;
     function IsIncompleteMessage: Boolean;  function IsBodyWriteAborted: Boolean;
-    function IsShutdown: Boolean;  function IsTimeout: Boolean;   { hekHeaderTimeout only }
+    function IsShutdown: Boolean;  function IsTimeout: Boolean;   { h1eHeaderTimeout only }
     function HasIoSource: Boolean;                                { the cause is an errno or a decoder error }
   end;
 
@@ -102,22 +102,22 @@ type
   TConnOutcome = (coOk, coTimeout, coParseTooLarge, coParseVersionH2, coParse, coIncomplete,
     coUser, coBodyWriteAborted, coShutdown, coIo, coOther);
 
-function NewParse(E: TH1ParseError): THyperError;      function NewIncomplete: THyperError;
-function NewTooLarge: THyperError;                      function NewVersionH2: THyperError;
-function NewIo(Errno: cint): THyperError;               function NewHeaderTimeout: THyperError;
-function NewBodyDecode(E: TDecodeError): THyperError;   function NewBodyIo(Errno: cint): THyperError;
-function NewBodyStatic(Msg: PAnsiChar): THyperError;    function NewBodyWrite(Errno: cint): THyperError;
-function NewBodyWriteAborted(Remaining: QWord): THyperError;
-function NewShutdown(Errno: cint): THyperError;         function NewUserService: THyperError;
-function NewUserBody: THyperError;                      function NewUserHeader: THyperError;
-function NewUserUnsupportedStatusCode: THyperError;     function NewUserManualUpgrade: THyperError;
+function NewParse(E: TH1ParseError): TH1Error;      function NewIncomplete: TH1Error;
+function NewTooLarge: TH1Error;                      function NewVersionH2: TH1Error;
+function NewIo(Errno: cint): TH1Error;               function NewHeaderTimeout: TH1Error;
+function NewBodyDecode(E: TDecodeError): TH1Error;   function NewBodyIo(Errno: cint): TH1Error;
+function NewBodyStatic(Msg: PAnsiChar): TH1Error;    function NewBodyWrite(Errno: cint): TH1Error;
+function NewBodyWriteAborted(Remaining: QWord): TH1Error;
+function NewShutdown(Errno: cint): TH1Error;         function NewUserService: TH1Error;
+function NewUserBody: TH1Error;                      function NewUserHeader: TH1Error;
+function NewUserUnsupportedStatusCode: TH1Error;     function NewUserManualUpgrade: TH1Error;
 { The error as text for logs: the kind's description, then ": " and the cause. Cold path (it
   builds strings). ConnText: the connection's FErrorText, used for an ecConnText cause. }
-function ErrorDescription(const E: THyperError; const ConnText: RawByteString): string;
+function ErrorDescription(const E: TH1Error; const ConnText: RawByteString): string;
 
 { coOk if R = prOk; else the class of the first predicate that is True, in the order of
   conformance/SPEC.md 7.2. }
-function OutcomeOf(R: TPollResult; const E: THyperError): TConnOutcome;
+function OutcomeOf(R: TPollResult; const E: TH1Error): TConnOutcome;
 
 implementation
 
@@ -126,52 +126,52 @@ uses
 
 { ---- predicates ---- }
 
-function THyperError.IsParse: Boolean;
+function TH1Error.IsParse: Boolean;
 begin
-  Result := Kind = hekParse;
+  Result := Kind = h1eParse;
 end;
 
-function THyperError.IsParseTooLarge: Boolean;
+function TH1Error.IsParseTooLarge: Boolean;
 begin
   { the head, or the request-target alone, is longer than the limit }
-  Result := (Kind = hekParse) and ((Parse = h1peTooLarge) or (Parse = h1peUriTooLong));
+  Result := (Kind = h1eParse) and ((Parse = h1peTooLarge) or (Parse = h1peUriTooLong));
 end;
 
-function THyperError.IsParseVersionH2: Boolean;
+function TH1Error.IsParseVersionH2: Boolean;
 begin
-  Result := (Kind = hekParse) and (Parse = h1peVersionH2);
+  Result := (Kind = h1eParse) and (Parse = h1peVersionH2);
 end;
 
-function THyperError.IsUser: Boolean;
+function TH1Error.IsUser: Boolean;
 begin
-  { hekBodyWriteAborted is an application error too }
-  Result := (Kind = hekUser) or (Kind = hekBodyWriteAborted);
+  { h1eBodyWriteAborted is an application error too }
+  Result := (Kind = h1eUser) or (Kind = h1eBodyWriteAborted);
 end;
 
-function THyperError.IsIncompleteMessage: Boolean;
+function TH1Error.IsIncompleteMessage: Boolean;
 begin
-  Result := Kind = hekIncompleteMessage;
+  Result := Kind = h1eIncompleteMessage;
 end;
 
-function THyperError.IsBodyWriteAborted: Boolean;
+function TH1Error.IsBodyWriteAborted: Boolean;
 begin
-  Result := Kind = hekBodyWriteAborted;
+  Result := Kind = h1eBodyWriteAborted;
 end;
 
-function THyperError.IsShutdown: Boolean;
+function TH1Error.IsShutdown: Boolean;
 begin
-  Result := Kind = hekShutdown;
+  Result := Kind = h1eShutdown;
 end;
 
-function THyperError.IsTimeout: Boolean;
+function TH1Error.IsTimeout: Boolean;
 begin
   { only the header timeout. An errno ETIMEDOUT (for example the body
     read timeout, see TExchange.BodyErrorIsTimeout) is an I/O cause and
     is not classed as a timeout here. }
-  Result := Kind = hekHeaderTimeout;
+  Result := Kind = h1eHeaderTimeout;
 end;
 
-function THyperError.HasIoSource: Boolean;
+function TH1Error.HasIoSource: Boolean;
 begin
   { the cause is an I/O error: an errno from the OS (NewIo, NewBodyIo,
     NewBodyWrite, NewShutdown) or an error of the body decoder }
@@ -180,163 +180,163 @@ end;
 
 { ---- constructors ---- }
 
-function NewParse(E: TH1ParseError): THyperError;
+function NewParse(E: TH1ParseError): TH1Error;
 begin
-  Result := Default(THyperError);
-  Result.Kind := hekParse;
+  Result := Default(TH1Error);
+  Result.Kind := h1eParse;
   Result.Parse := E;
 end;
 
-function NewIncomplete: THyperError;
+function NewIncomplete: TH1Error;
 begin
-  Result := Default(THyperError);
-  Result.Kind := hekIncompleteMessage;
+  Result := Default(TH1Error);
+  Result.Kind := h1eIncompleteMessage;
 end;
 
-function NewTooLarge: THyperError;
+function NewTooLarge: TH1Error;
 begin
   Result := NewParse(h1peTooLarge);
 end;
 
-function NewVersionH2: THyperError;
+function NewVersionH2: TH1Error;
 begin
   Result := NewParse(h1peVersionH2);
 end;
 
-function NewIo(Errno: cint): THyperError;
+function NewIo(Errno: cint): TH1Error;
 begin
-  Result := Default(THyperError);
-  Result.Kind := hekIo;
+  Result := Default(TH1Error);
+  Result.Kind := h1eIo;
   Result.Cause := ecErrno;
   Result.Errno := Errno;
 end;
 
-function NewHeaderTimeout: THyperError;
+function NewHeaderTimeout: TH1Error;
 begin
-  Result := Default(THyperError);
-  Result.Kind := hekHeaderTimeout;
+  Result := Default(TH1Error);
+  Result.Kind := h1eHeaderTimeout;
 end;
 
-function NewBodyDecode(E: TDecodeError): THyperError;
+function NewBodyDecode(E: TDecodeError): TH1Error;
 begin
   { the request body decoder found an error }
-  Result := Default(THyperError);
-  Result.Kind := hekBody;
+  Result := Default(TH1Error);
+  Result.Kind := h1eBody;
   Result.Cause := ecDecode;
   Result.Decode := E;
 end;
 
-function NewBodyIo(Errno: cint): THyperError;
+function NewBodyIo(Errno: cint): TH1Error;
 begin
   { a socket read of the request body failed }
-  Result := Default(THyperError);
-  Result.Kind := hekBody;
+  Result := Default(TH1Error);
+  Result.Kind := h1eBody;
   Result.Cause := ecErrno;
   Result.Errno := Errno;
 end;
 
-function NewBodyStatic(Msg: PAnsiChar): THyperError;
+function NewBodyStatic(Msg: PAnsiChar): TH1Error;
 begin
   { a body error with a fixed text; the dispatcher sends 'connection error'
     to a handler still reading the body when the connection fails }
-  Result := Default(THyperError);
-  Result.Kind := hekBody;
+  Result := Default(TH1Error);
+  Result.Kind := h1eBody;
   Result.Cause := ecStatic;
   Result.StaticMsg := Msg;
 end;
 
-function NewBodyWrite(Errno: cint): THyperError;
+function NewBodyWrite(Errno: cint): TH1Error;
 begin
   { a socket write of the response body failed }
-  Result := Default(THyperError);
-  Result.Kind := hekBodyWrite;
+  Result := Default(TH1Error);
+  Result.Kind := h1eBodyWrite;
   Result.Cause := ecErrno;
   Result.Errno := Errno;
 end;
 
-function NewBodyWriteAborted(Remaining: QWord): THyperError;
+function NewBodyWriteAborted(Remaining: QWord): TH1Error;
 begin
   { the response body ended Remaining bytes before its declared length }
-  Result := Default(THyperError);
-  Result.Kind := hekBodyWriteAborted;
+  Result := Default(TH1Error);
+  Result.Kind := h1eBodyWriteAborted;
   Result.NotEofRemaining := Remaining;
 end;
 
-function NewShutdown(Errno: cint): THyperError;
+function NewShutdown(Errno: cint): TH1Error;
 begin
   { shutdown(2) of the socket's write side failed }
-  Result := Default(THyperError);
-  Result.Kind := hekShutdown;
+  Result := Default(TH1Error);
+  Result.Kind := h1eShutdown;
   Result.Cause := ecErrno;
   Result.Errno := Errno;
 end;
 
-function NewUserService: THyperError;
+function NewUserService: TH1Error;
 begin
   { the application's service failed; the text is the connection's FErrorText }
-  Result := Default(THyperError);
-  Result.Kind := hekUser;
-  Result.User := hukService;
+  Result := Default(TH1Error);
+  Result.Kind := h1eUser;
+  Result.User := h1uService;
   Result.Cause := ecConnText;
 end;
 
-function NewUserBody: THyperError;
+function NewUserBody: TH1Error;
 begin
   { the application's response body source failed; the text is the
     connection's FErrorText }
-  Result := Default(THyperError);
-  Result.Kind := hekUser;
-  Result.User := hukBody;
+  Result := Default(TH1Error);
+  Result.Kind := h1eUser;
+  Result.User := h1uBody;
   Result.Cause := ecConnText;
 end;
 
-function NewUserHeader: THyperError;
+function NewUserHeader: TH1Error;
 begin
   { the application set an invalid or contradictory Content-Length or
     Transfer-Encoding response header }
-  Result := Default(THyperError);
-  Result.Kind := hekUser;
-  Result.User := hukHeader;
+  Result := Default(TH1Error);
+  Result.Kind := h1eUser;
+  Result.User := h1uHeader;
 end;
 
-function NewUserUnsupportedStatusCode: THyperError;
+function NewUserUnsupportedStatusCode: TH1Error;
 begin
-  Result := Default(THyperError);
-  Result.Kind := hekUser;
-  Result.User := hukUnsupportedStatusCode;
+  Result := Default(TH1Error);
+  Result.Kind := h1eUser;
+  Result.User := h1uUnsupportedStatusCode;
 end;
 
-function NewUserManualUpgrade: THyperError;
+function NewUserManualUpgrade: TH1Error;
 begin
-  Result := Default(THyperError);
-  Result.Kind := hekUser;
-  Result.User := hukManualUpgrade;
+  Result := Default(TH1Error);
+  Result.Kind := h1eUser;
+  Result.User := h1uManualUpgrade;
 end;
 
 { ---- text for logs ---- }
 
-function KindDescription(const E: THyperError): string;
+function KindDescription(const E: TH1Error): string;
 begin
   case E.Kind of
-    hekNone: Result := '';
-    hekParse: Result := H1ParseErrorDescription(E.Parse);
-    hekUser:
+    h1eNone: Result := '';
+    h1eParse: Result := H1ParseErrorDescription(E.Parse);
+    h1eUser:
       case E.User of
-        hukBody: Result := 'error from user''s Body stream';
-        hukService: Result := 'error from user''s Service';
-        hukUnsupportedStatusCode: Result := 'response has 1xx status code, not supported by server';
-        hukManualUpgrade: Result := 'upgrade expected but low level API in use';
-        hukHeader: Result := 'user sent unexpected header';
+        h1uBody: Result := 'error from user''s Body stream';
+        h1uService: Result := 'error from user''s Service';
+        h1uUnsupportedStatusCode: Result := 'response has 1xx status code, not supported by server';
+        h1uManualUpgrade: Result := 'upgrade expected but low level API in use';
+        h1uHeader: Result := 'user sent unexpected header';
       else
         Result := '';
       end;
-    hekIncompleteMessage: Result := 'connection closed before message completed';
-    hekIo: Result := 'connection error';
-    hekHeaderTimeout: Result := 'read header from client timeout';
-    hekBody: Result := 'error reading a body from connection';
-    hekBodyWrite: Result := 'error writing a body to connection';
-    hekBodyWriteAborted: Result := 'user body write aborted';
-    hekShutdown: Result := 'error shutting down connection';
+    h1eIncompleteMessage: Result := 'connection closed before message completed';
+    h1eIo: Result := 'connection error';
+    h1eHeaderTimeout: Result := 'read header from client timeout';
+    h1eBody: Result := 'error reading a body from connection';
+    h1eBodyWrite: Result := 'error writing a body to connection';
+    h1eBodyWriteAborted: Result := 'user body write aborted';
+    h1eShutdown: Result := 'error shutting down connection';
   end;
 end;
 
@@ -346,9 +346,9 @@ begin
   Result := SysErrorMessage(Errno) + ' (os error ' + IntToStr(Errno) + ')';
 end;
 
-function ErrorDescription(const E: THyperError; const ConnText: RawByteString): string;
+function ErrorDescription(const E: TH1Error; const ConnText: RawByteString): string;
 var
-  Inner: THyperError;
+  Inner: TH1Error;
 begin
   { the kind's text, then ": " and the cause's text (the format the
     conformance harness compares) }
@@ -364,16 +364,16 @@ begin
         Result := Result + ': ' + string(ConnText);
     ecInner:
       begin
-        Inner := Default(THyperError);
+        Inner := Default(TH1Error);
         Inner.Kind := E.InnerKind;
         Result := Result + ': ' + KindDescription(Inner);
       end;
   end;
-  if E.Kind = hekBodyWriteAborted then
+  if E.Kind = h1eBodyWriteAborted then
     Result := Result + ': early end, expected ' + IntToStr(E.NotEofRemaining) + ' more bytes';
 end;
 
-function OutcomeOf(R: TPollResult; const E: THyperError): TConnOutcome;
+function OutcomeOf(R: TPollResult; const E: TH1Error): TConnOutcome;
 begin
   { the order of the tests is the order of conformance/SPEC.md 7.2 }
   if R = prOk then
