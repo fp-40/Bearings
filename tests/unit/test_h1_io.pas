@@ -1,12 +1,13 @@
 { Tests for bearings.http1.io, docs/design.md sections 5.1, 5.4 and 9.
 
-  TTestIoRs: the tests of hyper v1.12.0 src/proto/h1/io.rs, adapted to the
-  one write path of step T1 (small pieces copied into the cursor, large
-  ones queued for writev).
+  TTestIoBuffers: the read buffer, the read strategy and the write buffer
+  (first written as ports of the tests of hyper v1.12.0 src/proto/h1/io.rs),
+  adapted to the one write path of step T1 (small pieces copied into the
+  cursor, large ones queued for writev).
   TTestIoExtra: pipeline_flush, poll_shutdown, partial writev inside
   prefix / data / suffix, WriteZero, qkFile entries over a socketpair, idle
   block release, read sizes from the read strategy, and the parts of
-  Buffered that hyper does not test directly (parse errors and limits,
+  the buffered I/O those tests do not reach (parse errors and limits,
   read_mem, consume_leading_lines, into_inner, queue limits, trailers,
   owner release).
   Run: test_h1_io --all --format=plain }
@@ -22,7 +23,7 @@ uses
   bearings.http1.role, bearings.http.error, bearings.http1.io, bearings.test.mocktransport;
 
 type
-  TTestIoRs = class(TTestCase)
+  TTestIoBuffers = class(TTestCase)
   published
     procedure Test_iobuf_write_empty_slice;
     procedure Parse_reads_until_blocked;
@@ -169,7 +170,7 @@ end;
 
 { ================= io.rs tests ================= }
 
-procedure TTestIoRs.Test_iobuf_write_empty_slice;
+procedure TTestIoBuffers.Test_iobuf_write_empty_slice;
 var
   M: TMockTransport;
   Io: TH1Io;
@@ -189,7 +190,7 @@ begin
   end;
 end;
 
-procedure TTestIoRs.Parse_reads_until_blocked;
+procedure TTestIoBuffers.Parse_reads_until_blocked;
 var
   M: TMockTransport;
   Io: TH1Io;
@@ -218,7 +219,7 @@ begin
   end;
 end;
 
-procedure TTestIoRs.Read_strategy_adaptive_increments;
+procedure TTestIoBuffers.Read_strategy_adaptive_increments;
 var
   S: TReadStrategy;
   Mx: SizeUInt;
@@ -242,7 +243,7 @@ begin
   AssertEquals('never goes over max', Int64(Mx), Int64(S.Next));
 end;
 
-procedure TTestIoRs.Read_strategy_adaptive_decrements;
+procedure TTestIoBuffers.Read_strategy_adaptive_decrements;
 var
   S: TReadStrategy;
 begin
@@ -264,7 +265,7 @@ begin
   AssertEquals('doesn''t decrement under minimum', 8192, Int64(S.Next));
 end;
 
-procedure TTestIoRs.Read_strategy_adaptive_stays_the_same;
+procedure TTestIoBuffers.Read_strategy_adaptive_stays_the_same;
 var
   S: TReadStrategy;
 begin
@@ -303,7 +304,7 @@ begin
   end;
 end;
 
-procedure TTestIoRs.Read_strategy_adaptive_max_fuzz;
+procedure TTestIoBuffers.Read_strategy_adaptive_max_fuzz;
 var
   Mx, Half: SizeUInt;
   Checks, Maxes: Integer;
@@ -328,7 +329,7 @@ begin
   AssertTrue('decrements were checked', Checks > 1000);
 end;
 
-procedure TTestIoRs.Write_buf_requires_non_empty_bufs;
+procedure TTestIoBuffers.Write_buf_requires_non_empty_bufs;
 var
   M: TMockTransport;
   Io: TH1Io;
@@ -364,7 +365,7 @@ begin
   end;
 end;
 
-procedure TTestIoRs.Write_buf_small_pieces_copied;
+procedure TTestIoBuffers.Write_buf_small_pieces_copied;
 var
   M: TMockTransport;
   Io: TH1Io;
@@ -389,7 +390,7 @@ begin
   end;
 end;
 
-procedure TTestIoRs.Cursor_drops_written_prefix_when_full;
+procedure TTestIoBuffers.Cursor_drops_written_prefix_when_full;
 var
   Pool: TBlockPool;
   WB: TWriteBuf;
@@ -426,7 +427,7 @@ begin
   Pool.Done;
 end;
 
-procedure TTestIoRs.Queued_entries_non_vectored_transport;
+procedure TTestIoBuffers.Queued_entries_non_vectored_transport;
 var
   M: TMockTransport;
   Io: TH1Io;
@@ -457,7 +458,7 @@ begin
   end;
 end;
 
-procedure TTestIoRs.Test_write_buf_queue;
+procedure TTestIoBuffers.Test_write_buf_queue;
 var
   M: TMockTransport;
   Io: TH1Io;
@@ -1949,7 +1950,7 @@ begin
 end;
 
 begin
-  RegisterTest(TTestIoRs);
+  RegisterTest(TTestIoBuffers);
   RegisterTest(TTestIoExtra);
   with TTestRunner.Create(nil) do
   try

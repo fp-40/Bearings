@@ -1,11 +1,10 @@
-{ Ports of the server-side unit tests of hyper v1.12.0
-  src/proto/h1/role.rs, plus the unit-category tests of tests/server.rs
-  (http1_response_with_http2_version, http1_trailer_recv_fields) and
-  src/proto/h1/conn.rs (conn_writes_chunked_body).
-
-  Methods named Test_<hyper name>_request_variant / _server_variant port a
-  client-side role.rs test to the server side, as its catalog port note
-  asks. }
+{ Server-side tests of bearings.http1.role: request parsing, response
+  encoding, trailers, a response with an HTTP/2 version, a chunked body.
+  First written as ports of the server-side unit tests of hyper v1.12.0
+  src/proto/h1/role.rs, the unit-category tests of its tests/server.rs
+  and conn.rs conn_writes_chunked_body; methods named
+  Test_<name>_request_variant / _server_variant are client-side tests of
+  role.rs rewritten for the server side. }
 unit test_role_server;
 
 {$mode objfpc}{$H+}

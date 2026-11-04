@@ -1,5 +1,8 @@
-{ Ports of the 10 tests in hyper v1.12.0 src/proto/h1/encode.rs.
-  Test_wd_<name> methods are extra tests of this port's own API. }
+{ Tests of the body encoder (bearings.http1.encode): length-delimited,
+  chunked and close-delimited bodies, trailers. Test_<name> methods were
+  first written as ports of the 10 tests in hyper v1.12.0
+  src/proto/h1/encode.rs; Test_wd_<name> are extra tests of the encoder's
+  own API. }
 unit test_codec_encode;
 
 {$mode objfpc}{$H+}

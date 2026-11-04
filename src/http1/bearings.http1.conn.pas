@@ -1024,9 +1024,9 @@ begin
   begin
     { the body failed (rate rule, framing, socket): the receiver gets Err,
       and the connection keeps it too (TakeError after the response and
-      the shutdown), so the outcome is io. hyper gives a body error to the
-      receiver only and ends the connection with Ok (docs/design.md
-      section 10) }
+      the shutdown), so the outcome is io: a client that broke the body
+      is an error in the metrics and the access log, not an ok connection
+      (docs/design/deviations.md) }
     State.Error := Err;
     State.HasError := True;
   end;

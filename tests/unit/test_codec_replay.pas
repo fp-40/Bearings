@@ -1,7 +1,6 @@
 { Replays a body through bearings.http1.decode and formats the outcome as one
   line, which test_codec_golden compares with the expected values in
-  tests/golden (the format and the replay model are those of the hyper
-  decode.rs harness the values were first taken from).
+  tests/golden.
 
   The transport delivers one split per read, has nothing between splits
   (the decoder must answer dsNeedMore and consume everything), and hits EOF

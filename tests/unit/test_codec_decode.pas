@@ -1,6 +1,8 @@
-{ Ports of the 17 tests in hyper v1.12.0 src/proto/h1/decode.rs.
-  Test methods named Test_<hyper name> are ports; Test_wd_<name> are extra
-  tests of this port's own API. }
+{ Tests of the body decoder (bearings.http1.decode): Content-Length,
+  close-delimited and chunked bodies, whole and split. Test_<name> methods
+  were first written as ports of the 17 tests in hyper v1.12.0
+  src/proto/h1/decode.rs; Test_wd_<name> are extra tests of the decoder's
+  own API. }
 unit test_codec_decode;
 
 {$mode objfpc}{$H+}

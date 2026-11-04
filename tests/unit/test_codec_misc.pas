@@ -1,6 +1,7 @@
-{ Ports of the tests in hyper v1.12.0 src/common/date.rs (1),
-  src/ext/h1_reason_phrase.rs (7) and src/headers.rs (3).
-  Test_wd_<name> methods are extra tests of this port's own API. }
+{ Tests of the date cache, the reason phrase and the header helpers
+  (first written as ports of the tests in hyper v1.12.0 src/common/date.rs,
+  src/ext/h1_reason_phrase.rs and src/headers.rs). Test_wd_<name> methods
+  are extra tests of the units' own API. }
 unit test_codec_misc;
 
 {$mode objfpc}{$H+}

@@ -132,7 +132,7 @@ type
     deTrailerTooManyHeaders,  { InvalidInput : more trailer fields than the allowed count }
     deTrailerPartial,         { InvalidInput : trailer block ends inside a field line }
     deTrailerInvalidName,     { InvalidInput : trailer field name longer than MAX_HEADER_NAME_LEN }
-    deTrailerBareLf           { InvalidInput : LF without CR in the trailer section (not in hyper; see Step) }
+    deTrailerBareLf           { InvalidInput : LF without CR in the trailer section (see Step) }
   );
 
   TDecodeResult = record
@@ -715,10 +715,11 @@ begin
       end
       else if B = 10 then
       begin
-        { "0" CRLF LF, or a trailer line followed by a bare LF: the end of
-          the body for a parser that takes a bare LF as a line end, a
-          trailer byte for hyper's state machine (which then reads on to
-          the next CRLF CRLF). Refused, as in csTrailer. }
+        { "0" CRLF LF, or a trailer line followed by a bare LF: a parser
+          that takes a bare LF as a line end (RFC 9112 2.2 allows it) ends
+          the body here, one that ends lines only at CRLF reads on to the
+          next CRLF CRLF, so a proxy and the server could split the stream
+          differently. Refused, as in csTrailer. }
         E := deTrailerBareLf;
         Exit(False);
       end

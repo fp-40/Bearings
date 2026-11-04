@@ -955,8 +955,9 @@ begin
     begin
       { the head and the frames written before the body failed go out
         first (PollLoop's flush, when the socket takes them), so the client
-        sees a truncated body; then the connection fails. hyper skips this
-        flush: what it buffered in the same poll as the error is never sent
+        sees a truncated body; then the connection fails. Without this
+        flush, what was buffered in the same poll as the error would never
+        be sent and the client might get no response at all
         (docs/design/deviations.md). }
       if Conn.HasBufferedWrite then
         Exit(prPending);           { PollLoop flushes; CanWriteAgain brings us back }

@@ -1,14 +1,14 @@
-{ M3 step S4 tests for bearings.http1.conn (port of hyper conn.rs), bearings.http1.config
+{ M3 step S4 tests for bearings.http1.conn, bearings.http1.config
   and bearings.http.error (docs/design.md sections 5 and 9).
 
-  TTestConnRs: the server tests of hyper v1.12.0 src/proto/h1/conn.rs
-  (conn_reads_request_head .. conn_writes_chunked_body; the client tests
-  and the nightly bench are not ported).
-  TTestConnState: the state tables: State::try_keep_alive over every
-  (Reading, Writing, KA) triple, written from conn.rs:1100-1119, and the
-  conn-level events (request head, body chunk, body end, response head,
-  body frame, flush, EOF, graceful shutdown, timer) from the reachable
-  states, each expected value taken from conn.rs.
+  TTestConnReadWrite: reading a request head (whole and split), EOF when
+  idle, during a partial head and while busy, reading a body to its end,
+  a closed connection, writing a chunked body (first written as ports of
+  the server tests of hyper v1.12.0 src/proto/h1/conn.rs).
+  TTestConnState: the state tables: TryKeepAlive over every (Reading,
+  Writing, KA) triple, and the conn-level events (request head, body
+  chunk, body end, response head, body frame, flush, EOF, graceful
+  shutdown, timer) from the reachable states.
   TTestConnBehavior: expect/continue, trailers (every write_trailers
   branch, T1 order), error-to-response mapping (2.8), keep-alive fixes for
   HTTP/1.0, maybe_notify, mid_message_detect_eof, pipelining, body decode
@@ -78,7 +78,7 @@ type
       Hdrs: THttpHeaders = nil);
   end;
 
-  TTestConnRs = class(TConnCase)
+  TTestConnReadWrite = class(TConnCase)
   published
     procedure Conn_reads_request_head;
     procedure Conn_reads_partial_request_head;
@@ -298,7 +298,7 @@ end;
 
 { ================= conn.rs tests ================= }
 
-procedure TTestConnRs.Conn_reads_request_head;
+procedure TTestConnReadWrite.Conn_reads_request_head;
 begin
   { conn.rs:1342-1355 }
   FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
@@ -309,7 +309,7 @@ begin
   AssertEquals('DecodedLength::ZERO', Int64(DECODED_LENGTH_ZERO), Int64(FMsg.Decode));
 end;
 
-procedure TTestConnRs.Conn_reads_partial_request_head;
+procedure TTestConnReadWrite.Conn_reads_partial_request_head;
 begin
   { conn.rs:1357-1367: handle.read("GET / HTTP") then pending, then the rest }
   FMock.Read('GET / HTTP').ReadPending.Read('/1.1' + CRLF + 'Host: foo.bar' + CRLF + CRLF);
@@ -319,7 +319,7 @@ begin
   AssertEquals('host', 'foo.bar', FHeaders.GetValue('host'));
 end;
 
-procedure TTestConnRs.Conn_accepts_eof_when_idle;
+procedure TTestConnReadWrite.Conn_accepts_eof_when_idle;
 begin
   { conn.rs:1369-1376 }
   InitConn;
@@ -327,7 +327,7 @@ begin
   AssertTrue('Ready(None)', ReadHead = poNone);
 end;
 
-procedure TTestConnRs.Conn_rejects_eof_during_partial_head;
+procedure TTestConnReadWrite.Conn_rejects_eof_during_partial_head;
 begin
   { conn.rs:1378-1390 }
   FMock.Read('GET / HTTP/1.1');
@@ -337,7 +337,7 @@ begin
   AssertTrue('incomplete message', FErr.IsIncompleteMessage);
 end;
 
-procedure TTestConnRs.Server_accepts_eof_while_busy;
+procedure TTestConnReadWrite.Server_accepts_eof_while_busy;
 begin
   { conn.rs:1405-1412 }
   InitConn;
@@ -345,7 +345,7 @@ begin
   AssertTrue('Ready(None)', ReadHead = poNone);
 end;
 
-procedure TTestConnRs.Conn_reads_body_and_reports_end;
+procedure TTestConnReadWrite.Conn_reads_body_and_reports_end;
 var
   S: RawByteString;
 begin
@@ -359,7 +359,7 @@ begin
   AssertFalse('the complete body must return to head-reading state', FConn.CanReadBody);
 end;
 
-procedure TTestConnRs.Closed_conn_cannot_read_or_write;
+procedure TTestConnReadWrite.Closed_conn_cannot_read_or_write;
 begin
   { conn.rs:1454-1464 }
   InitConn;
@@ -370,7 +370,7 @@ begin
   AssertFalse(FConn.CanWriteHead);
 end;
 
-procedure TTestConnRs.Conn_writes_chunked_body;
+procedure TTestConnReadWrite.Conn_writes_chunked_body;
 const
   S: RawByteString = 'headers';
 begin
@@ -2290,7 +2290,7 @@ begin
 end;
 
 begin
-  RegisterTest(TTestConnRs);
+  RegisterTest(TTestConnReadWrite);
   RegisterTest(TTestConnState);
   RegisterTest(TTestConnBehavior);
   RegisterTest(TTestH1Config);

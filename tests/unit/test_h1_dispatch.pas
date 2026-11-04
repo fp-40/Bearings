@@ -1,15 +1,17 @@
-{ M3 step S5 tests for bearings.http1.dispatch (port of hyper dispatch.rs) and
+{ M3 step S5 tests for bearings.http1.dispatch and
   bearings.server (docs/design.md sections 5, 7.3 and 9).
 
   Built with -dWD_DEBUG (run_all.sh): the wake-source assertion of 2.4.5 runs
   at the end of every Run that returns Pending, in every test; TearDown
   fails the test when it fired (WakeAssertFailures).
 
-  TTestDispatchHyper: hyper's dispatcher regression tests in server form,
-  over a scripted transport: tests/h1_flush_before_yield.rs,
-  tests/h1_shutdown_while_buffered.rs, tests/unbuffered_stream.rs,
-  tests/ready_on_poll_stream.rs, and dispatch.rs body_empty_chunks_ignored
-  (server form: an empty data frame never reaches write_body).
+  TTestDispatchRegressions: regression tests over a scripted transport: a
+  flush before a yield, a shutdown while bytes are buffered, an unbuffered
+  stream, a stream ready at its first poll, and empty data frames (which
+  never reach write_body); first written as ports of hyper v1.12.0's
+  tests/h1_flush_before_yield.rs, h1_shutdown_while_buffered.rs,
+  unbuffered_stream.rs, ready_on_poll_stream.rs and dispatch.rs
+  body_empty_chunks_ignored.
   TTestDispatchPipeline: 16 requests in one read -> one write with
   pipeline_flush; 32 -> a yield after 16 poll_loop iterations and the second
   half in the same loop iteration (run-queue budget); without pipeline_flush
@@ -167,7 +169,7 @@ type
     function Done: Boolean;
   end;
 
-  TTestDispatchHyper = class(TDispCase)
+  TTestDispatchRegressions = class(TDispCase)
   published
     procedure H1_flush_before_yield;
     procedure H1_shutdown_while_buffered;
@@ -648,7 +650,7 @@ end;
 
 { ---- hyper regression tests ---- }
 
-procedure TTestDispatchHyper.H1_flush_before_yield;
+procedure TTestDispatchRegressions.H1_flush_before_yield;
 var
   Src: TScriptSource;
 begin
@@ -676,7 +678,7 @@ begin
   end;
 end;
 
-procedure TTestDispatchHyper.H1_shutdown_while_buffered;
+procedure TTestDispatchRegressions.H1_shutdown_while_buffered;
 var
   Big: RawByteString;
 begin
@@ -699,7 +701,7 @@ begin
   AssertFalse('connection still waiting for the socket', FD.Closed);
 end;
 
-procedure TTestDispatchHyper.Unbuffered_stream;
+procedure TTestDispatchRegressions.Unbuffered_stream;
 var
   Src: TScriptSource;
   Script: array of string;
@@ -763,7 +765,7 @@ begin
   end;
 end;
 
-procedure TTestDispatchHyper.Ready_on_poll_stream;
+procedure TTestDispatchRegressions.Ready_on_poll_stream;
 var
   Src: TScriptSource;
   Script: array of string;
@@ -802,7 +804,7 @@ begin
   end;
 end;
 
-procedure TTestDispatchHyper.Body_empty_chunks_ignored;
+procedure TTestDispatchRegressions.Body_empty_chunks_ignored;
 var
   Src: TScriptSource;
 begin
@@ -2855,7 +2857,7 @@ end;
 {$endif}
 
 begin
-  RegisterTest(TTestDispatchHyper);
+  RegisterTest(TTestDispatchRegressions);
   RegisterTest(TTestDispatchPipeline);
   RegisterTest(TTestDispatchBehavior);
   RegisterTest(TTestDispatchServer);

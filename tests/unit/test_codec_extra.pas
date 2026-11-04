@@ -1,16 +1,15 @@
-{ Extra_* tests: edge cases the hyper tests do not cover.
+{ Extra_* tests: edge cases the ported tests do not cover.
 
-  Decoder expectations were hyper's own results: each body was run through
-  hyper v1.12.0's src/proto/h1/decode.rs (with a Rust tool removed on
-  2026-11-04), with the same splits as below, and hyper gave the same
-  result for every split. The bare-LF trailer cases (E_TRL_BARE_LF) are not
-  hyper's (docs/design/deviations.md). The strings use the format of test_codec_replay:
+  Decoder expectations are fixed values (first taken from hyper v1.12.0's
+  decoder on 2026-11-04, the same for every split below; the bare-LF
+  trailer cases, E_TRL_BARE_LF, from docs/design/deviations.md). The
+  strings use the format of test_codec_replay:
     STATUS|DATALEN|DATAFNV|LEFTOVER|THEN|ISEOF
   The helpers OkR/ErrR rebuild them from the status, the decoded data and
   the leftover byte count.
 
-  Encoder, header, date and reason-phrase expectations come from the hyper,
-  http-crate and httpdate source named in each test. }
+  Encoder, header, date and reason-phrase expectations are fixed values;
+  each test says where its value was derived from. }
 unit test_codec_extra;
 
 {$mode objfpc}{$H+}

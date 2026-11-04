@@ -24,8 +24,7 @@
     request ends; if they disagree, an attacker can hide a second request
     inside the body of the first one ("request smuggling");
   - Host (RFC 9112 section 3.2): an HTTP/1.1 request without a Host line,
-    or a request of any version with more than one, is rejected with 400
-    (hyper accepts both);
+    or a request of any version with more than one, is rejected with 400;
   - keep-alive: HTTP/1.1 keeps the connection open unless "Connection:
     close"; HTTP/1.0 closes it unless "Connection: keep-alive";
   - "Expect: 100-continue" (the client waits for an interim "100 Continue"
@@ -117,7 +116,7 @@ type
     h1peHeaderContentLengthInvalid,        { bad or conflicting Content-Length }
     h1peHeaderTransferEncodingInvalid,     { last coding is not chunked }
     h1peHeaderTransferEncodingUnexpected,  { Transfer-Encoding in HTTP/1.0 }
-    h1peHeaderHost,                        { HTTP/1.1 without Host, or more than one Host line (not in hyper) }
+    h1peHeaderHost,                        { HTTP/1.1 without Host, or more than one Host line }
     h1peTooLarge,
     h1peInternal,
     h1peProxyProtocol                      { the connection's PROXY protocol header is missing or invalid (bearings.rt.proxyproto) }
@@ -1144,7 +1143,7 @@ begin
                   if not IsNameWritten then
                   begin
                     {$IFOPT C+}
-                    { as hyper's debug_assert: with assertions on (-Sa, the
+                    { with assertions on (-Sa, the
                       test builds), a value that does not match the body
                       stops the program; it would break the connection's
                       framing (the C interface leaves such a field out) }

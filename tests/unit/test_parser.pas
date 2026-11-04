@@ -1,4 +1,4 @@
-{ fpcunit runner for the httparse v1.10.1 request-parser ports.
+{ fpcunit runner for the bearings.http1.parser tests.
   Run: test_parser --all --format=plain }
 program test_parser;
 
@@ -16,7 +16,7 @@ begin
   DefaultRunAllTests := True;
   App := TTestRunner.Create(nil);
   App.Initialize;
-  App.Title := 'bearings.http1.parser (httparse port) tests';
+  App.Title := 'bearings.http1.parser tests';
   App.Run;
   App.Free;
 end.

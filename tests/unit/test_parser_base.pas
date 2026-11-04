@@ -1,7 +1,7 @@
-{ Shared fixture for the httparse ports (test_parser_*.pas).
-  Mirrors the req! macro of httparse src/lib.rs and tests/uri.rs:
-  a Request with NUM_OF_HEADERS = 4 header slots, parsed from a byte
-  string, then checked field by field. }
+{ Shared fixture for the parser tests (test_parser_*.pas): a request with
+  NUM_OF_HEADERS = 4 header slots, parsed from a byte string, then checked
+  field by field (the shape of httparse's req! macro, which the ported
+  tests were written for). }
 unit test_parser_base;
 
 {$mode objfpc}{$H+}

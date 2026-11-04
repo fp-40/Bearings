@@ -598,7 +598,7 @@ end;
   KnownBody: the body's length is known (bearings_respond with a body,
   bearings_respond_file), so a Content-Length field is left out and the
   encoder writes that length: the encoder writes the field as given and
-  assumes it matches (as hyper), and a wrong one (a gzip middleware that
+  assumes it matches, and a wrong one (a gzip middleware that
   kept the old one, say) would break the framing of the connection. }
 function SetHead(Ex: TExchange; Status: cint; Headers: PAnsiChar; HLen: csize_t;
   KnownBody: Boolean): Boolean;

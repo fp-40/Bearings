@@ -1,13 +1,11 @@
-{ Adversarial verification tests for bearings.http1.role and bearings.http.uri (edge
-  cases the hyper test ports do not cover). Not hyper test ports.
+{ Adversarial verification tests for bearings.http1.role and
+  bearings.http.uri (edge cases the ported tests do not cover).
 
-  The expected values below were first hyper v1.12.0's own answers (role.rs
-  with httparse 1.10.1 and http 1.5.0), obtained by replaying the same
-  inputs through hyper's unmodified role.rs (a Rust tool removed on
-  2026-11-04); they are fixed expectations now, and those of the Host rule
-  (Extra_host_required_once, docs/design/deviations.md) are not hyper's. Where a test checks a property instead of a table
-  (every prefix, every split point, the is_complete_fast model) the comment
-  says which hyper rule it follows.
+  The expected values are fixed (first taken from hyper v1.12.0's role.rs
+  with httparse 1.10.1 and http 1.5.0 on 2026-11-04; those of the Host
+  rule, Extra_host_required_once, from RFC 9112 3.2). Where a test checks
+  a property instead of a table (every prefix, every split point, the
+  end-of-head fast check) the comment says which rule it follows.
 
   Inputs are copied to the end of a page followed by a PROT_NONE page, so a
   read past the given length faults instead of passing silently. }
