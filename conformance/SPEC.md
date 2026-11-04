@@ -386,45 +386,46 @@ poll of the connection task, and that task checks for shutdown before its next p
 
 ### 7.1 `request_body_error.kind` and canonical `message`
 
-These are hyper's body-decoder errors (src/proto/h1/decode.rs). `kind` comes from the
-`io::ErrorKind`. A conformance server must use the same `kind` and should use the same
-`message` for the same condition.
+`kind` classifies the body-decoder error: the peer closed early (`unexpected_eof`), malformed
+chunk framing (`invalid_input`), a framing value out of range or over a limit (`invalid_data`),
+a socket error (`io`) or anything else (`other`). A conformance server must use the same `kind`
+and should use the same `message` for the same condition.
 
 | kind | message | condition |
 |---|---|---|
-| `unexpected_eof` | `end of file before message length reached` | EOF before Content-Length bytes, or inside chunk data |
-| `unexpected_eof` | `unexpected EOF during chunk size line` | EOF while reading a chunk-size line |
-| `invalid_data` | `invalid chunk size: overflow` | chunk size does not fit in 64 bits |
-| `invalid_data` | `chunk trailers bytes over limit` | trailer section larger than the limit (`max_header_size`, default 16 KiB in hyper) |
-| `invalid_data` | `chunk trailers count overflow` | more trailer fields than `max_headers` |
-| `invalid_data` | `invalid chunk extension contains newline` | bare LF inside a chunk extension |
-| `invalid_data` | `chunk extensions over limit` | more than 16 KiB of chunk-extension bytes in one body |
-| `invalid_input` | `Invalid chunk size line: missing size digit` | size line with no hex digit |
-| `invalid_input` | `Invalid chunk size line: Invalid Size` | bad byte inside the size digits |
-| `invalid_input` | `Invalid chunk size linear white space` | bad byte after whitespace following the size |
-| `invalid_input` | `Invalid chunk size LF` | CR not followed by LF after the size line |
-| `invalid_input` | `Invalid chunk body CR` / `Invalid chunk body LF` | chunk data not followed by CRLF |
-| `invalid_input` | `Invalid chunk end LF` / `Invalid trailer end LF` | bad final CRLF |
-| `invalid_input` | `Invalid trailer line: LF without CR` | a bare LF in the trailer section (`0` CRLF LF, or a trailer line ending with LF); not in hyper, which takes the LF as a trailer byte (docs/design/deviations.md) |
-| `invalid_input` | `Invalid header name: ...` / `Invalid header value: ...` / `Partial header` / httparse error text | malformed trailer field |
+| `unexpected_eof` | `connection closed before the end of the body` | EOF before Content-Length bytes, or inside chunk data |
+| `unexpected_eof` | `connection closed inside the chunk framing` | EOF while reading a chunk-size line |
+| `invalid_data` | `chunk size overflows 64 bits` | chunk size does not fit in 64 bits |
+| `invalid_data` | `trailer section over the byte limit` | trailer section larger than the limit (`max_header_size`, default 16 KiB) |
+| `invalid_data` | `trailer section over the field limit` | more trailer fields than `max_headers` |
+| `invalid_data` | `bare LF inside a chunk extension` | bare LF inside a chunk extension |
+| `invalid_data` | `chunk extensions over the byte limit` | more than 16 KiB of chunk-extension bytes in one body |
+| `invalid_input` | `chunk-size line without a hex digit` | size line with no hex digit |
+| `invalid_input` | `invalid byte after the chunk size` | bad byte inside the size digits |
+| `invalid_input` | `invalid byte after the whitespace that follows the chunk size` | bad byte after whitespace following the size |
+| `invalid_input` | `CR without LF after the chunk size` | CR not followed by LF after the size line |
+| `invalid_input` | `chunk data not followed by CR` / `CR without LF after the chunk data` | chunk data not followed by CRLF |
+| `invalid_input` | `CR without LF after the last chunk` / `CR without LF after a trailer line` | bad final CRLF |
+| `invalid_input` | `bare LF in the trailer section` | a bare LF in the trailer section (`0` CRLF LF, or a trailer line ending with LF): RFC 9112 2.2 lets a recipient take it as a line end, so a proxy and the server could split the stream differently (docs/design/deviations.md) |
+| `invalid_input` | `invalid trailer field name` / `invalid trailer field value` / `incomplete trailer line` / `trailer field name too long` / `too many trailer fields` / `CR without LF at the end of the trailer section` | malformed trailer field |
 | `io` | OS error text | socket error while reading the body |
 | `other` | error text | anything else |
 
 ### 7.2 `conn_close.outcome`
 
-Exactly one class, checked in this order (hyper `Error` predicates):
+Exactly one class, checked in this order:
 
-| outcome | hyper predicate | when |
-|---|---|---|
-| `ok` | `Ok(())` | the connection ended without error: client EOF while idle, keep-alive off after a response, graceful shutdown, upgrade hand-off |
-| `timeout` | `is_timeout()` | header read timeout fired (no response written) |
-| `parse_too_large` | `is_parse_too_large()` | request head over `max_buf_size` / `max_header_size`, too many headers, a header name of 65536 bytes or more (431 written), or a request-target longer than 65534 bytes (414 written) |
-| `parse_version_h2` | `is_parse_version_h2()` | the HTTP/2 connection preface `PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` arrived on the HTTP/1 connection (nothing written) |
-| `parse` | `is_parse()` | any other request-head parse error: method, request-target, version, header syntax, invalid Content-Length or Transfer-Encoding, an HTTP/1.1 request without `Host` or a request with two `Host` lines (400 written; the `Host` rule is not in hyper) |
-| `incomplete` | `is_incomplete_message()` | EOF in the middle of a request head, or EOF while a request was in progress |
-| `user` | `is_user()` | the handler failed (including test_service body errors), or the handler returned a 1xx final status (hyper writes a 500) |
-| `body_write_aborted`, `shutdown` | the matching predicate | rare internal cases |
-| `io` | source is an `io::Error` | socket error; in bearings also a request body error (malformed framing, a socket error, the body rate rule) after the handler answered, where hyper reports `ok` (docs/design.md section 10) |
+| outcome | when |
+|---|---|
+| `ok` | the connection ended without error: client EOF while idle, keep-alive off after a response, graceful shutdown, upgrade hand-off |
+| `timeout` | header read timeout fired (no response written) |
+| `parse_too_large` | request head over `max_buf_size` / `max_header_size`, too many headers, a header name of 65536 bytes or more (431 written), or a request-target longer than 65534 bytes (414 written) |
+| `parse_version_h2` | the HTTP/2 connection preface `PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` arrived on the HTTP/1 connection (nothing written) |
+| `parse` | any other request-head parse error: method, request-target, version, header syntax, invalid Content-Length or Transfer-Encoding, an HTTP/1.1 request without `Host` or a request with two `Host` lines (400 written) |
+| `incomplete` | EOF in the middle of a request head, or EOF while a request was in progress |
+| `user` | the handler failed (including test_service body errors), the handler returned a 1xx final status (500 written), or the response's framing headers were invalid |
+| `body_write_aborted`, `shutdown` | the response body ended before its declared length; the final shutdown of the socket failed |
+| `io` | socket error, or a request body error (malformed framing, a socket error, the body rate rule) after the handler answered (docs/design.md section 10) |
 | `other` | none of the above | |
 
 ---

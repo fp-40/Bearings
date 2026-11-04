@@ -119,7 +119,7 @@ begin
     AssertEquals(0, ServerErrorStatus(h1peNone));
     AssertEquals(0, ServerErrorStatus(h1peInternal));
     AssertEquals(0, ServerErrorStatus(h1peVersionH2));
-    AssertEquals('invalid URI', H1ParseErrorDescription(h1peUri));
+    AssertEquals('invalid request-target', H1ParseErrorDescription(h1peUri));
   finally
     H.Free;
   end;

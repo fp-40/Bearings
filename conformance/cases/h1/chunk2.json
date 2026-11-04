@@ -18,7 +18,7 @@
     {
       "name": "post_with_chunked_overflow",
       "source": "tests/server.rs:524",
-      "notes": "serve() fixture, default reply. The 17-hex-digit chunk size overflows u64. hyper asserts: one read(&mut [0; 256]) returns Ok (no timeout, no RST), then server.body_err().source().to_string() contains \"overflow\" (decode.rs: \"invalid chunk size: overflow\"; table 7.1 canonical text). The smuggled 'GET /sneaky' is not separately asserted by hyper: if the size were truncated to 3, the body would be \"abc\" and body_err() would panic, so the body-error assertion already covers it. Observed on the reference: EOF with 0 bytes (TestService fails, hyper writes nothing).",
+      "notes": "serve() fixture, default reply. The 17-hex-digit chunk size overflows u64. hyper asserts: one read(&mut [0; 256]) returns Ok (no timeout, no RST), then server.body_err().source().to_string() contains \"overflow\" (decode.rs: \"chunk size overflows 64 bits\"; table 7.1 canonical text). The smuggled 'GET /sneaky' is not separately asserted by hyper: if the size were truncated to 3, the body would be \"abc\" and body_err() would panic, so the body-error assertion already covers it. Observed on the reference: EOF with 0 bytes (TestService fails, hyper writes nothing).",
       "server": {"handler": "test_service"},
       "steps": [
         {"op": "connect"},

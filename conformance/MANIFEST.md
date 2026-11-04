@@ -95,7 +95,7 @@ All other cases fail in at least one wire step against the dumb server.
   `#[ignore]` upstream (tests/server.rs:258-262: "This used to be the case, but providing this
   functionality got in the way of performance."). The case encodes the intended assertions
   (chunked response, content-length stripped). With `pending` removed, hyper v1.12.0 writes 0
-  bytes and closes; `conn_close` outcome `user`, detail `user sent unexpected header` (role.rs
+  bytes and closes; `conn_close` outcome `user`, detail `invalid framing headers in the response` (role.rs
   encode_headers). It stays pending until the expected behavior is decided for bearings.
 - **Excluded (0).** The integration.rs `[run1 h1 direct]` and `[run3 h1 via proxy]` runs are both
   ported. The HTTP/2 runs of integration.rs are not in the M1 list.

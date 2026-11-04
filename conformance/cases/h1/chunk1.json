@@ -187,7 +187,7 @@
       "name": "response_body_lengths::chunked_response_trumps_length",
       "source": "tests/server.rs:263",
       "pending": "#[ignore] upstream (tests/server.rs:258-262): 'This used to be the case, but providing this functionality got in the way of performance.' hyper v1.12.0 does not pass it.",
-      "notes": "run_test (tests/server.rs:94-178). Reply: headers transfer-encoding: chunked AND content-length: 11, Known body 'foo bar baz'. Intended (not current) behavior: chunked response with the content-length header stripped. The steps encode that intent. Observed on the reference server with pending removed (2026-10-07): read_to_eof gets 0 bytes then EOF; events: handler_done status 200, then conn_close outcome user, detail 'user sent unexpected header' (role.rs encode_headers CONTENT_LENGTH branch: wrote_len && !is_name_written -> rewind, Error::new_user_header). So hyper v1.12.0 writes nothing for this reply.",
+      "notes": "run_test (tests/server.rs:94-178). Reply: headers transfer-encoding: chunked AND content-length: 11, Known body 'foo bar baz'. Intended (not current) behavior: chunked response with the content-length header stripped. The steps encode that intent. Observed on the reference server with pending removed (2026-10-07): read_to_eof gets 0 bytes then EOF; events: handler_done status 200, then conn_close outcome user, detail 'invalid framing headers in the response' (role.rs encode_headers CONTENT_LENGTH branch: wrote_len && !is_name_written -> rewind, Error::new_user_header). So hyper v1.12.0 writes nothing for this reply.",
       "server": {
         "handler": "test_service",
         "replies": [

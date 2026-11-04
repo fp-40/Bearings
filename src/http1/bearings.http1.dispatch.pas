@@ -1291,7 +1291,7 @@ begin
     exchange, the connection state; then leaves the connection list. }
   FDone := True;
   { the transport: close(2), no shutdown; then an upgrade still pending
-    (its handler gets "upgrade expected but not completed") }
+    (its handler gets "upgrade not completed") }
   T := Conn.Io.Io;
   if T <> nil then
   begin

@@ -168,7 +168,7 @@ def test_a_malformed_body(serve):
     answer = client.raw(
         b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabc\r\n"
     )
-    assert errors == ["BodyError('Invalid chunk size line: missing size digit')"]
+    assert errors == ["BodyError('chunk-size line without a hex digit')"]
     # the answer goes, and the connection closes: the rest of the body is lost
     assert answer.startswith(b"HTTP/1.1 200 OK\r\n")
     assert answer.endswith(b"\r\n\r\nanswered anyway")

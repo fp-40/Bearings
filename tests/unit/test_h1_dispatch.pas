@@ -1114,7 +1114,7 @@ begin
     Start;
     Drive;
     AssertTrue('done', Done);
-    AssertEquals('manual', 'upgrade expected but low level API in use', U.Failed);
+    AssertEquals('manual', 'upgrade requested on a cmPlain connection', U.Failed);
     AssertTrue('outcome ok', FObs.Outcome = coOk);
     AssertEquals('no shutdown on upgrade', 0, FIo.ShutdownCalls);
     AssertTrue('101 written', Pos('HTTP/1.1 101 Switching Protocols', FIo.Written) = 1);
@@ -1141,7 +1141,7 @@ begin
     AssertTrue('done', Done);
     AssertEquals('200', 1, Count('HTTP/1.1 200 OK', FIo.Written));
     AssertEquals('no shutdown', 0, FIo.ShutdownCalls);
-    AssertEquals('manual', 'upgrade expected but low level API in use', U.Failed);
+    AssertEquals('manual', 'upgrade requested on a cmPlain connection', U.Failed);
     AssertTrue('outcome ok', FObs.Outcome = coOk);
   finally
     U.Free;

@@ -321,7 +321,7 @@
     {
       "name": "parse_errors_send_4xx_response",
       "source": "tests/server.rs:2669",
-      "notes": "HelloWorld service. Request line 'GE T / HTTP/1.1'. httparse 1.10.1 (the version the harness Cargo.lock resolves, same as the vendored clone) reads method 'GE' and target 'T', then fails on the version field '/ HTTP/1.1'; hyper reports Parse::Version (reference detail: 'invalid HTTP version parsed'), mapped to 400. Client check: one read (256-byte buffer) starts with 'HTTP/1.1 400 '. That check runs in an unjoined thread in hyper (not enforced); encoded as intended and confirmed against the reference server. Server check (enforced): serve_connection(..).await.expect_err('HTTP parse error'). hyper only asserts Err; the class 'parse' is what hyper produces, confirmed against the reference server.",
+      "notes": "HelloWorld service. Request line 'GE T / HTTP/1.1'. httparse 1.10.1 (the version the harness Cargo.lock resolves, same as the vendored clone) reads method 'GE' and target 'T', then fails on the version field '/ HTTP/1.1'; hyper reports Parse::Version (reference detail: 'invalid HTTP version'), mapped to 400. Client check: one read (256-byte buffer) starts with 'HTTP/1.1 400 '. That check runs in an unjoined thread in hyper (not enforced); encoded as intended and confirmed against the reference server. Server check (enforced): serve_connection(..).await.expect_err('HTTP parse error'). hyper only asserts Err; the class 'parse' is what hyper produces, confirmed against the reference server.",
       "server": {"handler": "hello_world"},
       "steps": [
         {"op": "connect"},

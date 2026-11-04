@@ -712,17 +712,17 @@ function H1ParseErrorDescription(E: TH1ParseError): string;
 begin
   case E of
     h1peNone: Result := '';
-    h1peMethod: Result := 'invalid HTTP method parsed';
-    h1peVersion: Result := 'invalid HTTP version parsed';
-    h1peVersionH2: Result := 'invalid HTTP version parsed (found HTTP2 preface)';
-    h1peUri: Result := 'invalid URI';
-    h1peUriTooLong: Result := 'URI too long';
-    h1peHeaderToken: Result := 'invalid HTTP header parsed';
-    h1peHeaderContentLengthInvalid: Result := 'invalid content-length parsed';
-    h1peHeaderTransferEncodingInvalid: Result := 'invalid transfer-encoding parsed';
-    h1peHeaderTransferEncodingUnexpected: Result := 'unexpected transfer-encoding parsed';
-    h1peHeaderHost: Result := 'missing or duplicate host header';
-    h1peTooLarge: Result := 'message head is too large';
+    h1peMethod: Result := 'invalid request method';
+    h1peVersion: Result := 'invalid HTTP version';
+    h1peVersionH2: Result := 'HTTP/2 connection preface';
+    h1peUri: Result := 'invalid request-target';
+    h1peUriTooLong: Result := 'request-target too long';
+    h1peHeaderToken: Result := 'invalid header field';
+    h1peHeaderContentLengthInvalid: Result := 'invalid Content-Length';
+    h1peHeaderTransferEncodingInvalid: Result := 'invalid Transfer-Encoding';
+    h1peHeaderTransferEncodingUnexpected: Result := 'Transfer-Encoding in an HTTP/1.0 request';
+    h1peHeaderHost: Result := 'missing or duplicate Host';
+    h1peTooLarge: Result := 'request head too large';
     h1peInternal: Result := 'internal error in the HTTP/1 parser, please report';
     h1peProxyProtocol: Result := 'invalid PROXY protocol header';
   end;

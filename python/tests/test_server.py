@@ -267,7 +267,7 @@ def test_a_body_cut_short(serve):
         sock.sendall(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\npart")
     assert done.wait(5)
     assert [repr(exc) for exc in errors] == [
-        "BodyError('end of file before message length reached')"
+        "BodyError('connection closed before the end of the body')"
     ]
 
 

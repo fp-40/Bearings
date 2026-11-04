@@ -170,7 +170,7 @@ begin
   AssertEquals(7, Length(Data));
   AssertTrue(DecodeFut(D, Buf, nil, Data, R) = dsError);
   AssertEquals(Ord(iekUnexpectedEof), Ord(DecodeErrorKind(R.Error)));
-  AssertEquals('end of file before message length reached', DecodeErrorMessage(R.Error));
+  AssertEquals('connection closed before the end of the body', DecodeErrorMessage(R.Error));
 end;
 
 procedure TTestDecoder.Test_read_chunked_early_eof;
@@ -235,7 +235,7 @@ begin
   AssertEquals('A', Data);
   AssertTrue('decode2', DecodeFut(D, Buf, nil, Data, R) = dsError);
   AssertEquals(Ord(iekInvalidData), Ord(DecodeErrorKind(R.Error)));
-  AssertEquals('chunk extensions over limit', DecodeErrorMessage(R.Error));
+  AssertEquals('chunk extensions over the byte limit', DecodeErrorMessage(R.Error));
 end;
 
 procedure TTestDecoder.Test_read_chunked_trailer_with_missing_lf;
@@ -430,7 +430,7 @@ begin
     // eof read
     AssertTrue('trailer fields over limit', DecodeFut(D, Buf, T, Data, R) = dsError);
     AssertEquals(Ord(iekInvalidData), Ord(DecodeErrorKind(R.Error)));
-    AssertEquals('chunk trailers count overflow', DecodeErrorMessage(R.Error));
+    AssertEquals('trailer section over the field limit', DecodeErrorMessage(R.Error));
   finally
     T.Free;
   end;
@@ -480,7 +480,7 @@ begin
   // eof read
   AssertTrue('trailers over limit', DecodeFut(D, Buf, nil, Data, R) = dsError);
   AssertEquals(Ord(iekInvalidData), Ord(DecodeErrorKind(R.Error)));
-  AssertEquals('chunk trailers bytes over limit', DecodeErrorMessage(R.Error));
+  AssertEquals('trailer section over the byte limit', DecodeErrorMessage(R.Error));
 end;
 
 procedure TTestDecoder.Test_trailer_max_header_size_many_small_trailers;

@@ -1511,7 +1511,7 @@ begin
   AssertTrue('ab', ReadBodyStr(S) = poSome);
   AssertTrue('eof', ReadBodyStr(S) = poErr);
   AssertTrue('IncompleteBody', FErr.Decode = deIncompleteBody);
-  AssertEquals('end of file before message length reached', DecodeErrorMessage(FErr.Decode));
+  AssertEquals('connection closed before the end of the body', DecodeErrorMessage(FErr.Decode));
 end;
 
 procedure TTestConnBehavior.Header_read_timeout_fires;
@@ -1604,15 +1604,15 @@ begin
     { the next upgrade request replaces it: the older one is canceled }
     Ex.BeginRequest(FTask);
     FConn.State.PrepareUpgrade(Ex);
-    AssertEquals('older canceled', 'upgrade expected but not completed', H1.Failed);
+    AssertEquals('older canceled', 'upgrade not completed', H1.Failed);
     AssertTrue('new slot', Ex.UpgradeSlot = FConn.State.Upgrade.Slot);
     H2 := TRecUpgrade.Create;
     Ex.OnUpgrade(H2);
     AssertEquals('the new handler is not failed', '', H2.Failed);
-    { drop(Conn) with a pending slot: "upgrade expected but not completed" }
+    { drop(Conn) with a pending slot: "upgrade not completed" }
     FConn.Done;
     FInited := False;
-    AssertEquals('drop(Pending) on Done', 'upgrade expected but not completed', H2.Failed);
+    AssertEquals('drop(Pending) on Done', 'upgrade not completed', H2.Failed);
   finally
     Ex.Free;
     H1.Free;
@@ -2012,20 +2012,20 @@ end;
 
 procedure TTestH1Error.Descriptions;
 begin
-  AssertEquals('connection closed before message completed', ErrorDescription(NewIncomplete, ''));
-  AssertEquals('message head is too large', ErrorDescription(NewTooLarge, ''));
-  AssertEquals('invalid HTTP version parsed (found HTTP2 preface)', ErrorDescription(NewVersionH2, ''));
-  AssertEquals('read header from client timeout', ErrorDescription(NewHeaderTimeout, ''));
-  AssertEquals('error reading a body from connection: Invalid chunk size line: Invalid Size',
+  AssertEquals('connection closed in the middle of a request', ErrorDescription(NewIncomplete, ''));
+  AssertEquals('request head too large', ErrorDescription(NewTooLarge, ''));
+  AssertEquals('HTTP/2 connection preface', ErrorDescription(NewVersionH2, ''));
+  AssertEquals('timeout waiting for the request head', ErrorDescription(NewHeaderTimeout, ''));
+  AssertEquals('request body error: invalid byte after the chunk size',
     ErrorDescription(NewBodyDecode(deInvalidSize), ''));
-  AssertEquals('error reading a body from connection: connection error',
+  AssertEquals('request body error: connection error',
     ErrorDescription(NewBodyStatic('connection error'), ''));
-  AssertEquals('error from user''s Service: boom', ErrorDescription(NewUserService, 'boom'));
-  AssertEquals('user body write aborted: early end, expected 7 more bytes',
+  AssertEquals('handler failed: boom', ErrorDescription(NewUserService, 'boom'));
+  AssertEquals('response body ended early: 7 bytes missing',
     ErrorDescription(NewBodyWriteAborted(7), ''));
-  AssertEquals('response has 1xx status code, not supported by server',
+  AssertEquals('handler returned a 1xx status',
     ErrorDescription(NewUserUnsupportedStatusCode, ''));
-  AssertEquals('user sent unexpected header', ErrorDescription(NewUserHeader, ''));
+  AssertEquals('invalid framing headers in the response', ErrorDescription(NewUserHeader, ''));
   AssertTrue('io: os error text', Pos('(os error 104)', ErrorDescription(NewIo(104), '')) > 0);
   AssertEquals('connection error: ', Copy(ErrorDescription(NewIo(104), ''), 1, 18));
 end;

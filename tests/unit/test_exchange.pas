@@ -607,11 +607,11 @@ begin
   FEx.Chan.SendError(NewBodyDecode(deIncompleteBody));
   AssertTrue(FEx.TryRead(Ch) = brError);
   AssertTrue(FEx.BodyErrorKind = bekUnexpectedEof);
-  AssertEquals('end of file before message length reached', FEx.BodyErrorMessage);
+  AssertEquals('connection closed before the end of the body', FEx.BodyErrorMessage);
   FEx.Chan.SendError(NewBodyDecode(deSizeOverflow));
   AssertTrue(FEx.TryRead(Ch) = brError);
   AssertTrue(FEx.BodyErrorKind = bekInvalidData);
-  AssertEquals('invalid chunk size: overflow', FEx.BodyErrorMessage);
+  AssertEquals('chunk size overflows 64 bits', FEx.BodyErrorMessage);
   FEx.Chan.SendError(NewBodyDecode(deInvalidSizeLf));
   AssertTrue(FEx.TryRead(Ch) = brError);
   AssertTrue(FEx.BodyErrorKind = bekInvalidInput);
@@ -622,7 +622,7 @@ begin
   FEx.Chan.SendError(NewBodyStatic('connection error'));
   AssertTrue(FEx.TryRead(Ch) = brError);
   AssertTrue(FEx.BodyErrorKind = bekOther);
-  AssertEquals('error reading a body from connection: connection error', FEx.BodyErrorMessage);
+  AssertEquals('request body error: connection error', FEx.BodyErrorMessage);
 end;
 
 procedure TTestExchangeRequest.Try_read_canceled;
@@ -802,7 +802,7 @@ begin
     FEx.ReleaseRequest;
     AssertTrue('taken: still alive after the request is dropped', Slot.RxAlive);
     Slot.Manual;
-    AssertEquals('upgrade expected but low level API in use', H.Failed);
+    AssertEquals('upgrade requested on a cmPlain connection', H.Failed);
     { a oneshot (S6-5, hyper Pending::manual consumes the sender): a later
       Cancel reaches nobody }
     H.Failed := '';
@@ -818,7 +818,7 @@ begin
     FEx.LinkUpgrade(Slot2);
     FEx.OnUpgrade(H);
     Slot2.Cancel;
-    AssertEquals('upgrade expected but not completed', H.Failed);
+    AssertEquals('upgrade not completed', H.Failed);
   finally
     Slot.Release;
     if Slot2 <> nil then

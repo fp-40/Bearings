@@ -455,7 +455,7 @@ begin
     { a list in one line is one line }
     CheckParse(Self, 'GET / HTTP/1.1'#13#10'Host: a, b'#13#10#13#10, Ok(30, 0), H);
     AssertEquals(400, ServerErrorStatus(h1peHeaderHost));
-    AssertEquals('missing or duplicate host header', H1ParseErrorDescription(h1peHeaderHost));
+    AssertEquals('missing or duplicate Host', H1ParseErrorDescription(h1peHeaderHost));
     { the other framing errors keep their own error }
     CheckParse(Self, 'POST / HTTP/1.1'#13#10'Content-Length: x'#13#10#13#10, Err(h1peHeaderContentLengthInvalid), H);
     CheckParse(Self, 'POST / HTTP/1.1'#13#10'Transfer-Encoding: gzip'#13#10#13#10, Err(h1peHeaderTransferEncodingInvalid), H);
@@ -800,7 +800,7 @@ var
   Pos0: SizeInt;
 begin
   { decode.rs read_size: checked_mul(16) / checked_add -> InvalidData
-    "invalid chunk size: overflow". 16 hex digits fit in a u64, 17 do not. }
+    "chunk size overflows 64 bits". 16 hex digits fit in a u64, 17 do not. }
   InitDecoderFor(D, DECODED_LENGTH_CHUNKED);
   S := '10000000000000000'#13#10;
   AssertTrue(D.Decode(Guarded(S), Length(S), False, R) = dsError);

@@ -322,20 +322,20 @@ begin
     h1eParse: Result := H1ParseErrorDescription(E.Parse);
     h1eUser:
       case E.User of
-        h1uBody: Result := 'error from user''s Body stream';
-        h1uService: Result := 'error from user''s Service';
-        h1uUnsupportedStatusCode: Result := 'response has 1xx status code, not supported by server';
-        h1uManualUpgrade: Result := 'upgrade expected but low level API in use';
-        h1uHeader: Result := 'user sent unexpected header';
+        h1uBody: Result := 'response body failed';
+        h1uService: Result := 'handler failed';
+        h1uUnsupportedStatusCode: Result := 'handler returned a 1xx status';
+        h1uManualUpgrade: Result := 'upgrade requested on a cmPlain connection';
+        h1uHeader: Result := 'invalid framing headers in the response';
       else
         Result := '';
       end;
-    h1eIncompleteMessage: Result := 'connection closed before message completed';
+    h1eIncompleteMessage: Result := 'connection closed in the middle of a request';
     h1eIo: Result := 'connection error';
-    h1eHeaderTimeout: Result := 'read header from client timeout';
-    h1eBody: Result := 'error reading a body from connection';
-    h1eBodyWrite: Result := 'error writing a body to connection';
-    h1eBodyWriteAborted: Result := 'user body write aborted';
+    h1eHeaderTimeout: Result := 'timeout waiting for the request head';
+    h1eBody: Result := 'request body error';
+    h1eBodyWrite: Result := 'response body write error';
+    h1eBodyWriteAborted: Result := 'response body ended early';
     h1eShutdown: Result := 'error shutting down connection';
   end;
 end;
@@ -370,7 +370,7 @@ begin
       end;
   end;
   if E.Kind = h1eBodyWriteAborted then
-    Result := Result + ': early end, expected ' + IntToStr(E.NotEofRemaining) + ' more bytes';
+    Result := Result + ': ' + IntToStr(E.NotEofRemaining) + ' bytes missing';
 end;
 
 function OutcomeOf(R: TPollResult; const E: TH1Error): TConnOutcome;

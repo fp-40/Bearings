@@ -642,8 +642,8 @@ type
       ended. }
     procedure Fulfill(U: TUpgraded);
     procedure Deliver;               { Handler.Upgraded(U) if the receiver lives, else U.Close }
-    procedure Manual;                { Handler.UpgradeFailed('upgrade expected but low level API in use') }
-    procedure Cancel;                { Handler.UpgradeFailed('upgrade expected but not completed') }
+    procedure Manual;                { Handler.UpgradeFailed('upgrade requested on a cmPlain connection') }
+    procedure Cancel;                { Handler.UpgradeFailed('upgrade not completed') }
     constructor Create;              { one reference }
     destructor Destroy; override;
     procedure AddRef;
@@ -761,8 +761,8 @@ uses
 
 const
   NO_UPGRADE_MSG = 'no upgrade available';
-  MANUAL_UPGRADE_MSG = 'upgrade expected but low level API in use';
-  CANCELED_UPGRADE_MSG = 'upgrade expected but not completed';
+  MANUAL_UPGRADE_MSG = 'upgrade requested on a cmPlain connection';
+  CANCELED_UPGRADE_MSG = 'upgrade not completed';
 
 { Builds with assertions (-Sa: every test build and the conformance
   server's debug profile) overwrite the bytes of a released head view with

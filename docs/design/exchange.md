@@ -182,7 +182,7 @@ and the exception goes on to the loop. When no upgrade happens,
 `H.UpgradeFailed(Msg)` runs on the loop thread instead: `no upgrade
 available` at once when the request has no upgrade slot, `upgrade expected
 but low level API in use` in a mode that does not hand upgrades over (5.8),
-`upgrade expected but not completed` when the connection ended first. The
+`upgrade not completed` when the connection ended first. The
 listener's `Shutdown(U)` is called by a graceful stop (default: `U.Close`)
 and `Aborted(U)` by `U.Abort` at the stop deadline, before the socket is
 closed (5.9). An upgraded connection keeps its connection-limit slot until

@@ -707,7 +707,7 @@ begin
   case E of
     peHeaderName: Result := 'invalid header name';
     peHeaderValue: Result := 'invalid header value';
-    peNewLine: Result := 'invalid new line';
+    peNewLine: Result := 'invalid line ending';
     peToken: Result := 'invalid token';
     peTooManyHeaders: Result := 'too many headers';
     peVersion: Result := 'invalid HTTP version';

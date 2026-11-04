@@ -186,17 +186,17 @@ begin
 end;
 
 const
-  E_EOF_LINE = 'UnexpectedEof:unexpected EOF during chunk size line';
-  E_EOF_BODY = 'UnexpectedEof:end of file before message length reached';
-  E_OVERFLOW = 'InvalidData:invalid chunk size: overflow';
-  E_EXT_LIMIT = 'InvalidData:chunk extensions over limit';
-  E_TRL_BYTES = 'InvalidData:chunk trailers bytes over limit';
-  E_TRL_COUNT = 'InvalidData:chunk trailers count overflow';
-  E_HP_NAME = 'InvalidInput:invalid header name';     { httparse Error::HeaderName }
-  E_HP_VALUE = 'InvalidInput:invalid header value';   { httparse Error::HeaderValue }
+  E_EOF_LINE = 'UnexpectedEof:connection closed inside the chunk framing';
+  E_EOF_BODY = 'UnexpectedEof:connection closed before the end of the body';
+  E_OVERFLOW = 'InvalidData:chunk size overflows 64 bits';
+  E_EXT_LIMIT = 'InvalidData:chunk extensions over the byte limit';
+  E_TRL_BYTES = 'InvalidData:trailer section over the byte limit';
+  E_TRL_COUNT = 'InvalidData:trailer section over the field limit';
+  E_HP_NAME = 'InvalidInput:invalid trailer field name';     { httparse Error::HeaderName }
+  E_HP_VALUE = 'InvalidInput:invalid trailer field value';   { httparse Error::HeaderValue }
   E_HP_TOO_MANY = 'InvalidInput:too many headers';    { httparse Error::TooManyHeaders }
-  E_TRL_BARE_LF = 'InvalidInput:Invalid trailer line: LF without CR';  { not in hyper }
-  E_HN_INVALID = 'InvalidInput:Invalid header name';  { http HeaderName::try_from }
+  E_TRL_BARE_LF = 'InvalidInput:bare LF in the trailer section';  { not in hyper }
+  E_HN_INVALID = 'InvalidInput:trailer field name too long';  { http HeaderName::try_from }
 
 { Runs Body with: one read, one byte per read, two reads split at every
   offset (bodies up to 600 bytes; longer ones at 40 offsets), and three
@@ -366,20 +366,20 @@ end;
 
 procedure TTestCodecExtra.Extra_decode_cr_lf_handling;
 begin
-  CheckBody('size LF', 'C', 0, -1, -1, '1'#10, ErrR('InvalidInput:Invalid chunk size line: Invalid Size', ''));
-  CheckBody('size CR CR', 'C', 0, -1, -1, '1'#13#13#10, ErrR('InvalidInput:Invalid chunk size LF', ''));
-  CheckBody('body LF', 'C', 0, -1, -1, '1'#13#10'a'#10, ErrR('InvalidInput:Invalid chunk body CR', 'a'));
-  CheckBody('body CR CR', 'C', 0, -1, -1, '1'#13#10'a'#13#13, ErrR('InvalidInput:Invalid chunk body LF', 'a'));
-  CheckBody('end CR CR', 'C', 0, -1, -1, '0'#13#10#13#13, ErrR('InvalidInput:Invalid chunk end LF', ''));
-  CheckBody('trailer CR CR', 'C', 0, -1, -1, '0'#13#10'a'#13#13, ErrR('InvalidInput:Invalid trailer end LF', ''));
+  CheckBody('size LF', 'C', 0, -1, -1, '1'#10, ErrR('InvalidInput:invalid byte after the chunk size', ''));
+  CheckBody('size CR CR', 'C', 0, -1, -1, '1'#13#13#10, ErrR('InvalidInput:CR without LF after the chunk size', ''));
+  CheckBody('body LF', 'C', 0, -1, -1, '1'#13#10'a'#10, ErrR('InvalidInput:chunk data not followed by CR', 'a'));
+  CheckBody('body CR CR', 'C', 0, -1, -1, '1'#13#10'a'#13#13, ErrR('InvalidInput:CR without LF after the chunk data', 'a'));
+  CheckBody('end CR CR', 'C', 0, -1, -1, '0'#13#10#13#13, ErrR('InvalidInput:CR without LF after the last chunk', ''));
+  CheckBody('trailer CR CR', 'C', 0, -1, -1, '0'#13#10'a'#13#13, ErrR('InvalidInput:CR without LF after a trailer line', ''));
   CheckBody('extension LF', 'C', 0, -1, -1, '1;a'#10'b',
-    ErrR('InvalidData:invalid chunk extension contains newline', ''));
-  CheckBody('LWS LF', 'C', 0, -1, -1, '1 '#10, ErrR('InvalidInput:Invalid chunk size linear white space', ''));
-  CheckBody('extension CR CR', 'C', 0, -1, -1, '1;a'#13#13, ErrR('InvalidInput:Invalid chunk size LF', ''));
+    ErrR('InvalidData:bare LF inside a chunk extension', ''));
+  CheckBody('LWS LF', 'C', 0, -1, -1, '1 '#10, ErrR('InvalidInput:invalid byte after the whitespace that follows the chunk size', ''));
+  CheckBody('extension CR CR', 'C', 0, -1, -1, '1;a'#13#13, ErrR('InvalidInput:CR without LF after the chunk size', ''));
   CheckBody('LF first', 'C', 0, -1, -1, #10,
-    ErrR('InvalidInput:Invalid chunk size line: missing size digit', ''));
+    ErrR('InvalidInput:chunk-size line without a hex digit', ''));
   CheckBody('digit after LWS', 'C', 0, -1, -1, '1 2'#13#10,
-    ErrR('InvalidInput:Invalid chunk size linear white space', ''));
+    ErrR('InvalidInput:invalid byte after the whitespace that follows the chunk size', ''));
   CheckBody('tab LWS then extension', 'C', 0, -1, -1, '1'#9';x'#13#10'a'#13#10'0'#13#10#13#10, OkR('END', 'a', 0));
   // a lone LF after the last chunk is refused (hyper: a trailer byte)
   CheckBody('last chunk then LF', 'C', 0, -1, -1, '0'#13#10#10, ErrR(E_TRL_BARE_LF, ''));
