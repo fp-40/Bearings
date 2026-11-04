@@ -15,9 +15,8 @@
     'E <httparse::Error> m=... p=... v=...'
   where '-' means None; for parse_headers 'C <consumed> h=<n> ...', 'P'
   or 'E <Error>'.  Every ExpectReq / ExpectHdrs expectation in this file
-  is checked against the real httparse 1.10.1 by test_parser_extra_check.py,
-  which reads the calls out of this file and runs the same inputs through
-  the `expect` binary of test_parser_diff_rs (Rust, test tooling only). }
+  was checked against the real httparse 1.10.1 (by a script and a Rust
+  tool removed on 2026-11-04); they are fixed expectations now. }
 unit test_parser_extra;
 
 {$mode objfpc}{$H+}

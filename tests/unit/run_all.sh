@@ -21,17 +21,20 @@
 # end-to-end stress (tools/s7-stress.sh, short form), the M3 S1 echo test
 # (1 GiB with random splits, under valgrind memcheck: build/tools/bin/valgrind
 # from tools/get-tools.sh; a missing valgrind fails the run, decision 12),
-# then the M3 S9 split fuzz (test_split_fuzz, heaptrc), then the hot-path
-# asm check of docs/design.md 7.4 (tools/check-hot-asm.sh).
+# then the M3 S9 split fuzz (test_split_fuzz, heaptrc), then the
+# expected-value tests of the parser, the request head rules and the body
+# decoder (tests/unit/test_golden.sh) and the hot-path asm check of
+# docs/design.md 7.4 (tools/check-hot-asm.sh).
 # Step T1 removed the conn-level differential harness (conformance/conn-diff)
 # and the BytesMut table generator (tests/unit/test_bytesmut_rs).
-# The differentials kept (parser vs httparse, request parsing vs hyper's
-# role.rs, body decoder vs decode.rs) run from their own scripts:
-# tests/unit/test_parser_diff.sh, test_role_diff.sh, test_codec_diff.sh.
+# The differential tests against httparse and hyper (test_parser_diff.sh,
+# test_role_diff.sh, test_codec_diff.sh) were replaced on 2026-11-04 by
+# test_golden.sh, which compares with expected values in tests/golden.
 # Usage: tests/unit/run_all.sh
 # Env: TIER picks the steps (default all):
 #        fast  the fpcunit suites, their heaptrc runs, the split fuzz with
-#              FUZZ_SEEDS 100 and the hot-path asm check (make test; CI)
+#              FUZZ_SEEDS 100, the expected-value tests and the hot-path
+#              asm check (make test; CI)
 #        full  the drd runs, the stress, the echo under memcheck and the
 #              split fuzz with FUZZ_SEEDS 2000 (make test-full)
 #        all   both, the split fuzz once with 2000 seeds
@@ -42,7 +45,7 @@
 #      build/tools/bin/fpc-aarch64 and runs them under qemu with
 #      build/tools/bin/run-aarch64 (both from tools/get-cross-aarch64.sh),
 #      in build/unit-aarch64: the fpcunit suites and their heaptrc runs
-#      only; the drd, stress, echo, split-fuzz and hot-asm steps are
+#      only; the drd, stress, echo, split-fuzz, golden and hot-asm steps are
 #      host-only and skipped (README.md, "ARM64"). FPC and RUN override
 #      the compiler and the runner prefix for either target.
 #      OUT_DIR overrides the build directory; HOT_ASM_ARGS overrides the
@@ -50,7 +53,8 @@
 #      valgrind command (default: build/tools/bin/valgrind; run
 #      tools/get-tools.sh first); ECHO_BYTES (default 1073741824);
 #      FUZZ_SEEDS (split fuzz seeds, default 2000).
-# Exit status 0 only when every suite passes and the asm check passes.
+# Exit status 0 only when every suite, the expected-value tests and the asm
+# check pass.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 TARGET=${TARGET:-x86_64}
@@ -146,7 +150,7 @@ for T in test_h1_conn test_body_chan test_exchange test_h1_dispatch test_workers
 done
 fi  # TIER fast
 if [ "$TARGET" != x86_64 ]; then
-  echo "run_all ($TARGET): the drd, stress, echo, split-fuzz and hot-asm steps run on x86_64 only; skipped"
+  echo "run_all ($TARGET): the drd, stress, echo, split-fuzz, golden and hot-asm steps run on x86_64 only; skipped"
   [ "$FAIL" -eq 0 ] && echo "run_all ($TARGET): passed" || echo "run_all ($TARGET): FAILED"
   exit $FAIL
 fi
@@ -250,17 +254,14 @@ fi
 fi  # TIER full
 # S9 split fuzz (docs/design.md section 9; tests/unit/test_split_fuzz.pas): the
 # conformance case inputs and the M2 parser corpus (20 000 random entries,
-# seed 1, with httparse's test inputs when found) in random reads with random EAGAIN and partial writes, compared
+# seed 1) in random reads with random EAGAIN and partial writes, compared
 # with one-read runs; built with -Ci -Cr -Co -Ct -Sa -gh -gl -dWD_DEBUG,
 # heaptrc must report 0 unfreed blocks. FUZZ_SEEDS seeds (set by TIER above).
 FZ="$OUT/split-fuzz"
 mkdir -p "$FZ/u"
 python3 -I "$ROOT/tests/unit/test_split_fuzz_cases.py" "$FZ/cases.bin" "$ROOT/conformance/cases/h1" \
   "$ROOT/conformance/pascal-server/extra/extra-cases.json" > "$FZ/cases.log" 2>&1 || FAIL=1
-# httparse's own test inputs too when its source is in the cargo registry
-# (test_parser_diff.sh's HTTPARSE_SRC)
-HP=${HTTPARSE_SRC:-$(ls -d "$HOME"/.cargo/registry/src/*/httparse-1.10.1 2>/dev/null | head -n 1)}
-HTTPARSE_SRC=$HP python3 -I "$ROOT/tests/unit/test_parser_corpus.py" "$FZ/corpus.bin" 20000 1 > "$FZ/corpus.log" 2>&1 || FAIL=1
+python3 -I "$ROOT/tests/unit/test_parser_corpus.py" "$FZ/corpus.bin" 20000 1 > "$FZ/corpus.log" 2>&1 || FAIL=1
 # shellcheck disable=SC2086
 if ! fpc -Mobjfpc -Sh -O2 -Ci -Cr -Co -Ct -Sa -gh -gl -dWD_DEBUG $FU -Fu"$ROOT/conformance/pascal-server" \
     -FU"$FZ/u" -FE"$FZ" "$ROOT/tests/unit/test_split_fuzz.pas" > "$FZ/build.log" 2>&1; then
@@ -279,6 +280,7 @@ else
   fi
 fi
 if [ "$TIER" != full ]; then
+  OUT_DIR="$OUT/golden" sh "$ROOT/tests/unit/test_golden.sh" || FAIL=1
   # shellcheck disable=SC2086
   OUT_DIR="$OUT/check-hot-asm" sh "$ROOT/tools/check-hot-asm.sh" ${HOT_ASM_ARGS:---s7} || FAIL=1
 fi

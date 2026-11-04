@@ -1,9 +1,10 @@
 { Extra_* tests: edge cases the hyper tests do not cover.
 
-  Decoder expectations are hyper's own results: each body was run through
-  hyper v1.12.0's src/proto/h1/decode.rs with test_codec_diff_rs ("run"
-  mode), with the same splits as below, and hyper gave the same result for
-  every split. The strings use the format of test_codec_replay:
+  Decoder expectations were hyper's own results: each body was run through
+  hyper v1.12.0's src/proto/h1/decode.rs (with a Rust tool removed on
+  2026-11-04), with the same splits as below, and hyper gave the same
+  result for every split. The bare-LF trailer cases (E_TRL_BARE_LF) are not
+  hyper's (docs/design/deviations.md). The strings use the format of test_codec_replay:
     STATUS|DATALEN|DATAFNV|LEFTOVER|THEN|ISEOF
   The helpers OkR/ErrR rebuild them from the status, the decoded data and
   the leftover byte count.

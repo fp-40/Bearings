@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Write a deterministic corpus of request-like inputs for the differential
-test (test_parser_diff.sh).
+"""Write a deterministic corpus of request-like inputs for the parser's
+expected-value test (test_parser_golden.sh) and the split fuzz.
 
 Usage: python3 -I test_parser_corpus.py <out file> [random cases] [seed]
 
@@ -11,18 +11,14 @@ Format: repeated (u32 little-endian length, bytes).  Contents:
      alphabet, plus CRLF CRLF;
   4. random mutations (replace / insert / delete / duplicate / truncate)
      of the seeds, biased toward bytes that matter to the grammar;
-  5. the httparse test inputs (src/lib.rs and tests/uri.rs) when the
-     httparse source dir is given in $HTTPARSE_SRC;
-  6. every prefix of each long seed, and every one of the 256 byte values
+  5. every prefix of each long seed, and every one of the 256 byte values
      substituted at every position of it.  The long seeds have a 71-byte
-     path and 78-byte header values, so httparse runs its 32-byte AVX2 and
-     8-byte SWAR scanners over several blocks and the tail, with the bad
+     path and 78-byte header values, so a vectorized scanner (32-byte or
+     8-byte blocks) runs over several blocks and the tail, with the bad
      byte in each lane.
 """
 import itertools
-import os
 import random
-import re
 import struct
 import sys
 
@@ -54,37 +50,6 @@ SHORT_ALPHA = b"G /\r\n: \tH1"
 VERSION_ALPHA = b"HTP/1.02 \r\n"
 
 
-def httparse_inputs(root):
-    out = []
-    for rel in ("src/lib.rs", "tests/uri.rs"):
-        src = open(os.path.join(root, rel), encoding="utf-8").read()
-        for m in re.finditer(r'b"((?:[^"\\]|\\.)*)"', src):
-            body = m.group(1)
-            out.append(unescape(body))
-    return out
-
-
-def unescape(body):
-    """Rust byte-string literal body -> bytes (escapes used by httparse tests)."""
-    simple = {"n": 10, "r": 13, "t": 9, "0": 0, "\\": 92, '"': 34, "'": 39}
-    out = bytearray()
-    i = 0
-    while i < len(body):
-        c = body[i]
-        if c != "\\":
-            out += c.encode("utf-8")
-            i += 1
-        elif body[i + 1] == "x":
-            out.append(int(body[i + 2:i + 4], 16))
-            i += 4
-        elif body[i + 1] in simple:
-            out.append(simple[body[i + 1]])
-            i += 2
-        else:
-            i += 2  # line continuation or unknown escape: skip
-    return bytes(out)
-
-
 def mutate(rng, data):
     data = bytearray(data)
     for _ in range(rng.randint(1, 4)):
@@ -108,7 +73,7 @@ def mutate(rng, data):
 
 def main():
     out = sys.argv[1]
-    n_random = int(sys.argv[2]) if len(sys.argv) > 2 else 200000
+    n_random = int(sys.argv[2]) if len(sys.argv) > 2 else 50000
     seed = int(sys.argv[3]) if len(sys.argv) > 3 else 1
     rng = random.Random(seed)
     cases = []
@@ -119,9 +84,6 @@ def main():
     for n in range(1, 4):
         cases.extend(b"GET / " + bytes(t) + b"\r\n\r\n"
                      for t in itertools.product(VERSION_ALPHA, repeat=n))
-    src = os.environ.get("HTTPARSE_SRC")
-    if src:
-        cases.extend(httparse_inputs(src))
     for _ in range(n_random):
         cases.append(mutate(rng, rng.choice(SEEDS)))
     for s in LONG_SEEDS:

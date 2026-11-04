@@ -1,7 +1,7 @@
 { Extra tests of bearings.http1.role and bearings.http.uri (not hyper test ports).
-  Each expected value was derived from hyper's role.rs / http 1.5.0 code;
-  test_role_diff.sh checks the parse rules against hyper itself (the encode
-  expectations here are fixed values since step T1).
+  Each expected value was derived from hyper's role.rs / http 1.5.0 code
+  and is a fixed expectation; tests/unit/test_golden.sh checks the parse
+  rules over a larger set of frozen cases.
   Test_wd_bench_* port the byte-length assertions of role.rs's nightly
   benches bench_server_encode_no_headers / bench_server_encode_headers_preset. }
 unit test_role_extra;

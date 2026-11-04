@@ -1,11 +1,11 @@
 { Adversarial verification tests for bearings.http1.role and bearings.http.uri (edge
   cases the hyper test ports do not cover). Not hyper test ports.
 
-  Every expected value below is hyper v1.12.0's own answer (role.rs with
-  httparse 1.10.1 and http 1.5.0), obtained by replaying the same inputs
-  through hyper's unmodified role.rs (the test_role_diff_rs sources driven
-  from a case file; since step T1 that tool runs the parse cases only, and
-  the encode values here are fixed expectations). Where a test checks a property instead of a table
+  The expected values below were first hyper v1.12.0's own answers (role.rs
+  with httparse 1.10.1 and http 1.5.0), obtained by replaying the same
+  inputs through hyper's unmodified role.rs (a Rust tool removed on
+  2026-11-04); they are fixed expectations now, and those of the Host rule
+  (Extra_host_required_once, docs/design/deviations.md) are not hyper's. Where a test checks a property instead of a table
   (every prefix, every split point, the is_complete_fast model) the comment
   says which hyper rule it follows.
 

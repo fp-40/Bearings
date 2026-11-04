@@ -40,7 +40,7 @@ nothing inside FPC's own heap) and 0 errors required.
 
 **The split fuzz** (`tests/unit/test_split_fuzz.pas`, in process): every
 conformance case input without an upgrade reply and 20 000 generated request
-heads (plus httparse's own test inputs when its source is present) are
+heads are
 served by the real dispatcher and the conformance server's handlers over a
 scripted transport, once in a single read and then in random pieces with
 random `EAGAIN` and partial writes: each of 2 000 seeds runs every case
@@ -55,16 +55,30 @@ head, and an HTTP/2 preface split before its 24th byte.
 **The hot-path check** (`tools/check-hot-asm.sh --s7`, section 7.4) runs
 last.
 
-**Differential tests** against the Rust originals, run from their own
-scripts: `tests/unit/test_parser_diff.sh` (the parser against httparse
-1.10.1), `test_role_diff.sh` (request-head parsing and URIs against hyper's
-own `Server::parse` and `http::Uri`), `test_codec_diff.sh` (the body decoder
-and the header helpers against hyper's `decode.rs` and `headers.rs`). All
-three run once more with the input against a `PROT_NONE` guard page, so a
-read past the input faults: the parser and codec diffs at its end and at its
-start, the role diff at its end. They cover request acceptance and framing,
-which is what request smuggling depends on; response encoding is checked by
-fixed expectations.
+**Expected-value tests** (`tests/unit/test_golden.sh`, in the fast tier):
+the parser over 136 942 generated inputs (`test_parser_corpus.py`, 50 000
+of them random, seed 1; the script checks the corpus's SHA-256), request-head
+parsing and URIs over 41 000 cases, the body decoder over 10 000 cases and
+the header helpers over 20 000. Each driver prints one result line per case,
+and the lines must equal the files in `tests/golden`. Every driver runs once
+more with its input against a `PROT_NONE` guard page, so a read past the
+input faults: the parser and codec at its end and at its start, the role
+test at its end. They cover request acceptance and framing, which is what
+request smuggling depends on; response encoding is checked by the fixed
+expectations of the unit suites.
+
+The expected values were frozen on 2026-11-04 from the Rust originals:
+httparse 1.10.1 for the parser, hyper v1.12.0's `Server::parse`,
+`http::Uri`, `decode.rs` and `headers.rs` for the others. Bearings matched
+them on every case except where it differs from hyper on purpose (section
+10: `Host`, a bare LF in the trailer section); each of those differences was
+checked against its rule before it was frozen. Until then these were
+differential tests that ran hyper and httparse next to the Pascal code;
+they were replaced because a difference from hyper had become a reason to
+investigate, not a defect (the bare-LF trailer bug was in hyper too, so the
+differential test could not see it). After an intended change of
+behaviour, `UPDATE=1 tests/unit/test_golden.sh` lists every line that
+changes and rewrites the expected files.
 
 **The conformance harness** (`conformance/`): `SPEC.md` is the contract
 between the case files (hyper's 105 HTTP/1 server tests ported to data,

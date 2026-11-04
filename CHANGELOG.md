@@ -14,7 +14,9 @@ Development:
 
 - The unit tests and the conformance cases send `Host` in their HTTP/1.1 requests. Tests that counted header lines, or compared head lengths, count the `Host` line.
 - `python/tests/test_raw.py` sends the smuggling attempts and the requests with a missing or repeated `Host` to a running server.
-- `test_role_diff` and `test_codec_diff`, which compare with hyper, now report the two differences above as mismatches.
+- **The differential tests against hyper and httparse are replaced by expected-value tests.** `tests/unit/test_golden.sh` (in `make test`) runs the parser, the request head rules and the body decoder over frozen cases and compares each result with `tests/golden`. The values were taken from httparse 1.10.1 and hyper v1.12.0 on 2026-11-04, with the two rules above applied after every difference was checked. `UPDATE=1` lists the lines that change and rewrites the files. The cases are fewer than the differential tests generated (role 41 000 instead of 200 000, decode 10 000 instead of 100 000, 50 000 random parser inputs instead of 200 000), so that the files stay at 2.8 MB.
+- Removed with them: `tests/unit/test_{parser,role,codec}_diff.sh` and their Rust crates, `test_parser_extra_check.py` and `test_parser_gen.py`.
+- The split fuzz corpus no longer adds httparse's test inputs when their source is in the cargo registry, so it is the same on every machine.
 
 # 0.4.1
 

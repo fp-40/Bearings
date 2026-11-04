@@ -1,13 +1,14 @@
-{ Differential test driver for bearings.http1.parser.
-  Usage: test_parser_diff <corpus> [--guard-end | --guard-start]
+{ Expected-value test driver for bearings.http1.parser.
+  Usage: test_parser_golden <corpus> [--guard-end | --guard-start]
   --guard-end places each case so that it ends exactly at a PROT_NONE page,
   --guard-start so that it starts right after one: any read outside
   [Buf, Buf+Len) then crashes with SIGSEGV.
-  Reads the corpus written by test_parser_corpus.py and prints, for every
-  case and configuration, the same line format as the Rust oracle in
-  test_parser_diff_rs (which runs the real httparse 1.10.1).  The two
-  outputs must be byte-identical; see test_parser_diff.sh. }
-program test_parser_diff;
+  Reads the corpus written by test_parser_corpus.py and prints one result
+  line for every case and parser configuration. test_parser_golden.sh
+  compares the lines with tests/golden/parser_expected.txt.xz. Those
+  values were httparse 1.10.1's results for the same corpus when they
+  were frozen (2026-11-04); they are now maintained here. }
+program test_parser_golden;
 
 {$mode objfpc}{$H+}
 
@@ -118,7 +119,7 @@ begin
   end;
   if ParamCount < 1 then
   begin
-    WriteLn(StdErr, 'usage: test_parser_diff <corpus>');
+    WriteLn(StdErr, 'usage: test_parser_golden <corpus>');
     Halt(2);
   end;
   Assign(OutF, '');
