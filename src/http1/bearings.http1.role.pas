@@ -53,8 +53,7 @@
   written next to each other, at the position of the name's first line;
   Connection, Transfer-Encoding and Trailer lines are joined into one line
   each. ServerEncode does not modify the response head. Header names are
-  written in lowercase, or in title case with TitleCaseHeaders, or with
-  the spellings found in TResponseHead.CaseMap. A 1xx status other than
+  written in lowercase. A 1xx status other than
   101 cannot be sent this way; a 500 head is written instead and the result
   is serUnsupportedStatusCode.
 
@@ -172,10 +171,6 @@ type
     ReasonP: PByte;                { the phrase bytes, already checked (TReasonPhrase / FindInvalidReasonByte) }
     ReasonLen: SizeInt;
     Headers: THttpHeaders;         { nil = no headers }
-    { nil, or a list whose entry NAMES give the spelling to write for each
-      header name (values are ignored). Passing Headers itself writes every
-      name as stored. }
-    CaseMap: THttpHeaders;
   end;
 
   { The connection-side inputs of ServerEncode. }
@@ -184,7 +179,6 @@ type
     BodyLen: QWord;                { the length when Body = blkKnown }
     KeepAlive: Boolean;            { False: the connection closes after this response }
     ReqMethod: THttpMethod;        { the request's method (HEAD and CONNECT change the rules); hmNone = unknown }
-    TitleCaseHeaders: Boolean;
     DateHeader: Boolean;
     Date: PByte;                   { 29 bytes of IMF-fixdate; nil = this thread's cache (DateBuffer) }
   end;
@@ -331,7 +325,6 @@ begin
   Result.ReasonP := nil;
   Result.ReasonLen := 0;
   Result.Headers := nil;
-  Result.CaseMap := nil;
 end;
 
 function DefaultEncodeParams: TServerEncodeParams;
@@ -340,7 +333,6 @@ begin
   Result.BodyLen := 0;
   Result.KeepAlive := True;
   Result.ReqMethod := hmNone;
-  Result.TitleCaseHeaders := False;
   Result.DateHeader := True;
   Result.Date := nil;
 end;
@@ -738,62 +730,14 @@ end;
 
 { --------------------------------------------------------------- encode }
 
-type
-  { Writes header names. OrigCase = False: in lowercase. OrigCase = True:
-    with the spelling from Map when Map has the name, else in title case
-    (TitleCase) or lowercase. For a name with several lines, the Nth line
-    takes the spelling of the Nth entry of that name in Map (CurPos). }
-  TNameWriter = record
-    OrigCase: Boolean;
-    TitleCase: Boolean;
-    Map: THttpHeaders;        { nil in OrigCase mode = empty HeaderCaseMap }
-    HaveCur: Boolean;
-    CurName: PByte;
-    CurLen: SizeInt;
-    CurPos: SizeInt;          { next index of Map to search for CurName }
-    procedure WriteName(var D: PByte; Name: PByte; Len: SizeInt);
-  end;
-
-procedure TNameWriter.WriteName(var D: PByte; Name: PByte; Len: SizeInt);
+{ Writes a header name in lowercase. }
+procedure WriteLowerName(var D: PByte; Name: PByte; Len: SizeInt); inline;
 var
-  I, Idx: SizeInt;
+  I: SizeInt;
 begin
-  if not OrigCase then
-  begin
-    { lowercase names }
-    for I := 0 to Len - 1 do
-      D[I] := Lower[Name[I]];
-    Inc(D, Len);
-    Exit;
-  end;
-  if not (HaveCur and AsciiEqualIgnoreCase(CurName, CurLen, Name, Len)) then
-  begin
-    HaveCur := True;
-    CurName := Name;
-    CurLen := Len;
-    CurPos := 0;
-  end;
-  Idx := -1;
-  if (Map <> nil) and (CurPos < Map.Count) then
-    Idx := Map.IndexOf(Name, Len, CurPos);
-  if Idx >= 0 then
-  begin
-    { the spelling has the same length: it matched case-insensitively }
-    Move(Map.NamePtr(Idx)^, D^, Len);
-    Inc(D, Len);
-    CurPos := Idx + 1;
-  end
-  else
-  begin
-    if Map <> nil then
-      CurPos := Map.Count;
-    if TitleCase then
-      WriteTitleCase(D, Name, Len)
-    else
-      for I := 0 to Len - 1 do
-        D[I] := Lower[Name[I]];
-    Inc(D, Len);
-  end;
+  for I := 0 to Len - 1 do
+    D[I] := Lower[Name[I]];
+  Inc(D, Len);
 end;
 
 procedure Put(var D: PByte; S: PAnsiChar; N: SizeInt); inline;
@@ -1003,7 +947,7 @@ function EncodeHead(const Head: TResponseHead; const P: TServerEncodeParams;
 var
   Version: THttpVersion;
   Status: Word;
-  Headers, CaseMap: THttpHeaders;
+  Headers: THttpHeaders;
   HasReason, Shortcut: Boolean;
   Body: TBodyLengthKind;
   BodyLen: QWord;
@@ -1011,7 +955,6 @@ var
   HasPrevConLen: Boolean;
   PrevConLen, L: QWord;
   Ret: TServerEncodeResult;
-  W: TNameWriter;
   Bound, Count, I, J: SizeInt;
   ReasonP: PByte;
   ReasonLen: SizeInt;
@@ -1051,7 +994,6 @@ begin
   Version := Head.Version;
   Status := Head.Status;
   Headers := Head.Headers;
-  CaseMap := Head.CaseMap;
   HasReason := Head.HasReason;
   Body := P.Body;
   BodyLen := P.BodyLen;
@@ -1079,7 +1021,6 @@ begin
     Version := hv11;
     Status := 500;
     Headers := nil;
-    CaseMap := nil;
     HasReason := False;
     Body := blkNone;
     Ret := serUnsupportedStatusCode;
@@ -1145,15 +1086,6 @@ begin
     PutBytes(D, ReasonP, ReasonLen);
     PutCrLf(D);
   end;
-
-  { header name writer }
-  W.OrigCase := (CaseMap <> nil) or P.TitleCaseHeaders;
-  W.TitleCase := P.TitleCaseHeaders;
-  W.Map := CaseMap;
-  W.HaveCur := False;
-  W.CurName := nil;
-  W.CurLen := 0;
-  W.CurPos := 0;
 
   { header lines; the default framing is a zero-length body }
   EncKind := ekLength;
@@ -1221,7 +1153,7 @@ begin
                     {$ENDIF}
                     EncKind := ekLength;
                     EncLen := BodyLen;
-                    W.WriteName(D, @STR_CONTENT_LENGTH[0], 14);
+                    WriteLowerName(D, @STR_CONTENT_LENGTH[0], 14);
                     PutColonSp(D);
                     PutBytes(D, VP, VL);
                     WroteLen := True;
@@ -1245,7 +1177,7 @@ begin
                     end;
                     EncKind := ekLength;
                     EncLen := L;
-                    W.WriteName(D, @STR_CONTENT_LENGTH[0], 14);
+                    WriteLowerName(D, @STR_CONTENT_LENGTH[0], 14);
                     PutColonSp(D);
                     PutBytes(D, VP, VL);
                     WroteLen := True;
@@ -1287,7 +1219,7 @@ begin
             begin
               EncKind := ekChunked;
               IsNameWritten := True;
-              W.WriteName(D, @STR_TRANSFER_ENCODING[0], 17);
+              WriteLowerName(D, @STR_TRANSFER_ENCODING[0], 17);
               PutColonSp(D);
               PutBytes(D, VP, VL);
             end
@@ -1308,7 +1240,7 @@ begin
             if not IsNameWritten then
             begin
               IsNameWritten := True;
-              W.WriteName(D, @STR_CONNECTION[0], 10);
+              WriteLowerName(D, @STR_CONNECTION[0], 10);
               PutColonSp(D);
               PutBytes(D, VP, VL);
             end
@@ -1334,7 +1266,7 @@ begin
             if not IsNameWritten then
             begin
               IsNameWritten := True;
-              W.WriteName(D, @STR_TRAILER[0], 7);
+              WriteLowerName(D, @STR_TRAILER[0], 7);
               PutColonSp(D);
               PutBytes(D, VP, VL);
             end
@@ -1351,7 +1283,7 @@ begin
       end;
 
       { non-special: write name and value }
-      W.WriteName(D, CurName, CurNameLen);
+      WriteLowerName(D, CurName, CurNameLen);
       PutColonSp(D);
       PutBytes(D, VP, VL);
       PutCrLf(D);
@@ -1372,7 +1304,7 @@ begin
           EncKind := ekCloseDelimited
         else
         begin
-          W.WriteName(D, @STR_TRANSFER_ENCODING[0], 17);
+          WriteLowerName(D, @STR_TRANSFER_ENCODING[0], 17);
           Put(D, ': chunked'#13#10, 11);
           EncKind := ekChunked;
         end;
@@ -1380,7 +1312,7 @@ begin
         begin
           if CanHaveImplicitZeroContentLength(P.ReqMethod, Status) then
           begin
-            W.WriteName(D, @STR_CONTENT_LENGTH[0], 14);
+            WriteLowerName(D, @STR_CONTENT_LENGTH[0], 14);
             Put(D, ': 0'#13#10, 5);
           end;
           EncKind := ekLength;
@@ -1391,7 +1323,7 @@ begin
         begin
           if CanHaveImplicitZeroContentLength(P.ReqMethod, Status) then
           begin
-            W.WriteName(D, @STR_CONTENT_LENGTH[0], 14);
+            WriteLowerName(D, @STR_CONTENT_LENGTH[0], 14);
             Put(D, ': 0'#13#10, 5);
           end;
           EncKind := ekLength;
@@ -1404,7 +1336,7 @@ begin
         end
         else
         begin
-          W.WriteName(D, @STR_CONTENT_LENGTH[0], 14);
+          WriteLowerName(D, @STR_CONTENT_LENGTH[0], 14);
           PutColonSp(D);
           Inc(D, WriteDecimal(D, BodyLen));
           PutCrLf(D);
@@ -1424,7 +1356,7 @@ begin
     then the empty line that ends the head }
   if (not WroteDate) and P.DateHeader then
   begin
-    W.WriteName(D, @STR_DATE[0], 4);
+    WriteLowerName(D, @STR_DATE[0], 4);
     PutColonSp(D);
     if Date <> nil then
       PutBytes(D, Date, DATE_VALUE_LENGTH)

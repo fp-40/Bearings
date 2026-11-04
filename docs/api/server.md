@@ -268,8 +268,6 @@ those of `ConformanceH1Config`.
 Field | Meaning
 ----- | -------
 `KeepAlive` (True) | serve more requests on the connection after the first one
-`HalfClose` (False) | when the client closes its sending side, still finish the response in progress
-`TitleCaseHeaders` (False) | write response header names as `Content-Type` instead of `content-type`
 `MaxHeaders` (-1 = 100) | most header fields in a request head; more gives 431
 `MaxHeaderSize` (-1 = no own limit) | most bytes in a request head; more gives 431
 `MaxBufSize` (-1 = about 408 KiB) | largest read buffer; a request head must fit; minimum 8192

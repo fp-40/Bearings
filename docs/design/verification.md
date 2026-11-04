@@ -91,8 +91,8 @@ wrapper only configures the connection from the spec, installs the named
 handler and reports events. `conformance/pascal-server/gate.sh` runs the
 cases in assertion mode, four cases at a time (`JOBS`), once by default
 (`RUNS=5` before a commit catches intermittent failures), and requires
-`passed=102 failed=0 pending=1` every time (one case is pending by design in `MANIFEST.md`), then
-the 24 extra cases of `extra/extra-cases.json` (behaviours the 105 do not
+`passed=101 failed=0 pending=1` every time (one case is pending by design in `MANIFEST.md`), then
+the 23 extra cases of `extra/extra-cases.json` (behaviours the 105 do not
 reach); `LOOPS=4` runs the same with four loops sharing one listener.
 `gate_worker.sh` runs it with every handler on a worker; one case,
 `chunk2::pipeline_enabled`, is allowed to fail there

@@ -65,32 +65,10 @@
       ]
     },
     {
-      "name": "http1_allow_half_close",
-      "source": "tests/server.rs:1403",
-      "notes": "http1::Builder::half_close(true). The service ignores the request, sleeps 500 ms, then returns 200 with an empty body (reply: read_body false, delay_ms 500). The client sends the request, shuts down its write side (FIN), and one read (256-byte buffer, 1 s timeout) must start with 'HTTP/1.1 200 OK\\r\\n'. The client thread is joined (enforced). Server check (enforced): serve_connection(..).await.unwrap() -> conn_close outcome ok. Port decision: in hyper the 500 ms sleep is test code, so the client's FIN always reaches the server while the handler is busy, which is the situation half_close(true) is about. Here the sleep is the server's delay_ms, so the read step also has a timing window (425..1000 ms after connect, SPEC 13). Without it, a server that ignores delay_ms answers before the FIN matters and passes; the dumb-server mutation check (MANIFEST.md) found exactly that.",
-      "server": {
-        "config": {"half_close": true},
-        "handler": "test_service",
-        "replies": [{"read_body": false, "delay_ms": 500}]
-      },
-      "steps": [
-        {"op": "connect"},
-        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"},
-        {"op": "shutdown_write"},
-        {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 200 OK\r\n"}],
-         "timing": {"since": "connect", "min_ms": 425, "max_ms": 1000},
-         "comment": "timing window is a port decision (SPEC 13): it checks that the server's handler really slept 500 ms, so the FIN reached the server while the request was in progress"}
-      ],
-      "expect_events": [
-        {"event": "conn_close", "outcome": "ok"}
-      ]
-    },
-    {
       "name": "disconnect_after_reading_request_before_responding",
       "source": "tests/server.rs:1437",
       "notes": "http1::Builder::half_close(false) (set explicitly, same as the default). hyper's service sleeps 2 s and then panics with 'response future should have been dropped'; here the reply sleeps 2 s and would then respond, and that is caught by handler_dropped being required and handler_done being forbidden. The client sends the request and drops the socket (close; no unread data, so FIN). Server check (enforced): serve_connection(..).await.expect_err -> the connection ends with an error. hyper only asserts Err; the outcome class 'incomplete' is what hyper produces (conn.rs:497-506, EOF read while busy with half_close false -> Error::new_incomplete), confirmed against the reference server. The client makes no wire assertion.",
       "server": {
-        "config": {"half_close": false},
         "handler": "test_service",
         "replies": [{"read_body": false, "delay_ms": 2000}]
       },

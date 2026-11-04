@@ -28,9 +28,6 @@ type
     procedure Test_decoder_request;
     procedure Test_parse_request_multiple_connection_headers;
     procedure Test_server_encode_connect_method;
-    procedure Test_server_response_encode_title_case;
-    procedure Test_server_response_encode_orig_case;
-    procedure Test_server_response_encode_orig_and_title_case;
     procedure Test_disabled_date_header;
     procedure Test_parse_too_large_headers;
     procedure Test_h1_server_max_header_size;
@@ -40,9 +37,6 @@ type
     procedure Test_parse_reject_response_with_spaces_before_colons_request_variant;
     procedure Test_parse_header_htabs_request_variant;
     procedure Test_client_obs_fold_line_request_variant;
-    procedure Test_client_request_encode_title_case_server_variant;
-    procedure Test_write_headers_orig_case_empty_value_server_variant;
-    procedure Test_write_headers_orig_case_multiple_entries_server_variant;
     { tests/server.rs }
     procedure Test_http1_response_with_http2_version;
     procedure Test_http1_trailer_recv_fields;
@@ -168,7 +162,7 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
 begin
-  { hyper builds a HeaderCaseMap; THttpHeaders keeps the original spelling
+  { THttpHeaders keeps the original spelling
     of each occurrence and finds it case-insensitively }
   H := THttpHeaders.Create;
   try
@@ -318,102 +312,6 @@ begin
   AssertEquals(0, Pos('transfer-encoding', S));
 end;
 
-procedure TTestRoleServer.Test_server_response_encode_title_case;
-var
-  Head: TResponseHead;
-  P: TServerEncodeParams;
-  Enc: TEncoder;
-  Res: TServerEncodeResult;
-  S: RawByteString;
-const
-  Expected = 'HTTP/1.1 200 OK'#13#10'Content-Length: 10'#13#10'Content-Type: application/json'#13#10'Weird--Header: '#13#10;
-begin
-  Head := DefaultResponseHead;
-  Head.Headers := THttpHeaders.Create;
-  try
-    Head.Headers.Insert('content-length', '10');
-    Head.Headers.Insert('content-type', 'application/json');
-    Head.Headers.Insert('weird--header', '');
-    P := DefaultEncodeParams;
-    P.Body := blkKnown;
-    P.BodyLen := 10;
-    P.KeepAlive := True;
-    P.ReqMethod := hmNone;
-    P.TitleCaseHeaders := True;
-    P.DateHeader := True;
-    S := EncodeStr(Head, P, Enc, Res);
-    AssertTrue(Res = serOk);
-    AssertEquals(Expected, Copy(S, 1, Length(Expected)));
-  finally
-    Head.Headers.Free;
-  end;
-end;
-
-procedure TTestRoleServer.Test_server_response_encode_orig_case;
-var
-  Head: TResponseHead;
-  P: TServerEncodeParams;
-  Enc: TEncoder;
-  Res: TServerEncodeResult;
-  S: RawByteString;
-const
-  Expected = 'HTTP/1.1 200 OK'#13#10'CONTENT-LENGTH: 10'#13#10'content-type: application/json'#13#10'date: ';
-begin
-  Head := DefaultResponseHead;
-  Head.Headers := THttpHeaders.Create;
-  Head.CaseMap := THttpHeaders.Create;
-  try
-    Head.Headers.Insert('content-length', '10');
-    Head.Headers.Insert('content-type', 'application/json');
-    Head.CaseMap.Insert('CONTENT-LENGTH', '');
-    P := DefaultEncodeParams;
-    P.Body := blkKnown;
-    P.BodyLen := 10;
-    P.KeepAlive := True;
-    P.TitleCaseHeaders := False;
-    P.DateHeader := True;
-    S := EncodeStr(Head, P, Enc, Res);
-    AssertTrue(Res = serOk);
-    AssertEquals(Expected, Copy(S, 1, Length(Expected)));
-  finally
-    Head.Headers.Free;
-    Head.CaseMap.Free;
-  end;
-end;
-
-procedure TTestRoleServer.Test_server_response_encode_orig_and_title_case;
-var
-  Head: TResponseHead;
-  P: TServerEncodeParams;
-  Enc: TEncoder;
-  Res: TServerEncodeResult;
-  S: RawByteString;
-const
-  Expected = 'HTTP/1.1 200 OK'#13#10'CONTENT-LENGTH: 10'#13#10'Content-Type: application/json'#13#10'Date: ';
-begin
-  Head := DefaultResponseHead;
-  Head.Headers := THttpHeaders.Create;
-  Head.CaseMap := THttpHeaders.Create;
-  try
-    Head.Headers.Insert('content-length', '10');
-    Head.Headers.Insert('content-type', 'application/json');
-    Head.CaseMap.Insert('CONTENT-LENGTH', '');
-    P := DefaultEncodeParams;
-    P.Body := blkKnown;
-    P.BodyLen := 10;
-    P.KeepAlive := True;
-    P.TitleCaseHeaders := True;
-    P.DateHeader := True;
-    S := EncodeStr(Head, P, Enc, Res);
-    AssertTrue(Res = serOk);
-    { this will also test that the date does exist }
-    AssertEquals(Expected, Copy(S, 1, Length(Expected)));
-  finally
-    Head.Headers.Free;
-    Head.CaseMap.Free;
-  end;
-end;
-
 procedure TTestRoleServer.Test_disabled_date_header;
 var
   Head: TResponseHead;
@@ -423,23 +321,19 @@ var
 begin
   Head := DefaultResponseHead;
   Head.Headers := THttpHeaders.Create;
-  Head.CaseMap := THttpHeaders.Create;
   try
     Head.Headers.Insert('content-length', '10');
     Head.Headers.Insert('content-type', 'application/json');
-    Head.CaseMap.Insert('CONTENT-LENGTH', '');
     P := DefaultEncodeParams;
     P.Body := blkKnown;
     P.BodyLen := 10;
     P.KeepAlive := True;
-    P.TitleCaseHeaders := True;
     P.DateHeader := False;
-    AssertEquals('HTTP/1.1 200 OK'#13#10'CONTENT-LENGTH: 10'#13#10'Content-Type: application/json'#13#10#13#10,
+    AssertEquals('HTTP/1.1 200 OK'#13#10'content-length: 10'#13#10'content-type: application/json'#13#10#13#10,
       EncodeStr(Head, P, Enc, Res));
     AssertTrue(Res = serOk);
   finally
     Head.Headers.Free;
-    Head.CaseMap.Free;
   end;
 end;
 
@@ -641,80 +535,6 @@ begin
     AssertEquals('a normal line', H.GetValue('x'));
   finally
     H.Free;
-  end;
-end;
-
-procedure TTestRoleServer.Test_client_request_encode_title_case_server_variant;
-var
-  Head: TResponseHead;
-  P: TServerEncodeParams;
-  Enc: TEncoder;
-  Res: TServerEncodeResult;
-begin
-  Head := DefaultResponseHead;
-  Head.Headers := THttpHeaders.Create;
-  try
-    Head.Headers.Insert('content-length', '10');
-    Head.Headers.Insert('content-type', 'application/json');
-    Head.Headers.Insert('*-*', 'o_o');
-    P := DefaultEncodeParams;
-    P.Body := blkKnown;
-    P.BodyLen := 10;
-    P.TitleCaseHeaders := True;
-    P.DateHeader := False;
-    AssertEquals('HTTP/1.1 200 OK'#13#10'Content-Length: 10'#13#10'Content-Type: application/json'#13#10'*-*: o_o'#13#10#13#10,
-      EncodeStr(Head, P, Enc, Res));
-  finally
-    Head.Headers.Free;
-  end;
-end;
-
-procedure TTestRoleServer.Test_write_headers_orig_case_empty_value_server_variant;
-var
-  Head: TResponseHead;
-  P: TServerEncodeParams;
-  Enc: TEncoder;
-  Res: TServerEncodeResult;
-begin
-  { the client path writes 'X-EmptY:\r\n'; the server path writes a space }
-  Head := DefaultResponseHead;
-  Head.Headers := THttpHeaders.Create;
-  Head.CaseMap := THttpHeaders.Create;
-  try
-    Head.Headers.Insert('x-empty', '');
-    Head.CaseMap.Insert('X-EmptY', '');
-    P := DefaultEncodeParams;
-    P.DateHeader := False;
-    AssertEquals('HTTP/1.1 200 OK'#13#10'X-EmptY: '#13#10'content-length: 0'#13#10#13#10,
-      EncodeStr(Head, P, Enc, Res));
-  finally
-    Head.Headers.Free;
-    Head.CaseMap.Free;
-  end;
-end;
-
-procedure TTestRoleServer.Test_write_headers_orig_case_multiple_entries_server_variant;
-var
-  Head: TResponseHead;
-  P: TServerEncodeParams;
-  Enc: TEncoder;
-  Res: TServerEncodeResult;
-begin
-  Head := DefaultResponseHead;
-  Head.Headers := THttpHeaders.Create;
-  Head.CaseMap := THttpHeaders.Create;
-  try
-    Head.Headers.Insert('x-empty', 'a');
-    Head.Headers.Append('x-empty', 'b');
-    Head.CaseMap.Insert('X-Empty', '');
-    Head.CaseMap.Append('X-EMPTY', '');
-    P := DefaultEncodeParams;
-    P.DateHeader := False;
-    AssertEquals('HTTP/1.1 200 OK'#13#10'X-Empty: a'#13#10'X-EMPTY: b'#13#10'content-length: 0'#13#10#13#10,
-      EncodeStr(Head, P, Enc, Res));
-  finally
-    Head.Headers.Free;
-    Head.CaseMap.Free;
   end;
 end;
 

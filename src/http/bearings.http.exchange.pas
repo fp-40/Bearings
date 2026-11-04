@@ -2658,7 +2658,6 @@ begin
   Resp.Head.HasReason := False;
   Resp.Head.ReasonP := nil;
   Resp.Head.ReasonLen := 0;
-  Resp.Head.CaseMap := nil;
   Resp.Head.Headers.Clear;
   Resp.Body := BodyEmpty;
   Resp.Source := nil;

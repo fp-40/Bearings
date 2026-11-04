@@ -2,8 +2,8 @@
 # Conformance gate, worker executor (docs/design.md section 9):
 # builds beconf and runs the wire cases against `beconf --executor worker`
 # in assertion mode.
-#   1. the 103 cases, RUNS times, JOBS cases at a time: every run must print
-#      "SUMMARY passed=102 failed=0 pending=1 total=103", except that a case
+#   1. the 102 cases, RUNS times, JOBS cases at a time: every run must print
+#      "SUMMARY passed=101 failed=0 pending=1 total=102", except that a case
 #      listed in worker-exceptions.txt may fail (only
 #      chunk2::pipeline_enabled: S7 decision 14, deviation S7-1); the output
 #      names the exception whenever it was used;
@@ -40,8 +40,8 @@ W="$OUT/beconf --executor worker"
 RUNNER=$OUT/runner
 CASES=$CONF/cases/h1
 EXC=$PS/worker-exceptions.txt
-WANT_RUN='SUMMARY passed=102 failed=0 pending=1 total=103'
-WANT_EXTRA='SUMMARY passed=24 failed=0 pending=0 total=24'
+WANT_RUN='SUMMARY passed=101 failed=0 pending=1 total=102'
+WANT_EXTRA='SUMMARY passed=23 failed=0 pending=0 total=23'
 WANT_PROBE='SUMMARY passed=0 failed=2 pending=0 total=2'
 FAIL=0
 echo "gate_worker: load before: $(cat /proc/loadavg)"
@@ -61,7 +61,7 @@ while [ "$I" -le "$RUNS" ]; do
     for F in $(sed -n 's/^FAIL \([^ ]*\) .*/\1/p' "$L"); do
       if ! echo "$LISTED" | grep -qx "$F"; then U=1; echo "  unlisted failure: $F"; fi
     done
-    if [ "$U" -eq 0 ] && grep -q '^SUMMARY .* pending=1 total=103$' "$L"; then
+    if [ "$U" -eq 0 ] && grep -q '^SUMMARY .* pending=1 total=102$' "$L"; then
       echo "assertion run $I: $S (only listed exception cases fail: $(sed -n 's/^FAIL \([^ ]*\) .*/\1/p' "$L" | tr '\n' ' '))"
     else
       echo "assertion run $I: FAILED: $S (see $L)"

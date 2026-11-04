@@ -1414,10 +1414,6 @@ begin
   InitConn;
   AssertTrue(ReadHead = poSome);
   AssertTrue('mid message', FConn.IsMidMessage);
-  FConn.State.AllowHalfClose := True;
-  AssertTrue('half close: Pending', FConn.PollReadKeepAlive(FErr) = prPending);
-  AssertEquals('no read', 1, FMock.ReadCalls);
-  FConn.State.AllowHalfClose := False;
   AssertTrue('EOF: Err', FConn.PollReadKeepAlive(FErr) = prErr);
   AssertTrue('incomplete', FErr.IsIncompleteMessage);
   AssertTrue('close_read', FConn.IsReadClosed);
@@ -1867,8 +1863,6 @@ var
 begin
   C := ConformanceH1Config;
   AssertTrue(C.KeepAlive);
-  AssertFalse(C.HalfClose);
-  AssertFalse(C.TitleCaseHeaders);
   AssertEquals(-1, C.MaxHeaders);
   AssertEquals(-1, Int64(C.MaxHeaderSize));
   AssertEquals(-1, Int64(C.MaxBufSize));
@@ -1923,8 +1917,6 @@ begin
   InitConn;
   C := ConformanceH1Config;
   C.KeepAlive := False;
-  C.HalfClose := True;
-  C.TitleCaseHeaders := True;
   C.MaxHeaders := 7;
   C.MaxHeaderSize := 900;
   C.Timer := True;
@@ -1935,8 +1927,6 @@ begin
   C.AutoDateHeader := False;
   ApplyH1Config(C, FConn);
   AssertTrue('keep_alive(false): disabled', FConn.State.KeepAlive = kaDisabled);
-  AssertTrue(FConn.State.AllowHalfClose);
-  AssertTrue(FConn.State.TitleCaseHeaders);
   AssertEquals(7, FConn.State.ParseCtx.MaxHeaders);
   AssertEquals(900, Int64(FConn.State.ParseCtx.MaxHeaderSize));
   AssertEquals(1234, FConn.State.HeaderReadTimeoutMs);

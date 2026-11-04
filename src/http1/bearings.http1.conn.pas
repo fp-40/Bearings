@@ -146,10 +146,6 @@ type
   end;
 
   TConnState = record
-    { Keep serving after the client shut down its write side (a half-closed
-      TCP connection); off by default: an EOF while a request is in
-      progress is then an error. }
-    AllowHalfClose: Boolean;
     HasError: Boolean;               { Error holds an error for TakeError }
     Error: THyperError;
     KeepAlive: TKA;
@@ -167,7 +163,6 @@ type
     ProxyPeerSet: Boolean;
     ProxyPeer: TSockAddrStorage;
     DateHeader: Boolean;             { add a Date header to responses }
-    TitleCaseHeaders: Boolean;       { write header names Title-Cased instead of as given }
     { The dispatcher should try to read again (WantsReadAgain): set when the
       connection became idle and a next request may already be buffered, or
       the header read timer must be started. }
@@ -228,9 +223,9 @@ type
     { setters used by ApplyH1Config (bearings.http1.config) }
     procedure SetFlushPipeline(Enabled: Boolean);
     procedure SetMaxBufSize(Max: SizeInt);
-    procedure SetTitleCaseHeaders;  procedure SetMaxHeaders(N: Integer);
+    procedure SetMaxHeaders(N: Integer);
     procedure SetMaxHeaderSize(N: SizeInt);  procedure SetHeaderReadTimeout(Ms: Int64);
-    procedure SetAllowHalfClose;  procedure DisableDateHeader;
+    procedure DisableDateHeader;
     { the connection starts with a PROXY protocol header (TH1Config.ProxyProtocol) }
     procedure SetProxyProtocol;
     { True once, after the header was read with an address: Peer is the
@@ -512,7 +507,6 @@ end;
 procedure TH1Conn.Init(AIo: TTransport; APool: PBlockPool; AOwner: TObject);
 begin
   Io.Init(AIo, APool);
-  State.AllowHalfClose := False;
   State.HasError := False;
   State.Error := Default(THyperError);
   State.KeepAlive := kaBusy;
@@ -522,7 +516,6 @@ begin
   TimerInit(@State.HeaderReadTimer, @HeaderReadTimerProc, Pointer(AOwner));
   State.HeaderReadTimeoutRunning := False;
   State.DateHeader := True;
-  State.TitleCaseHeaders := False;
   State.NotifyRead := False;
   State.Reading := rdInit;
   State.ReadDecoder.InitLength(0);
@@ -602,11 +595,6 @@ begin
   Io.SetMaxBufSize(Max);
 end;
 
-procedure TH1Conn.SetTitleCaseHeaders;
-begin
-  State.TitleCaseHeaders := True;
-end;
-
 procedure TH1Conn.SetMaxHeaders(N: Integer);
 begin
   State.ParseCtx.MaxHeaders := N;
@@ -627,11 +615,6 @@ end;
 procedure TH1Conn.SetHeaderReadTimeout(Ms: Int64);
 begin
   State.HeaderReadTimeoutMs := Ms;
-end;
-
-procedure TH1Conn.SetAllowHalfClose;
-begin
-  State.AllowHalfClose := True;
 end;
 
 procedure TH1Conn.DisableDateHeader;
@@ -1137,7 +1120,7 @@ begin
   { a request is in progress and nothing is to be read: read anyway to
     see whether the client closed the connection. Bytes in the buffer
     (a pipelined request) mean it has not. }
-  if State.AllowHalfClose or (Io.ReadBuf.Len <> 0) then
+  if Io.ReadBuf.Len <> 0 then
     Exit(prPending);
   R := ForceIoRead(N, Errno);
   if R = ipPending then
@@ -1276,7 +1259,6 @@ begin
   P.BodyLen := Body.Len;
   P.KeepAlive := State.WantsKeepAlive;
   P.ReqMethod := State.Method;
-  P.TitleCaseHeaders := State.TitleCaseHeaders;
   P.DateHeader := State.DateHeader;
   P.Date := nil;
   if Loop <> nil then
@@ -1448,7 +1430,7 @@ begin
     Exit;
   end;
   V := Default(TByteVec);
-  if State.WriteEncoder.EncodeTrailers(Trailers, State.TitleCaseHeaders, V, Io.Pool) then
+  if State.WriteEncoder.EncodeTrailers(Trailers, V, Io.Pool) then
   begin
     Io.Buffer(QueuedTrailers(V));
     if State.WriteEncoder.IsLast or State.WriteEncoder.IsCloseDelimited then

@@ -44,7 +44,6 @@ type
     procedure Extra_encode_huge_body_length;
     procedure Extra_encode_user_content_length_values;
     procedure Extra_encode_more_than_256_headers;
-    procedure Extra_encode_case_map_spelling_per_value;
     procedure Extra_no_allocation_more_paths;
     procedure Extra_headers_left_empty_on_partial_and_error;
   end;
@@ -1057,21 +1056,7 @@ var
   Enc: TEncoder;
   Res: TServerEncodeResult;
   I, K: Integer;
-  Want, WantTitle: RawByteString;
-
-  function Title(const S: RawByteString): RawByteString;
-  var
-    J: Integer;
-  begin
-    Result := LowerCase(S);
-    for J := 1 to Length(Result) do
-      if ((J = 1) or (Result[J - 1] = '-')) and (Result[J] in ['a'..'z']) then
-        Result[J] := UpCase(Result[J]);
-  end;
-
-var
-  Head: TResponseHead;
-  P: TServerEncodeParams;
+  Want: RawByteString;
 begin
   { HeaderMap::drain order with 300 entries (more than the 256 inline
     "done" flags): each name at its first position, then its later values }
@@ -1080,69 +1065,20 @@ begin
     for I := 0 to 299 do
       H.Add(Names[I mod 8], 'v' + IntToStr(I));
     Want := 'HTTP/1.1 200 OK'#13#10;
-    WantTitle := Want;
     for K := 0 to 7 do
     begin
       I := K;
       while I < 300 do
       begin
         Want := Want + LowerCase(Names[K]) + ': v' + IntToStr(I) + #13#10;
-        WantTitle := WantTitle + Title(Names[K]) + ': v' + IntToStr(I) + #13#10;
         Inc(I, 8);
       end;
     end;
     AssertEquals(Want + 'transfer-encoding: chunked'#13#10#13#10,
       EncodeP(200, blkUnknown, 0, hmGet, H, Enc, Res));
     AssertTrue(Enc.IsChunked);
-    Head := DefaultResponseHead;
-    Head.Headers := H;
-    P := DefaultEncodeParams;
-    P.Body := blkKnown;
-    P.BodyLen := 2;
-    P.TitleCaseHeaders := True;
-    P.DateHeader := False;
-    AssertEquals(WantTitle + 'Content-Length: 2'#13#10#13#10, EncodeStr(Head, P, Enc, Res));
   finally
     H.Free;
-  end;
-end;
-
-procedure TTestRoleVerify.Extra_encode_case_map_spelling_per_value;
-var
-  Head: TResponseHead;
-  P: TServerEncodeParams;
-  Enc: TEncoder;
-  Res: TServerEncodeResult;
-begin
-  Head := DefaultResponseHead;
-  Head.Headers := THttpHeaders.Create;
-  Head.CaseMap := THttpHeaders.Create;
-  try
-    Head.Headers.Add('x-a', '1');
-    Head.Headers.Add('x-a', '2');
-    Head.Headers.Add('x-a', '3');
-    Head.CaseMap.Add('X-A', '');
-    Head.CaseMap.Add('x-A', '');
-    P := DefaultEncodeParams;
-    P.Body := blkKnown;
-    P.BodyLen := 1;
-    P.DateHeader := False;
-    { the n-th spelling goes with the n-th value; then the lowercase name }
-    AssertEquals('HTTP/1.1 200 OK'#13#10'X-A: 1'#13#10'x-A: 2'#13#10'x-a: 3'#13#10'content-length: 1'#13#10#13#10,
-      EncodeStr(Head, P, Enc, Res));
-    { title case only applies once the spellings run out }
-    P.TitleCaseHeaders := True;
-    AssertEquals('HTTP/1.1 200 OK'#13#10'X-A: 1'#13#10'x-A: 2'#13#10'X-A: 3'#13#10'Content-Length: 1'#13#10#13#10,
-      EncodeStr(Head, P, Enc, Res));
-    { more spellings than values: the extra ones are unused }
-    Head.Headers.Clear;
-    Head.Headers.Add('x-a', '1');
-    Head.CaseMap.Add('X-a', '');
-    AssertEquals('HTTP/1.1 200 OK'#13#10'X-A: 1'#13#10'Content-Length: 1'#13#10#13#10,
-      EncodeStr(Head, P, Enc, Res));
-  finally
-    Head.Headers.Free;
-    Head.CaseMap.Free;
   end;
 end;
 
@@ -1177,7 +1113,7 @@ const
     'Upgrade: h2c'#13#10'Connection: keep-alive, Upgrade'#13#10#13#10;
 var
   NewMM: TMemoryManager;
-  H, RH, CM: THttpHeaders;
+  H, RH: THttpHeaders;
   Msg: TParsedRequestHead;
   Head: TResponseHead;
   P: TServerEncodeParams;
@@ -1206,11 +1142,7 @@ var
           P.ReqMethod := Methods[MI];
           P.Body := BK;
           P.BodyLen := 12;
-          P.TitleCaseHeaders := (SI and 1) = 1;
           P.KeepAlive := (MI and 1) = 0;
-          Head.CaseMap := nil;
-          if MI = 2 then
-            Head.CaseMap := CM;
           Head.Version := hv11;
           if SI = 3 then
             Head.Version := hv10;
@@ -1222,14 +1154,11 @@ var
 begin
   H := THttpHeaders.Create;
   RH := THttpHeaders.Create;
-  CM := THttpHeaders.Create;
   try
     RH.Add('Content-Type', 'text/plain');
     RH.Add('Connection', 'close');
     RH.Add('x-a', '1');
     RH.Add('X-A', '2');
-    CM.Add('CONTENT-TYPE', '');
-    CM.Add('X-a', '');
     Head := DefaultResponseHead;
     Head.Headers := RH;
     P := DefaultEncodeParams;
@@ -1278,7 +1207,6 @@ begin
   finally
     H.Free;
     RH.Free;
-    CM.Free;
   end;
 end;
 

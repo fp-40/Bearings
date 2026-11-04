@@ -50,7 +50,6 @@ type
     procedure Library_callers_use_trusted_paths;
     procedure Twin_codec_extra_invalid_names;
     procedure EncodeTrailers_T1_groups_by_first_appearance;
-    procedure EncodeTrailers_title_case_grouped;
     procedure EncodeTrailers_T3_none_cases;
     procedure EncodeTrailers_appends_to_vec;
     procedure EncodeTrailers_uses_given_field_set;
@@ -385,7 +384,7 @@ begin
   H.Add('a', '6');
   E := ChunkedWith(['a', 'b', 'c']);
   V := Default(TByteVec);
-  AssertTrue(E.EncodeTrailers(H, False, V, nil));
+  AssertTrue(E.EncodeTrailers(H, V, nil));
   AssertEquals('0'#13#10'a: 1'#13#10'a: 3'#13#10'a: 6'#13#10'b: 2'#13#10'b: 5'#13#10 +
     'c: 4'#13#10#13#10, VecStr(V));
   FreeVec(V);
@@ -400,23 +399,8 @@ begin
   H.Add('a', '4');
   E := ChunkedWith(['a', 'B', 'content-length']);
   V := Default(TByteVec);
-  AssertTrue(E.EncodeTrailers(H, False, V, nil));
+  AssertTrue(E.EncodeTrailers(H, V, nil));
   AssertEquals('0'#13#10'b: 1'#13#10'b: 3'#13#10'a: 2'#13#10'a: 4'#13#10#13#10, VecStr(V));
-  FreeVec(V);
-end;
-
-procedure TTestHeadersValidate.EncodeTrailers_title_case_grouped;
-var
-  E: TEncoder;
-  V: TByteVec;
-begin
-  H.Add('x-trace-id', '1');
-  H.Add('expires', '2');
-  H.Add('X-TRACE-ID', '3');
-  E := ChunkedWith(['X-Trace-Id', 'Expires']);
-  V := Default(TByteVec);
-  AssertTrue(E.EncodeTrailers(H, True, V, nil));
-  AssertEquals('0'#13#10'X-Trace-Id: 1'#13#10'X-Trace-Id: 3'#13#10'Expires: 2'#13#10#13#10, VecStr(V));
   FreeVec(V);
 end;
 
@@ -429,29 +413,29 @@ begin
   V := Default(TByteVec);
   { Chunked(None): no Trailer header }
   E := TEncoder.Chunked;
-  AssertFalse('Chunked(None)', E.EncodeTrailers(H, False, V, nil));
+  AssertFalse('Chunked(None)', E.EncodeTrailers(H, V, nil));
   { not chunked }
   E := TEncoder.Length(10);
   E.IntoChunkedWithTrailingFields(['a']);
-  AssertFalse('Length', E.EncodeTrailers(H, False, V, nil));
+  AssertFalse('Length', E.EncodeTrailers(H, V, nil));
   E := TEncoder.CloseDelimited;
-  AssertFalse('CloseDelimited', E.EncodeTrailers(H, False, V, nil));
+  AssertFalse('CloseDelimited', E.EncodeTrailers(H, V, nil));
   { Chunked(Some(..)) but no declared field survives }
   E := ChunkedWith(['b']);
-  AssertFalse('undeclared', E.EncodeTrailers(H, False, V, nil));
+  AssertFalse('undeclared', E.EncodeTrailers(H, V, nil));
   H.Clear;
   H.Add('content-type', 'x');
   H.Add('te', 'trailers');
   E := ChunkedWith(['content-type', 'te']);
-  AssertFalse('forbidden', E.EncodeTrailers(H, False, V, nil));
+  AssertFalse('forbidden', E.EncodeTrailers(H, V, nil));
   { Chunked(Some(vec![])) }
   E := ChunkedWith([]);
-  AssertFalse('empty declared list', E.EncodeTrailers(H, False, V, nil));
+  AssertFalse('empty declared list', E.EncodeTrailers(H, V, nil));
   { no trailers at all }
   E := ChunkedWith(['a']);
-  AssertFalse('nil list', E.EncodeTrailers(nil, False, V, nil));
+  AssertFalse('nil list', E.EncodeTrailers(nil, V, nil));
   H.Clear;
-  AssertFalse('empty list', E.EncodeTrailers(H, False, V, nil));
+  AssertFalse('empty list', E.EncodeTrailers(H, V, nil));
   AssertEquals('nothing appended', 0, V.Len);
   AssertTrue('no memory taken', V.Block = nil);
 end;
@@ -467,11 +451,11 @@ begin
   V.Append(S2B(Pre), Length(Pre), nil);
   H.Add('expires', 'never');
   E := ChunkedWith(['expires']);
-  AssertTrue(E.EncodeTrailers(H, False, V, nil));
+  AssertTrue(E.EncodeTrailers(H, V, nil));
   AssertEquals(Pre + '0'#13#10'expires: never'#13#10#13#10, VecStr(V));
   { False leaves Dst as it was }
   E := ChunkedWith(['other']);
-  AssertFalse(E.EncodeTrailers(H, False, V, nil));
+  AssertFalse(E.EncodeTrailers(H, V, nil));
   AssertEquals(Pre + '0'#13#10'expires: never'#13#10#13#10, VecStr(V));
   FreeVec(V);
 end;
@@ -501,10 +485,10 @@ begin
     H.Add('c', '2');
     H.Add('d', '3');
     V := Default(TByteVec);
-    AssertTrue(E1.EncodeTrailers(H, False, V, nil));
+    AssertTrue(E1.EncodeTrailers(H, V, nil));
     AssertEquals('0'#13#10'a: 1'#13#10#13#10, VecStr(V));
     V.Clear;
-    AssertTrue(E2.EncodeTrailers(H, False, V, nil));
+    AssertTrue(E2.EncodeTrailers(H, V, nil));
     AssertEquals('0'#13#10'c: 2'#13#10'd: 3'#13#10#13#10, VecStr(V));
     FreeVec(V);
   finally
@@ -531,7 +515,7 @@ begin
   V := Default(TByteVec);
   Raised := False;
   try
-    E.EncodeTrailers(H, False, V, nil);
+    E.EncodeTrailers(H, V, nil);
   except
     on EAssertionFailed do Raised := True;
   end;
@@ -593,7 +577,7 @@ begin
     P.Date := S2B(DATE);
     case Round of
       0: begin P.Body := blkKnown; P.BodyLen := 13; P.ReqMethod := hmGet; end;
-      1: begin P.Body := blkUnknown; P.TitleCaseHeaders := True; end;
+      1: P.Body := blkUnknown;
       2: begin Head.Status := 404; P.Body := blkNone; P.KeepAlive := False; end;
       3: begin Head.Version := hv10; P.Body := blkUnknown; end;
       4: begin Head.Status := 103; end;                 { serUnsupportedStatusCode }
@@ -668,7 +652,7 @@ begin
     T.Add('content-length', '5');
     T.Add('x-sum', '1');
     T.Add('x-other', '0');
-    AssertTrue(E.EncodeTrailers(T, False, TV, nil));
+    AssertTrue(E.EncodeTrailers(T, TV, nil));
     AssertEquals('0'#13#10'x-late: 2'#13#10'x-sum: 1'#13#10#13#10, VecStr(TV));
   finally
     FreeVec(V);

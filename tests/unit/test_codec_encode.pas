@@ -21,7 +21,6 @@ type
     procedure Test_chunked_with_duplicate_trailer_values;
     procedure Test_chunked_with_no_trailer_header;
     procedure Test_chunked_with_invalid_trailers;
-    procedure Test_chunked_with_title_case_headers;
     procedure Test_chunked_trailers_case_insensitive_matching;
     { extra (not hyper) }
     procedure Test_wd_iovec_and_advance;
@@ -137,7 +136,7 @@ begin
   try
     H.Add('chunky-trailer', 'header data');
     H.Add('should-not-be-included', 'oops');
-    AssertTrue(Encoder.EncodeTrailers(H, False, Dst));
+    AssertTrue(Encoder.EncodeTrailers(H, Dst));
     AssertEquals('0'#13#10'chunky-trailer: header data'#13#10#13#10, BytesToStr(Dst));
   finally
     H.Free;
@@ -156,7 +155,7 @@ begin
   try
     H.Add('chunky-trailer', 'header data');
     H.Add('chunky-trailer-2', 'more header data');
-    AssertTrue(Encoder.EncodeTrailers(H, False, Dst));
+    AssertTrue(Encoder.EncodeTrailers(H, Dst));
     AssertEquals('0'#13#10'chunky-trailer: header data'#13#10'chunky-trailer-2: more header data'#13#10#13#10,
       BytesToStr(Dst));
   finally
@@ -176,7 +175,7 @@ begin
   try
     H.Append('chunky-trailer', 'first');
     H.Append('chunky-trailer', 'second');
-    AssertTrue(Encoder.EncodeTrailers(H, False, Dst));
+    AssertTrue(Encoder.EncodeTrailers(H, Dst));
     AssertEquals('0'#13#10'chunky-trailer: first'#13#10'chunky-trailer: second'#13#10#13#10,
       BytesToStr(Dst));
   finally
@@ -194,11 +193,11 @@ begin
   H := THttpHeaders.Create;
   try
     H.Add('chunky-trailer', 'header data');
-    AssertFalse(Encoder.EncodeTrailers(H, False, Dst));
+    AssertFalse(Encoder.EncodeTrailers(H, Dst));
     AssertEquals(0, Length(Dst));
 
     Encoder.IntoChunkedWithTrailingFields([]);
-    AssertFalse(Encoder.EncodeTrailers(H, False, Dst));
+    AssertFalse(Encoder.EncodeTrailers(H, Dst));
     AssertEquals(0, Length(Dst));
   finally
     H.Free;
@@ -224,25 +223,7 @@ begin
     for I := Low(NAMES) to High(NAMES) do
       H.Insert(NAMES[I], 'header data');
     AssertEquals(12, H.Count);
-    AssertFalse(Encoder.EncodeTrailers(H, True, Dst));
-  finally
-    H.Free;
-  end;
-end;
-
-procedure TTestEncoder.Test_chunked_with_title_case_headers;
-var
-  Encoder: TEncoder;
-  H: THttpHeaders;
-  Dst: TBytes;
-begin
-  Encoder := TEncoder.Chunked;
-  Encoder.IntoChunkedWithTrailingFields(['chunky-trailer']);
-  H := THttpHeaders.Create;
-  try
-    H.Add('chunky-trailer', 'header data');
-    AssertTrue(Encoder.EncodeTrailers(H, True, Dst));
-    AssertEquals('0'#13#10'Chunky-Trailer: header data'#13#10#13#10, BytesToStr(Dst));
+    AssertFalse(Encoder.EncodeTrailers(H, Dst));
   finally
     H.Free;
   end;
@@ -260,14 +241,14 @@ begin
   H := THttpHeaders.Create;
   try
     H.Add('chunky-trailer', 'trailer value');
-    AssertTrue(Encoder.EncodeTrailers(H, False, Dst));
+    AssertTrue(Encoder.EncodeTrailers(H, Dst));
     AssertEquals('0'#13#10'chunky-trailer: trailer value'#13#10#13#10, BytesToStr(Dst));
 
     // the case the regression (issue #4010) is about: the Trailer header
     // declares 'Chunky-Trailer' and the trailer is sent as 'chunky-trailer'
     Encoder := TEncoder.Chunked;
     Encoder.IntoChunkedWithTrailingFields(['Chunky-Trailer']);
-    AssertTrue(Encoder.EncodeTrailers(H, False, Dst));
+    AssertTrue(Encoder.EncodeTrailers(H, Dst));
     AssertEquals('0'#13#10'chunky-trailer: trailer value'#13#10#13#10, BytesToStr(Dst));
   finally
     H.Free;
@@ -370,12 +351,12 @@ begin
     H.Add('X-C', '3');
     H.Add('x-a', '1');
     H.Add('content-length', '5');
-    AssertTrue(Encoder.EncodeTrailers(H, False, Dst));
+    AssertTrue(Encoder.EncodeTrailers(H, Dst));
     AssertEquals('0'#13#10'x-b: 2'#13#10'x-a: 1'#13#10#13#10, BytesToStr(Dst));
     // non-chunked encoders never emit trailers
     Encoder := TEncoder.Length(3);
     Encoder.IntoChunkedWithTrailerHeader(PByte(Pointer(V)), Length(V));
-    AssertFalse(Encoder.EncodeTrailers(H, False, Dst));
+    AssertFalse(Encoder.EncodeTrailers(H, Dst));
   finally
     H.Free;
   end;

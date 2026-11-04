@@ -210,8 +210,6 @@ Unknown fields are errors. Every `config` field is optional. Defaults are hyper 
 | field | type | default | hyper call | semantics the server must implement |
 |---|---|---|---|---|
 | `keep_alive` | bool | `true` | `keep_alive(v)` | `false`: every connection is closed after the first response (HTTP/1.1 responses get `connection: close`) |
-| `half_close` | bool | `false` | `half_close(v)` | `false`: while a request is in progress (handler running or response pending), a read of EOF from the client aborts the connection (handler dropped, outcome `incomplete`, no response). `true`: the server does not poll for EOF while busy and still sends the response after the client shut down its write side |
-| `title_case_headers` | bool | `false` | `title_case_headers(v)` | write response header names in Title-Case (`Content-Length`) instead of lowercase |
 | `max_headers` | int | 100 | `max_headers(n)` | more than `n` request header fields: 431 response, outcome `parse_too_large`. Also the limit on trailer field count |
 | `max_header_size` | int | none | `max_header_size(n)` | request head (request line + header fields) larger than `n` bytes: 431, outcome `parse_too_large`. Applies to an incomplete head once the buffered head reaches `n` bytes, and to a complete head longer than `n`. Also limits trailer bytes |
 | `max_buf_size` | int ≥ 8192 | 8192 + 4096·100 = 417792 | `max_buf_size(n)` | maximum read buffer. An incomplete head that fills `n` bytes: 431, outcome `parse_too_large`. Values below 8192 are a config error (hyper panics) |
@@ -423,7 +421,7 @@ Exactly one class, checked in this order (hyper `Error` predicates):
 | `parse_too_large` | `is_parse_too_large()` | request head over `max_buf_size` / `max_header_size`, too many headers, a header name of 65536 bytes or more (431 written), or a request-target longer than 65534 bytes (414 written) |
 | `parse_version_h2` | `is_parse_version_h2()` | the HTTP/2 connection preface `PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` arrived on the HTTP/1 connection (nothing written) |
 | `parse` | `is_parse()` | any other request-head parse error: method, request-target, version, header syntax, invalid Content-Length or Transfer-Encoding, an HTTP/1.1 request without `Host` or a request with two `Host` lines (400 written; the `Host` rule is not in hyper) |
-| `incomplete` | `is_incomplete_message()` | EOF in the middle of a request head, or EOF while a request was in progress with `half_close` false |
+| `incomplete` | `is_incomplete_message()` | EOF in the middle of a request head, or EOF while a request was in progress |
 | `user` | `is_user()` | the handler failed (including test_service body errors), or the handler returned a 1xx final status (hyper writes a 500) |
 | `body_write_aborted`, `shutdown` | the matching predicate | rare internal cases |
 | `io` | source is an `io::Error` | socket error; in bearings also a request body error (malformed framing, a socket error, the body rate rule) after the handler answered, where hyper reports `ok` (docs/design.md section 10) |

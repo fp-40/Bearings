@@ -633,35 +633,32 @@ var
 begin
   H := THttpHeaders.Create;
   try
-    // HeaderName is lowercase, so a stored upper-case name is written in
-    // lowercase, or title case from the lowercased name
+    // a stored upper-case name is written in lowercase
     H.Add('CHUNKY-TRAILER', 'v');
     H.Add('x-FOO-bar', 'w');
     E := TEncoder.Chunked;
     E.IntoChunkedWithTrailingFields(['chunky-trailer', 'X-Foo-Bar']);
-    AssertTrue(E.EncodeTrailers(H, False, Dst));
+    AssertTrue(E.EncodeTrailers(H, Dst));
     AssertEquals('0'#13#10'chunky-trailer: v'#13#10'x-foo-bar: w'#13#10#13#10, BytesStr(Dst));
-    AssertTrue(E.EncodeTrailers(H, True, Dst));
-    AssertEquals('0'#13#10'Chunky-Trailer: v'#13#10'X-Foo-Bar: w'#13#10#13#10, BytesStr(Dst));
     // an empty value is written as "name: \r\n"
     H.Clear;
     H.Add('a', '');
     E := TEncoder.Chunked;
     E.IntoChunkedWithTrailingFields(['a']);
-    AssertTrue(E.EncodeTrailers(H, False, Dst));
+    AssertTrue(E.EncodeTrailers(H, Dst));
     AssertEquals('0'#13#10'a: '#13#10#13#10, BytesStr(Dst));
     // no trailers at all: None
     H.Clear;
-    AssertFalse(E.EncodeTrailers(H, False, Dst));
-    AssertFalse(E.EncodeTrailers(nil, False, Dst));
+    AssertFalse(E.EncodeTrailers(H, Dst));
+    AssertFalse(E.EncodeTrailers(nil, Dst));
     // non-chunked encoders: None (into_chunked_with_trailing_fields is a no-op)
     H.Add('a', '1');
     E := TEncoder.Length(10);
     E.IntoChunkedWithTrailingFields(['a']);
-    AssertFalse(E.EncodeTrailers(H, False, Dst));
+    AssertFalse(E.EncodeTrailers(H, Dst));
     E := TEncoder.CloseDelimited;
     E.IntoChunkedWithTrailingFields(['a']);
-    AssertFalse(E.EncodeTrailers(H, False, Dst));
+    AssertFalse(E.EncodeTrailers(H, Dst));
   finally
     H.Free;
   end;
@@ -689,18 +686,18 @@ begin
     E := TEncoder.Chunked;
     Line('a');
     Line(' b ,c');
-    AssertTrue(E.EncodeTrailers(H, False, Dst));
+    AssertTrue(E.EncodeTrailers(H, Dst));
     AssertEquals('0'#13#10'a: 1'#13#10'b: 2'#13#10'c: 3'#13#10#13#10, BytesStr(Dst));
     // a line that fails HeaderValue::to_str is ignored entirely
     E := TEncoder.Chunked;
     Line('a');
     Line('d, x'#$80);
-    AssertTrue(E.EncodeTrailers(H, False, Dst));
+    AssertTrue(E.EncodeTrailers(H, Dst));
     AssertEquals('0'#13#10'a: 1'#13#10#13#10, BytesStr(Dst));
     // only to_str-failing lines: allowed_trailer_fields stays None
     E := TEncoder.Chunked;
     Line('a'#$80);
-    AssertFalse(E.EncodeTrailers(H, False, Dst));
+    AssertFalse(E.EncodeTrailers(H, Dst));
     // items that are not valid header names are dropped. The list itself
     // holds the invalid names only through AddTrusted (M3 S0: Add raises;
     // twin test: test_headers_validate Twin_codec_extra_invalid_names).
@@ -708,12 +705,12 @@ begin
     H.AddTrusted('g@', '6');
     E := TEncoder.Chunked;
     Line('e f, g@, d');
-    AssertTrue(E.EncodeTrailers(H, False, Dst));
+    AssertTrue(E.EncodeTrailers(H, Dst));
     AssertEquals('0'#13#10'd: 4'#13#10#13#10, BytesStr(Dst));
     // an empty Trailer value: Some(vec![]) -> nothing to write
     E := TEncoder.Chunked;
     Line('');
-    AssertFalse(E.EncodeTrailers(H, False, Dst));
+    AssertFalse(E.EncodeTrailers(H, Dst));
   finally
     H.Free;
   end;

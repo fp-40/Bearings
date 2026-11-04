@@ -194,13 +194,12 @@ type
       to Dst. Returns False (Dst unchanged) when nothing is to be written:
       not chunked, no trailer name list set, or no field kept; the end of
       the body has then not been written yet (Finish writes it). Fields are grouped by name in order
-      of first appearance, each group in list order. TitleCase writes names
-      as "Content-Type", otherwise lowercase. Builds with assertions (-Sa)
-      check that every written name and value is valid. }
-    function EncodeTrailers(Trailers: THttpHeaders; TitleCase: Boolean; var Dst: TByteVec;
-      Pool: PBlockPool): Boolean; overload;
+      of first appearance, each group in list order; names are written in
+      lowercase. Builds with assertions (-Sa) check that every written name
+      and value is valid. }
+    function EncodeTrailers(Trailers: THttpHeaders; var Dst: TByteVec; Pool: PBlockPool): Boolean; overload;
     { Same, into a new byte array (Dst = nil when False). For tests. }
-    function EncodeTrailers(Trailers: THttpHeaders; TitleCase: Boolean; out Dst: TBytes): Boolean; overload;
+    function EncodeTrailers(Trailers: THttpHeaders; out Dst: TBytes): Boolean; overload;
   end;
 
 { False for the fields that must not be sent as trailers, because they
@@ -691,8 +690,7 @@ begin
     'EncodeTrailers: invalid trailer field reached the encoder');
 end;
 
-function TEncoder.EncodeTrailers(Trailers: THttpHeaders; TitleCase: Boolean; var Dst: TByteVec;
-  Pool: PBlockPool): Boolean;
+function TEncoder.EncodeTrailers(Trailers: THttpHeaders; var Dst: TByteVec; Pool: PBlockPool): Boolean;
 var
   I, J, K, Count, Body, NL, VL: SizeInt;
   NP: PByte;
@@ -746,11 +744,8 @@ begin
       {$IFOPT C+}
       AssertTrailerField(Trailers, K);
       {$ENDIF}
-      if TitleCase then
-        WriteTitleCase(D, NP, NL)
-      else
-        for J := 0 to NL - 1 do
-          D[J] := AsciiLower(NP[J]);
+      for J := 0 to NL - 1 do
+        D[J] := AsciiLower(NP[J]);
       Inc(D, NL);
       D[0] := Ord(':');
       D[1] := Ord(' ');
@@ -771,13 +766,13 @@ begin
   Result := True;
 end;
 
-function TEncoder.EncodeTrailers(Trailers: THttpHeaders; TitleCase: Boolean; out Dst: TBytes): Boolean;
+function TEncoder.EncodeTrailers(Trailers: THttpHeaders; out Dst: TBytes): Boolean;
 var
   V: TByteVec;
 begin
   Dst := nil;
   V := Default(TByteVec);
-  Result := EncodeTrailers(Trailers, TitleCase, V, nil);
+  Result := EncodeTrailers(Trailers, V, nil);
   if Result then
   begin
     SetLength(Dst, V.Len);

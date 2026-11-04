@@ -995,53 +995,6 @@
    ]
   },
   {
-   "name": "half_close_response_after_fin",
-   "notes": "",
-   "server": {
-    "config": {
-     "half_close": true
-    },
-    "replies": [
-     {
-      "delay_ms": 100,
-      "body": {
-       "known": "z"
-      }
-     }
-    ]
-   },
-   "steps": [
-    {
-     "op": "connect"
-    },
-    {
-     "op": "write",
-     "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"
-    },
-    {
-     "op": "shutdown_write"
-    },
-    {
-     "op": "read_to_eof",
-     "expect": [
-      {
-       "ends_with": "z"
-      }
-     ]
-    }
-   ],
-   "expect_events": [
-    {
-     "event": "handler_done",
-     "conn": 1
-    },
-    {
-     "event": "conn_close",
-     "conn": 1
-    }
-   ]
-  },
-  {
    "name": "control_error_line",
    "notes": "",
    "server": {},

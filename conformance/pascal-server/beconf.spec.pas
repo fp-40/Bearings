@@ -768,8 +768,7 @@ begin
   else
     M := V;
   try
-    CheckKeys(M, ['keep_alive', 'half_close', 'title_case_headers',
-      'max_headers', 'max_header_size', 'max_buf_size', 'timer', 'header_read_timeout_ms',
+    CheckKeys(M, ['keep_alive', 'max_headers', 'max_header_size', 'max_buf_size', 'timer', 'header_read_timeout_ms',
       'writev', 'pipeline_flush', 'auto_date_header', 'conn_mode',
       'graceful_shutdown_on_accept'], 'config: ');
     C := ConformanceH1Config;
@@ -811,8 +810,6 @@ begin
       C.Mode := cmPlain;
     B := OptBool(M, 'keep_alive', True, Present);
     C.KeepAlive := B;
-    C.HalfClose := OptBoolD(M, 'half_close', False);
-    C.TitleCaseHeaders := OptBoolD(M, 'title_case_headers', False);
     if OptU64(M, 'max_headers', N) then
     begin
       if N > QWord(High(Integer)) then

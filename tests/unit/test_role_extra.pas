@@ -35,7 +35,6 @@ type
     procedure Test_wd_encode_status_line;
     procedure Test_wd_encode_connection_close_and_keep_alive;
     procedure Test_wd_encode_trailer_fields;
-    procedure Test_wd_encode_case_map_implicit_headers;
     procedure Test_wd_bench_server_encode_no_headers;
     procedure Test_wd_bench_server_encode_headers_preset;
     procedure Test_wd_encode_appends_and_reuses_buffer;
@@ -647,7 +646,7 @@ begin
     AssertTrue(Enc.IsChunked);
     T.Add('chunky-trailer', 'header data');
     T.Add('x-other', 'no');
-    AssertTrue(Enc.EncodeTrailers(T, False, B));
+    AssertTrue(Enc.EncodeTrailers(T, B));
     SetLength(S, Length(B));
     Move(B[0], Pointer(S)^, Length(B));
     AssertEquals('0'#13#10'chunky-trailer: header data'#13#10#13#10, S);
@@ -657,33 +656,6 @@ begin
   finally
     H.Free;
     T.Free;
-  end;
-end;
-
-procedure TTestRoleExtra.Test_wd_encode_case_map_implicit_headers;
-var
-  Head: TResponseHead;
-  P: TServerEncodeParams;
-  Enc: TEncoder;
-  Res: TServerEncodeResult;
-begin
-  { the case map also spells the implicit content-length and date lines }
-  Head := DefaultResponseHead;
-  Head.CaseMap := THttpHeaders.Create;
-  try
-    Head.CaseMap.Add('CONTENT-length', '');
-    Head.CaseMap.Add('DaTe', '');
-    P := Params(blkKnown, 3, hmGet);
-    AssertEquals('HTTP/1.1 200 OK'#13#10'CONTENT-length: 3'#13#10'DaTe: ' + FIXED_DATE + #13#10#13#10,
-      EncodeStr(Head, P, Enc, Res));
-    { the response's own list as its case map: names as stored }
-    Head.CaseMap.Clear;
-    Head.Headers := Head.CaseMap;
-    Head.Headers.Add('X-Custom-HEADER', 'v');
-    AssertEquals('HTTP/1.1 200 OK'#13#10'X-Custom-HEADER: v'#13#10'content-length: 3'#13#10'date: ' + FIXED_DATE + #13#10#13#10,
-      EncodeStr(Head, P, Enc, Res));
-  finally
-    Head.CaseMap.Free;
   end;
 end;
 

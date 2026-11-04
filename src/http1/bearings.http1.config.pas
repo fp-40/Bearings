@@ -60,14 +60,6 @@ type
     { True: the connection serves more requests after the first one
       (HTTP/1.1 keep-alive). False: it closes after one response. }
     KeepAlive: Boolean;                { True }
-    { True: when the client closes its sending side (read EOF), the server
-      still finishes the response in progress. False: EOF in the middle of
-      a request/response is an error and closes the connection. }
-    HalfClose: Boolean;                { False }
-    { Response header names are written in lowercase ("content-type").
-      True: they are written in title case ("Content-Type"), for old
-      clients that compare names case-sensitively. }
-    TitleCaseHeaders: Boolean;         { False }
     { The most header fields a request head may have; more gives
       431 Request Header Fields Too Large. -1: the default, 100. }
     MaxHeaders: Integer;
@@ -148,8 +140,6 @@ function ConformanceH1Config: TH1Config;
 begin
   Result := Default(TH1Config);
   Result.KeepAlive := True;
-  Result.HalfClose := False;
-  Result.TitleCaseHeaders := False;
   Result.MaxHeaders := -1;
   Result.MaxHeaderSize := -1;
   Result.MaxBufSize := -1;
@@ -230,10 +220,6 @@ procedure ApplyH1Config(const C: TH1Config; var Conn: TH1Conn);
 begin
   if not C.KeepAlive then
     Conn.DisableKeepAlive;
-  if C.HalfClose then
-    Conn.SetAllowHalfClose;
-  if C.TitleCaseHeaders then
-    Conn.SetTitleCaseHeaders;
   if C.MaxHeaders >= 0 then
     Conn.SetMaxHeaders(C.MaxHeaders);
   if C.MaxHeaderSize >= 0 then
