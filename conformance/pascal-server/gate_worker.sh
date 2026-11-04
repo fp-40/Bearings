@@ -9,20 +9,20 @@
 #      names the exception whenever it was used;
 #   2. the extra cases (extra/extra-cases.json) once: every case must pass;
 #   3. the evidence for the exception (extra/worker-probe.json):
-#      reference-server must fail both probe cases in assertion mode (hyper
-#      fails the same wire assertion when its second handler is Pending at
-#      its first poll), and so must `beconf --executor worker`.
+#      `beconf --executor worker` must fail both probe cases in assertion
+#      mode (hyper's reference server failed them the same way, as checked
+#      until 2026-11-04: its second handler is Pending at its first poll).
 # Step T1 (user decision 2026-10-08) removed the diff-mode checks (transcripts
 # SAME, the event allowlist, worker_allowlist.py, classify_diff.py, the
-# runner's --settle-ms). With DIFF=1 the script also runs diff mode against
-# reference-server once, as a report (printed, never a failure).
+# runner's --settle-ms); the comparison with hyper's reference server was
+# removed on 2026-11-04.
 # Logs: $OUT_DIR/gate-worker/. Exit status 0 when every check passes, 1
 # otherwise.
 # Usage: conformance/pascal-server/gate_worker.sh
 # Env: OUT_DIR (default build/conformance), PROFILE (debug | release, see
 #      build.sh), RUNS (default 1; 5 before a
 #      commit catches intermittent failures), JOBS (cases run at a time,
-#      default 4: the 9.2 s header-read timeout case then sets the run time), DIFF (default 0).
+#      default 4: the 9.2 s header-read timeout case then sets the run time).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CONF=$ROOT/conformance
@@ -34,11 +34,10 @@ LOG=$OUT/gate-worker
 mkdir -p "$LOG"
 OUT_DIR=$OUT sh "$PS/build.sh" > "$LOG/build.log" 2>&1 || {
   echo "gate_worker: beconf build FAILED (see $LOG/build.log)"; exit 1; }
-(cd "$CONF" && cargo build --release --offline --quiet) > "$LOG/cargo.log" 2>&1 || {
-  echo "gate_worker: runner build FAILED (see $LOG/cargo.log)"; exit 1; }
+OUT_DIR=$OUT sh "$CONF/runner/build.sh" > "$LOG/runner-build.log" 2>&1 || {
+  echo "gate_worker: runner build or self-test FAILED (see $LOG/runner-build.log)"; exit 1; }
 W="$OUT/beconf --executor worker"
-RUNNER=$CONF/target/release/runner
-REF=$CONF/target/release/reference-server
+RUNNER=$OUT/runner
 CASES=$CONF/cases/h1
 EXC=$PS/worker-exceptions.txt
 WANT_RUN='SUMMARY passed=104 failed=0 pending=1 total=105'
@@ -77,23 +76,12 @@ S=$(tail -n 1 "$LOG/extra.log")
 if [ "$S" = "$WANT_EXTRA" ]; then echo "extra cases, assertion mode: $S"
 else echo "extra cases, assertion mode: FAILED: $S (see $LOG/extra.log)"; FAIL=1; fi
 
-"$RUNNER" run --jobs "$JOBS" --server "$REF" "$PS/extra/worker-probe.json" > "$LOG/probe-ref.log" 2>&1 || true
-S=$(tail -n 1 "$LOG/probe-ref.log")
-if [ "$S" = "$WANT_PROBE" ]; then
-  echo "probe, reference-server assertion mode: $S (expected: both fail)"
-else
-  echo "probe, reference-server assertion mode: UNEXPECTED: $S (see $LOG/probe-ref.log)"; FAIL=1
-fi
 "$RUNNER" run --jobs "$JOBS" --server "$W" "$PS/extra/worker-probe.json" > "$LOG/probe-wd.log" 2>&1 || true
 S=$(tail -n 1 "$LOG/probe-wd.log")
 if [ "$S" = "$WANT_PROBE" ]; then
-  echo "probe, beconf --executor worker assertion mode: $S (expected: both fail, as the reference)"
+  echo "probe, beconf --executor worker assertion mode: $S (expected: both fail)"
 else
   echo "probe, beconf --executor worker assertion mode: UNEXPECTED: $S (see $LOG/probe-wd.log)"; FAIL=1
-fi
-if [ "${DIFF:-0}" = 1 ]; then
-  "$RUNNER" diff --jobs "$JOBS" --a "$REF" --b "$W" "$CASES" > "$LOG/diff-report.log" 2>&1 || true
-  echo "report only, diff mode vs reference-server: $(tail -n 1 "$LOG/diff-report.log")"
 fi
 echo "gate_worker: load after: $(cat /proc/loadavg)"
 if [ "$FAIL" -eq 0 ]; then

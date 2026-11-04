@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 # TFB frameworks/Rust/hyper (57d92fb) main.rs + plaintext.rs, DB routes removed,
-# hyper pinned to v1.12.0 (rev 7f67699) like the conformance reference server.
+# hyper pinned to v1.12.0 (rev 7f67699), the version Bearings was ported from.
 
 [dependencies]
 http = "1"

@@ -2,9 +2,9 @@
 
 Every place where bearings behaves differently from what RFC 9110/9112 or a
 common server would lead a reader to expect, with the reason. "Observable"
-says whether a client can see the difference. Entries that compare with the
-reference server (hyper) are listed only where the difference is
-observable.
+says whether a client can see the difference. Entries that compare with hyper
+(the server Bearings was ported from) are listed only where the difference
+is observable.
 
 | topic | bearings | reason | observable |
 |---|---|---|---|

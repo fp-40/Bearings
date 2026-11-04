@@ -4,6 +4,17 @@ Status of the 105 hyper v1.12.0 tests (commit `7f67699ce32d717081deb7018b4da7d67
 milestone M1 ports. Each test maps to exactly one case in `cases/h1/`. The case id is
 `<file stem>::<case name>`, as printed by `runner run`.
 
+This manifest records how the cases were ported and checked in M1, with the Rust runner of that
+time against hyper's reference server (`reference-server/`). Both were removed on 2026-11-04: the
+cases hold the expected values, the runner is the Pascal program in `runner/` (SPEC.md section 1),
+and `pascal-server/gate.sh` checks the cases against the Pascal server. Since then some cases were
+changed (every HTTP/1.1 request carries a `Host` line, RFC 9112 3.2, see
+docs/design/deviations.md; the regex assertions were replaced, SPEC.md section 10), so the
+`target/release/...` commands below no longer run. The mutation check now runs as
+`build/conformance/runner run --server build/conformance/dumb-server conformance/cases/h1` (and
+with `'build/conformance/dumb-server --events'`); it gives the same outcome for every case as the
+Rust runner and dumb server did.
+
 ## Summary
 
 | status | count |

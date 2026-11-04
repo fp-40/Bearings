@@ -7,9 +7,9 @@
 #      do not reach) once: every case must pass.
 # Step T1 (user decision 2026-10-08) removed the diff-mode gate (same=104 in
 # 5 runs, also under cpu-burn, classify_diff.py, the runner's --settle-ms):
-# byte-identical transcripts and event timing are not goals. With DIFF=1 the
-# script also runs diff mode against reference-server once, as a report
-# (printed, never a failure). With LOOPS=N the server runs as
+# byte-identical transcripts and event timing are not goals. The comparison
+# with hyper's reference server was removed on 2026-11-04: the cases hold
+# the expected values. With LOOPS=N the server runs as
 # `beconf --loops N` (S8: N loops sharing one listener, amSharedExclusive;
 # the 7.4 gate is LOOPS=4 RUNS=3) and the logs go to $OUT_DIR/gate-loopsN/.
 # Logs: $OUT_DIR/gate/. Exit status 0 when every check passes, 1 otherwise.
@@ -17,7 +17,7 @@
 # Env: OUT_DIR (default build/conformance), PROFILE (debug | release, see
 #      build.sh), RUNS (default 1; 5 before a
 #      commit catches intermittent failures), JOBS (cases run at a time,
-#      default 4: the 9.2 s header-read timeout case then sets the run time), DIFF (default 0), LOOPS (default: none,
+#      default 4: the 9.2 s header-read timeout case then sets the run time), LOOPS (default: none,
 #      one loop).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -29,11 +29,10 @@ LOG=$OUT/gate${LOOPS:+-loops$LOOPS}
 mkdir -p "$LOG"
 OUT_DIR=$OUT sh "$CONF/pascal-server/build.sh" > "$LOG/build.log" 2>&1 || {
   echo "gate: beconf build FAILED (see $LOG/build.log)"; exit 1; }
-(cd "$CONF" && cargo build --release --offline --quiet) > "$LOG/cargo.log" 2>&1 || {
-  echo "gate: runner build FAILED (see $LOG/cargo.log)"; exit 1; }
+OUT_DIR=$OUT sh "$CONF/runner/build.sh" > "$LOG/runner-build.log" 2>&1 || {
+  echo "gate: runner build or self-test FAILED (see $LOG/runner-build.log)"; exit 1; }
 W="$OUT/beconf${LOOPS:+ --loops $LOOPS}"
-RUNNER=$CONF/target/release/runner
-REF=$CONF/target/release/reference-server
+RUNNER=$OUT/runner
 CASES=$CONF/cases/h1
 EXTRA=$CONF/pascal-server/extra/extra-cases.json
 WANT_RUN='SUMMARY passed=104 failed=0 pending=1 total=105'
@@ -54,10 +53,6 @@ while [ "$I" -le "$RUNS" ]; do
 done
 "$RUNNER" run --jobs "$JOBS" --server "$W" "$EXTRA" > "$LOG/extra.log" 2>&1 || true
 check "extra cases, assertion mode" "$LOG/extra.log" "$WANT_EXTRA"
-if [ "${DIFF:-0}" = 1 ]; then
-  "$RUNNER" diff --jobs "$JOBS" --a "$REF" --b "$W" "$CASES" > "$LOG/diff-report.log" 2>&1 || true
-  echo "report only, diff mode vs reference-server: $(tail -n 1 "$LOG/diff-report.log")"
-fi
 echo "gate: load after: $(cat /proc/loadavg)"
 if [ "$FAIL" -eq 0 ]; then
   echo "gate: passed"

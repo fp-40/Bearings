@@ -4,10 +4,13 @@ This document is the complete contract between three parties:
 
 - **case files** (`cases/**/*.json`): hyper's HTTP/1 server tests, ported to data;
 - **the runner** (`runner/`): plays the client, executes case steps, checks assertions;
-- **a conformance server**: a process that implements the server side of this contract.
-  Two implementations exist or will exist:
-  - `reference-server/`: hyper v1.12.0 (git rev `7f67699ce32d717081deb7018b4da7d679277ac0`), the oracle;
-  - the bearings Pascal conformance server (later milestone), built from this document.
+- **a conformance server**: a process that implements the server side of this contract:
+  the bearings Pascal conformance server (`pascal-server/`). Until 2026-11-04 the workspace
+  also had `reference-server/`, hyper v1.12.0 (git rev
+  `7f67699ce32d717081deb7018b4da7d679277ac0`), against which the cases were written and
+  checked; the cases now hold the expected values, and that server was removed. Where this
+  document says "the reference server", it describes that server's behaviour, which the cases
+  encode.
 
 A conformance server is a thin test wrapper around the HTTP implementation under test. The
 wrapper reads a server spec, configures the HTTP/1 connection the way the spec says, installs
@@ -30,7 +33,7 @@ Contents:
 9. Steps
 10. Assertions
 11. Event patterns
-12. Normalization and diff mode
+12. Normalization
 13. Timing
 14. Porting hyper tests to cases
 15. Known limitations
@@ -39,39 +42,38 @@ Contents:
 
 ## 1. Build and commands
 
-Requirements: cargo/rustc (tested with 1.98.1) and network access on the first build, to fetch
-hyper from GitHub.
+The runner is a Free Pascal program (`runner/`), like the server; it uses none of the Bearings
+units, so it shares no code with the server it checks. Requirements: Free Pascal 3.2.2.
 
 ```sh
-cd conformance        # from the repository root
-cargo build --release                     # builds target/release/{runner,reference-server,dumb-server}
+conformance/runner/build.sh            # builds build/conformance/{runner,dumb-server}, runs `runner selftest`
+R=build/conformance/runner
 
-# assertion mode: run cases against a server command
-target/release/runner run cases/h1                         # default server: target/release/reference-server
-target/release/runner run --server 'path/to/pascal-server' cases/h1
-target/release/runner run --filter pipeline cases/h1/chunk2.json -v
-target/release/runner run --jobs 4 --server 'path/to/pascal-server' cases/h1   # 4 cases at a time
-
-# diff mode: run every case against two servers and compare transcripts
-target/release/runner diff --a target/release/reference-server --b 'path/to/pascal-server' cases/h1
+# run the cases against a server command (--server is required)
+$R run --server 'path/to/server' conformance/cases/h1
+$R run --server 'path/to/server' --filter pipeline conformance/cases/h1/chunk2.json -v
+$R run --jobs 4 --server 'path/to/server' conformance/cases/h1    # 4 cases at a time
 
 # mutation check: a server that answers every request head with a fixed 200 (MANIFEST.md)
-target/release/runner run --server target/release/dumb-server cases/h1
+$R run --server build/conformance/dumb-server conformance/cases/h1
 
 # list cases (validates case syntax, does not start servers)
-target/release/runner list cases/h1
+$R list conformance/cases/h1
+
+# the runner's own checks (JSON, byte strings, date normalization, UTF-8, assertion errors)
+$R selftest
 ```
 
 - `PATH` arguments are case files or directories. Directories are searched recursively for
   `*.json`, in sorted order.
-- `--server CMD`, `--a CMD`, `--b CMD`: a shell command line. The runner executes
-  `sh -c 'exec CMD "$@"' sh --config <tmpfile>`, which appends `--config <tmpfile>` to CMD.
+- `--server CMD`: a shell command line. The runner executes `sh -c 'exec CMD "$@"' sh --config
+  <tmpfile>`, which appends `--config <tmpfile>` to CMD. The server process gets only
+  descriptors 0, 1 and 2.
 - `--filter S` (repeatable): run only cases whose `<file path>::<case name>` contains `S`. With
   several filters, a case runs if any filter matches.
 - `--jobs N` (default 1): run N cases at a time, each against its own server process. The output
   keeps the case order: a case's lines are printed when it and every case before it are done.
-  With `-v` and N > 1 the stderr transcript entries of different cases interleave.
-- `-v`: print every step's transcript entry (stderr) and the server events of passing cases.
+- `-v`: print every step's outcome (stderr) and the server events of passing cases.
 
 Output of `run`: one line per case, `PASS <id> (<ms> ms)`, `FAIL <id> (<ms> ms)` followed by
 indented failure details, server events and the server's stderr tail, or `PEND <id>: <reason>`.
@@ -79,9 +81,11 @@ indented failure details, server events and the server's stderr tail, or `PEND <
 `SUMMARY passed=<n> failed=<n> pending=<n> total=<n>`. Exit status: 0 if no case failed, 1 if any
 case failed or was invalid, 2 on usage errors or unreadable case files.
 
-Output of `diff`: `SAME <id> ...` or `DIFF <id> ...` followed by the differing transcript entries
-and event lists, then `SUMMARY same=<n> different=<n> pending=<n> invalid=<n> total=<n>`. Exit
-status 1 if any case differs or is invalid, else 0. See section 12.
+Until 2026-11-04 the runner was a Rust program in a Cargo workspace (with hyper's reference server
+and a `diff` mode that compared two servers' transcripts). The Pascal runner was checked against it
+before it was removed: the same outcome, and for failing cases the same failing step or event
+pattern, for every case against `beconf` (inline, worker executor, four loops) and against the
+dumb server with and without `--events`.
 
 ---
 
@@ -89,13 +93,15 @@ status 1 if any case differs or is invalid, else 0. See section 12.
 
 HTTP data is bytes. Every field this document calls a **byte string** uses this encoding.
 
-**In events (server output) and transcripts:** a JSON string in which each character is one byte:
+**In events (server output):** a JSON string in which each character is one byte:
 code point U+0000..U+00FF is the byte 0x00..0xFF (ISO-8859-1 / latin-1 mapping). Characters
 above U+00FF never occur. Example: the bytes `61 0D 0A FF` are the JSON string `"a\r\nÿ"`.
 
 **In case files**, a byte string is either:
 
-- a JSON string, decoded with the same latin-1 mapping (a code point above U+00FF is an error);
+- a JSON string, decoded with the same latin-1 mapping (a code point above U+00FF is an error;
+  the escape `\u0000` is not allowed anywhere in a case file, because the runner's JSON library
+  drops it: write a NUL byte as a `{"hex": "00"}` part);
 - an array of parts, concatenated in order, where each part is
   - a JSON string (as above),
   - `{"repeat": <byte string>, "count": <n>}`: the byte string repeated `n` times,
@@ -105,7 +111,7 @@ Example: `["GET /", {"repeat": "a", "count": 65534}, " HTTP/1.1\r\n\r\n"]`,
 `["PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", {"hex": "00 00 00 04 00 00 00 00 00"}]`.
 
 **Variables.** In byte strings and strings that the *runner* interprets (step `data`, assertion
-values, regexes, event patterns), `${name}` is replaced by a variable value, and `$${` produces a
+values, event patterns), `${name}` is replaced by a variable value, and `$${` produces a
 literal `${`. An unknown variable is an error. Variables:
 
 | name | value |
@@ -357,8 +363,8 @@ signal; write; read to EOF and emit `upgrade_read`; close the socket. Errors emi
 
 Every event is a JSON object with an `event` field. `conn` is the connection number (3.2), `req`
 the per-connection request number (5.5). Byte-string fields use the latin-1 mapping (section 2).
-Fields named `message` and `detail` are implementation-specific text: they are reported, they are
-ignored in diff mode, and a case may assert on them only where this table gives canonical text.
+Fields named `message` and `detail` are implementation-specific text: they are reported, and a
+case may assert on them only where this table gives canonical text.
 
 | event | fields | emitted when |
 |---|---|---|
@@ -500,8 +506,7 @@ the peer's FIN or RST, the connection's end state is sticky (`eof` or `reset`).
 
 Common read-step fields: `timeout_ms`; `allow_reset` (bool, default false: an RST fails the step;
 true: RST ends the step like EOF, end state `reset`); `expect` (array of assertions, section 10);
-`timing` (section 13); `diff_capture` (bool, default true; `false`: diff mode does not compare this
-step's capture, section 12). The bytes a read step consumed are its **capture**.
+`timing` (section 13); `diff_capture` (accepted, no effect; section 12). The bytes a read step consumed are its **capture**.
 
 | op | fields | semantics | step completes |
 |---|---|---|---|
@@ -528,8 +533,12 @@ assertion has exactly one **kind** key, plus optional modifiers.
 | `ends_with` | byte string | ends with the value |
 | `contains` | byte string | contains the value |
 | `not_contains` | byte string | does not contain the value |
-| `regex` / `not_regex` | regex string | does / does not match (Rust `regex::bytes`, Unicode off, so `.` is any byte except `\n`; use `(?s)` for any byte; `\A` / `\z` anchor the whole subject) |
+| `utf8` | boolean | is (`true`) / is not (`false`) valid UTF-8 (no overlong forms, no surrogates, nothing above U+10FFFF) |
 | `len` / `min_len` / `max_len` | int | has exactly / at least / at most this many bytes |
+
+There are no regular expressions: the runner refuses `regex` and `not_regex`. The cases used them
+until 2026-11-04 (in Rust's `regex::bytes` dialect); each use was replaced by a byte kind or by
+`utf8`, which states what the expression checked.
 
 Modifiers:
 
@@ -539,7 +548,7 @@ Modifiers:
     none). This is hyper's `has_header` region.
   - `"after_head"`: the bytes after the first `\r\n\r\n` (empty if there is none).
   - `"body"`: the decoded body (`read_response` only).
-- `ci`: ASCII case-insensitive comparison (byte kinds and regex).
+- `ci`: ASCII case-insensitive comparison (byte kinds).
 - `raw`: use the capture before date normalization (section 12).
 
 ### 10.2 Other assertions
@@ -574,7 +583,6 @@ Modifiers:
   - `{"$bytes": <byte string>}`: string equal to the latin-1 form of the byte string (for long or
     binary values, e.g. `{"$bytes": [{"repeat": "x", "count": 100000}]}`);
   - `{"$contains": <byte string>}`: string containing it;
-  - `{"$regex": "..."}`: string matching the (Unicode) regex;
   - `{"$includes": [p, ...]}`: an array in which every `p` matches some element (any order).
     Example: `{"event":"request","headers":{"$includes":[["expect","100-continue"]]}}`.
 
@@ -583,9 +591,9 @@ pattern *k* matched.
 
 ---
 
-## 12. Normalization and diff mode
+## 12. Normalization
 
-**Date normalization.** Before assertions and transcripts, every match of
+**Date normalization.** Before assertions, every match of
 
 ```
 (?i)(\r\ndate:[ \t]*)(Mon|Tue|Wed|Thu|Fri|Sat|Sun), DD (Jan|...|Dec) YYYY HH:MM:SS GMT
@@ -597,34 +605,8 @@ at the start of a line are replaced; other values (e.g. `date: let me through`) 
 `read_until` conditions are evaluated on the normalized capture. Header values in `read_response`
 assertions are not normalized.
 
-**Transcript.** In both modes the runner records one entry per executed step: `step` (index),
-`op`, `conn`, and for read steps `received` (normalized capture as a latin-1 string), `end`, plus
-`read_result` for `read_once`, `status`, `body`, `framing` for `read_response`, and
-`"diff_capture": false` when the step sets it; for writes `bytes` and `result` (`ok` / `error`);
-for `await_event` the matched `event`; and `error` if the step failed.
-
-**Diff mode** (`runner diff --a A --b B`) runs every non-pending case against A and then against
-B. Both runs execute **all** steps (a failing step is recorded and the next step runs). Two runs
-are the SAME when:
-
-1. the transcripts are equal entry by entry, where an entry marked `"diff_capture": false` is
-   compared without its `received`, `end`, `read_result`, `status`, `body` and `framing` fields
-   (so only `step`, `op`, `conn` and `error` are compared), and
-2. the event lists are equal after (a) removing `bytes_read` events (how a server splits its
-   socket reads is implementation-specific), (b) removing `message` and `detail` fields, (c)
-   grouping by `conn` (order kept within a connection; events without `conn` form their own group).
-
-Before comparison, `127.0.0.1:<server_port>` and `127.0.0.1:<proxy_port>` are replaced by
-`127.0.0.1:${server_port}` / `127.0.0.1:${proxy_port}` in all strings, so that different port
-numbers do not count as differences. The assertion-failure count of each side is printed for
-information only.
-
-Diff mode compares exact read boundaries. `read_once` captures depend on how the server
-splits its writes, so cases meant for diffing should prefer `read_until`, `read_exact`,
-`read_response` and `read_to_eof`. A case that must mirror a hyper test's single `read()` calls
-whose results depend on write batching (pipeline_disabled) sets `"diff_capture": false` on those
-steps: run mode still checks their assertions, and diff mode still reports a step that fails on
-one side only (the `error` field differs).
+`diff_capture` (a read step field) is accepted and has no effect: it marked the steps the former
+`diff` mode did not compare.
 
 ---
 
@@ -725,7 +707,7 @@ value), use a lower bound of about 85 % of the nominal value and an upper bound 
   preface bytes to an HTTP/1 server.
 - **Timing-dependent reads.** `read_once` mirrors hyper's single `read()` calls, so its capture
   depends on how the server's writes are batched. hyper's `pipeline_disabled` comments on this
-  race. Such steps set `"diff_capture": false` (section 12).
+  race.
 - **`read_once` errors other than timeout and RST** (for example `EHOSTUNREACH`) always fail the
   step. hyper's `if let Ok(..) = read(..)` would accept them. They do not occur on loopback in
   practice.

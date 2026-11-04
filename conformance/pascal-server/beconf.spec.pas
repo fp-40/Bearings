@@ -2,8 +2,9 @@
   6.3: JSON parsing and validation (docs/design.md section 9).
   Test tooling.
 
-  Validation follows the reference server (reference-server/src/main.rs
-  parse_server_spec and the functions it calls) rule by rule: unknown
+  Validation follows the former reference server (hyper's
+  parse_server_spec in reference-server/src/main.rs, removed on 2026-11-04,
+  and the functions it called) rule by rule: unknown
   fields, wrong types, and every value hyper rejects (max_buf_size < 8192,
   header_read_timeout_ms with timer false, invalid header names and values,
   invalid reason bytes, status outside 100..999, an unknown version) are

@@ -113,7 +113,7 @@
           {"scope": "head", "contains": "transfer-encoding:"},
           {"scope": "head", "contains": "chunked\r\n"},
           {"scope": "head", "not_contains": "content-length:", "ci": true},
-          {"scope": "after_head", "regex": "(?s)\\A.\r\nfoo bar baz\r\n0\r\n\r\n\\z"}
+          {"scope": "after_head", "equals": "b\r\nfoo bar baz\r\n0\r\n\r\n", "ci": true, "comment": "chunk size 11, in either case"}
         ]}
       ]
     },
@@ -157,7 +157,7 @@
           {"scope": "head", "contains": "transfer-encoding:"},
           {"scope": "head", "contains": "chunked\r\n"},
           {"scope": "head", "not_contains": "content-length:", "ci": true},
-          {"scope": "after_head", "regex": "(?s)\\A.\r\nfoo bar baz\r\n0\r\n\r\n\\z"}
+          {"scope": "after_head", "equals": "b\r\nfoo bar baz\r\n0\r\n\r\n", "ci": true, "comment": "chunk size 11, in either case"}
         ]}
       ]
     },
@@ -179,7 +179,7 @@
           {"scope": "head", "contains": "transfer-encoding:"},
           {"scope": "head", "contains": "chunked\r\n"},
           {"scope": "head", "not_contains": "content-length:", "ci": true},
-          {"scope": "after_head", "regex": "(?s)\\A.\r\nfoo bar baz\r\n0\r\n\r\n\\z"}
+          {"scope": "after_head", "equals": "b\r\nfoo bar baz\r\n0\r\n\r\n", "ci": true, "comment": "chunk size 11, in either case"}
         ]}
       ]
     },
@@ -202,7 +202,7 @@
           {"scope": "head", "contains": "transfer-encoding:"},
           {"scope": "head", "contains": "chunked\r\n"},
           {"scope": "head", "not_contains": "content-length:", "ci": true},
-          {"scope": "after_head", "regex": "(?s)\\A.\r\nfoo bar baz\r\n0\r\n\r\n\\z"}
+          {"scope": "after_head", "equals": "b\r\nfoo bar baz\r\n0\r\n\r\n", "ci": true, "comment": "chunk size 11, in either case"}
         ]}
       ]
     },
@@ -224,7 +224,7 @@
           {"scope": "head", "contains": "transfer-encoding:"},
           {"scope": "head", "contains": "chunked\r\n"},
           {"scope": "head", "not_contains": "content-length:", "ci": true},
-          {"scope": "after_head", "regex": "(?s)\\A.\r\nfoo bar baz\r\n0\r\n\r\n\\z"}
+          {"scope": "after_head", "equals": "b\r\nfoo bar baz\r\n0\r\n\r\n", "ci": true, "comment": "chunk size 11, in either case"}
         ]}
       ]
     },
@@ -330,7 +330,7 @@
         {"op": "connect"},
         {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
         {"op": "read_to_eof", "expect": [
-          {"regex": "\\AHTTP/1\\.1 200 Cool\\r?\\n(?:(?:[^\\n]{2,}|[^\\r\\n])\\n)*\\r?\\n\\z"},
+          {"ends_with": "\r\n\r\n", "comment": "with after_head len 0: the head is all there is"},
           {"starts_with": "HTTP/1.1 200 Cool\r\n"},
           {"contains": "\r\n\r\n"},
           {"scope": "after_head", "len": 0}

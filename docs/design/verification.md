@@ -82,8 +82,9 @@ changes and rewrites the expected files.
 
 **The conformance harness** (`conformance/`): `SPEC.md` is the contract
 between the case files (hyper's 105 HTTP/1 server tests ported to data,
-`cases/h1/*.json`), the runner (the client, in Rust) and a conformance
-server; `reference-server` is hyper itself. The Pascal conformance server
+`cases/h1/*.json`; the expected values in them are hyper's behaviour, with the
+deviations of section 10), the runner (the client, a Pascal program that uses no Bearings unit) and a conformance
+server. The Pascal conformance server
 (`conformance/pascal-server/beconf`) is a thin wrapper around
 `bearings.server`: everything on the wire comes from the library, the
 wrapper only configures the connection from the spec, installs the named
@@ -96,21 +97,11 @@ reach); `LOOPS=4` runs the same with four loops sharing one listener.
 `gate_worker.sh` runs it with every handler on a worker; one case,
 `chunk2::pipeline_enabled`, is allowed to fail there
 (`worker-exceptions.txt`): its wire assertion needs the second handler to
-answer in its first poll, which no worker handler does, and the script
-proves each run that the reference server fails the same assertion when its
-handler is pending (`extra/worker-probe.json`). The runner's diff mode
-against the reference server is a report, not a gate: byte-identical write
-segmentation and event timing are not goals.
-
-**The differential stream fuzz** (`conformance/fuzz-diff/`, Rust): generated
-request streams (a grammar plus mutations of the case corpus and httparse's
-corpus) with random write splits, gaps and half-closes are sent to the
-reference server and to `beconf` under the same spec, and compared per
-request on acceptance, status and body, the end of the connection and the
-server events; a stream that differs is replayed nine more times on both,
-and counts as a difference only when some bearings outcome was never seen
-from the reference server. The known deviations of section 10 are recognised
-in their exact shapes. `run.sh` runs 10 000 streams by default.
+answer in its first poll, which no worker handler does; the probe cases of
+`extra/worker-probe.json` show the same failure with a pending inline
+handler (hyper's reference server failed them the same way while it was
+part of the harness, until 2026-11-04). Byte-identical write segmentation
+and event timing are not goals.
 
 **The performance gate** (`bench/run_gate.sh`): `bench/plaintext.pas` against
 `bench/hyper-tfb` (hyper in its TechEmpower configuration), both with 4

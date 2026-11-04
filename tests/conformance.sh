@@ -2,8 +2,7 @@
 # Conformance tier (make test-full, make release): the wire conformance gate
 # (conformance/pascal-server/gate.sh): the cases of conformance/cases and
 # the extra cases against the Pascal conformance server, in assertion mode.
-# Needs cargo for the case runner; its crates must be in the cargo registry
-# already (it builds with --offline: run `cargo fetch` in conformance/ once).
+# The case runner is a Pascal program (conformance/runner/), built by the gate.
 # The differential tests against httparse and hyper that ran here were
 # replaced on 2026-11-04 by tests/unit/test_golden.sh (make test).
 # Usage: tests/conformance.sh

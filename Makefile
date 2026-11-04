@@ -7,7 +7,7 @@
 #                       runs this on every push)
 #   make test-full      the full tier (drd, stress, echo under memcheck,
 #                       the long split fuzz) and conformance (the wire
-#                       gate); needs tools/get-tools.sh and cargo
+#                       gate); needs tools/get-tools.sh
 #   make test-autobahn  the Autobahn WebSocket suite (Docker)
 #   make benchmark      the throughput gate against hyper (bench/run_gate.sh)
 #   make release BUMP=patch|minor|major|X.Y.Z

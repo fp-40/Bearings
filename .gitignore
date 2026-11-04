@@ -4,7 +4,6 @@
 /units/
 /fpmake
 /*.fpm
-/conformance/target/
 target/
 __pycache__/
 *.o

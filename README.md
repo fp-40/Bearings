@@ -16,7 +16,7 @@ It has no TLS and no HTTP/2. For TLS, put a reverse proxy such as NGINX in front
 
 Free Pascal 3.2.2 and Linux. Nothing else to run a program that uses the library.
 
-The tests and benchmarks also use Python 3, Rust/cargo (the conformance harness and the benchmark against hyper), and valgrind, wrk and wrk2, fetched by `tools/get-tools.sh` into `build/tools/`.
+The tests and benchmarks also use Python 3, Rust/cargo (only for the benchmark against hyper), and valgrind, wrk and wrk2, fetched by `tools/get-tools.sh` into `build/tools/`.
 
 ## Documentation
 
@@ -36,7 +36,7 @@ Build output goes under `build/` (ignored by git).
 The `Makefile` runs the tests in tiers:
 
 - `make test`: the fast tier, about two minutes, run by CI on every push: the version check ([`tools/check-version.sh`](tools/check-version.sh)), the unit suites and their heaptrc runs, a split fuzz of 100 seeds, the expected-value tests ([`tests/unit/test_golden.sh`](tests/unit/test_golden.sh)), the hot-path assembler check, then the Python tests.
-- `make test-full`: the full tier (drd, the worker stress, the echo under memcheck, the split fuzz of 2000 seeds) and conformance ([`tests/conformance.sh`](tests/conformance.sh): the wire gate). It needs `tools/get-tools.sh` and cargo.
+- `make test-full`: the full tier (drd, the worker stress, the echo under memcheck, the split fuzz of 2000 seeds) and conformance ([`tests/conformance.sh`](tests/conformance.sh): the wire gate). It needs `tools/get-tools.sh`.
 - `make test-autobahn` and `make benchmark`: the Autobahn suite and `bench/run_gate.sh`, by hand.
 - `make release BUMP=patch|minor|major|X.Y.Z`: [`tools/release.sh`](tools/release.sh) gives Bearings and pybearings the new version, runs every tier, and after a confirmation commits, tags, pushes and creates the GitHub release, which publishes pybearings to PyPI. `DRY_RUN=1` stops before the commit.
 
@@ -47,7 +47,7 @@ The scripts the tiers run:
 - [`tests/unit/run_all.sh`](tests/unit/run_all.sh): every unit suite (also under heaptrc and valgrind drd), the worker stress test, the echo test under valgrind, the split fuzz and the hot-path assembler check ([`tools/check-hot-asm.sh`](tools/check-hot-asm.sh), which fails when a routine of the request path got an implicit exception frame); `TIER=fast` or `TIER=full` runs one tier. `TARGET=aarch64 tests/unit/run_all.sh` cross-compiles the unit suites for ARM64 and runs them under qemu (`docs/design/arm64.md`).
 - [`tools/get-cross-aarch64.sh`](tools/get-cross-aarch64.sh): builds the ARM64 cross compiler into `build/tools/` (`docs/design/arm64.md`).
 - [`tools/install-package.sh`](tools/install-package.sh): installs the units as an FPC package, so that programs compile without `-Fu` (section "Installing as a package").
-- [`conformance/pascal-server/gate.sh`](conformance/pascal-server/gate.sh): the wire conformance cases (`conformance/cases`) against the Pascal conformance server; the runner, the hyper reference server and the differential fuzzer (`fuzz-diff`) are in the Cargo workspace `conformance/`.
+- [`conformance/pascal-server/gate.sh`](conformance/pascal-server/gate.sh): the wire conformance cases (`conformance/cases`) against the Pascal conformance server; the case runner is a Pascal program in `conformance/runner/` (it uses no Bearings unit).
 - [`tests/unit/test_golden.sh`](tests/unit/test_golden.sh): the parser, the request head rules and the body decoder against the expected values in `tests/golden` (part of `make test`; `UPDATE=1` rewrites them after an intended change).
 - [`conformance/autobahn/run.sh`](conformance/autobahn/run.sh): the Autobahn WebSocket test suite (Docker) against `examples/ws_echo.pas`; run by hand.
 - `bench/`:

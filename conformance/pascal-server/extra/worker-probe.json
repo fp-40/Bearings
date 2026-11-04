@@ -52,7 +52,7 @@
        "min_len": 1
       },
       {
-       "regex": "\\AHTTP/1\\.1 200 OK\r\ncontent-length: 12\r\n[^\n]*\n\r\nHello World\nHTTP/1\\.1 200 OK\r\ncontent-length: 12\r\nconnection: close\r\n[^\n]*\n\r\nHello World\n"
+       "starts_with": "HTTP/1.1 200 OK\r\ncontent-length: 12\r\ndate: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\nHello World\nHTTP/1.1 200 OK\r\ncontent-length: 12\r\nconnection: close\r\ndate: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\nHello World\n"
       }
      ]
     },
@@ -121,7 +121,7 @@
        "min_len": 1
       },
       {
-       "regex": "\\AHTTP/1\\.1 200 OK\r\ncontent-length: 12\r\n[^\n]*\n\r\nHello World\nHTTP/1\\.1 200 OK\r\ncontent-length: 12\r\nconnection: close\r\n[^\n]*\n\r\nHello World\n"
+       "starts_with": "HTTP/1.1 200 OK\r\ncontent-length: 12\r\ndate: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\nHello World\nHTTP/1.1 200 OK\r\ncontent-length: 12\r\nconnection: close\r\ndate: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\nHello World\n"
       }
      ]
     },

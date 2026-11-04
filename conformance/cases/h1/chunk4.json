@@ -158,7 +158,7 @@
           {"hex": "000004 08 00 00000000  004F0001"}
         ]},
         {"op": "read_to_eof", "allow_reset": true, "expect": [
-          {"not_regex": "(?s)\\A.{3}\\x04"},
+          {"len": 0, "comment": "nothing written for the HTTP/2 preface (hyper: no SETTINGS frame)"},
           {"end": "closed"}
         ]}
       ]

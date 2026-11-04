@@ -68,7 +68,7 @@
         {"op": "connect"},
         {"op": "write", "data": "HEAD / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
         {"op": "read_to_eof", "expect": [
-          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"},
+          {"utf8": true, "comment": "valid UTF-8 (read_to_string)"},
           {"contains": "content-length: 1024\r\n"},
           {"starts_with": "HTTP/1.1 200 OK\r\n"},
           {"ends_with": "\r\n\r\n"},
@@ -90,7 +90,7 @@
         {"op": "connect"},
         {"op": "write", "data": "HEAD / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
         {"op": "read_to_eof", "expect": [
-          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"},
+          {"utf8": true, "comment": "valid UTF-8 (read_to_string)"},
           {"contains": "content-length: 11\r\n"},
           {"starts_with": "HTTP/1.1 200 OK\r\n"},
           {"ends_with": "\r\n\r\n"},
@@ -112,7 +112,7 @@
         {"op": "connect"},
         {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
         {"op": "read_to_eof", "expect": [
-          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"},
+          {"utf8": true, "comment": "valid UTF-8 (read_to_string)"},
           {"not_contains": "transfer-encoding", "ci": true},
           {"starts_with": "HTTP/1.1 304 Not Modified\r\n"},
           {"ends_with": "\r\n\r\n"},
@@ -154,7 +154,7 @@
         {"op": "connect"},
         {"op": "write", "data": "GET / HTTP/1.0\r\nHost: example.domain\r\nConnection: keep-alive\r\n\r\n"},
         {"op": "read_until", "until": {"ends_with": "foo bar baz"}, "expect": [
-          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (s() unwraps from_utf8)"},
+          {"utf8": true, "comment": "valid UTF-8 (s() unwraps from_utf8)"},
           {"contains": "connection: keep-alive\r\n"}
         ]},
         {"op": "write", "data": "GET /quux HTTP/1.0\r\nHost: example.domain\r\n\r\n"},
@@ -176,7 +176,7 @@
         {"op": "write", "data": "GET / HTTP/1.0\r\nHost: example.domain\r\nConnection: keep-alive\r\n\r\n"},
         {"op": "read_to_eof", "expect": [
           {"ends_with": "foo bar baz"},
-          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (s() unwraps from_utf8)"},
+          {"utf8": true, "comment": "valid UTF-8 (s() unwraps from_utf8)"},
           {"not_contains": "connection: keep-alive\r\n", "ci": true}
         ]}
       ]
@@ -215,7 +215,7 @@
         {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\nConnection: keep-alive\r\n\r\n"},
         {"op": "read_to_eof", "expect": [
           {"ends_with": "foo bar baz"},
-          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (s() unwraps from_utf8)"},
+          {"utf8": true, "comment": "valid UTF-8 (s() unwraps from_utf8)"},
           {"contains": "connection: close\r\n"}
         ]}
       ]
@@ -231,7 +231,7 @@
         {"op": "read_exact", "len": 25, "expect": [{"equals": "HTTP/1.1 100 Continue\r\n\r\n"}]},
         {"op": "write", "data": "hello"},
         {"op": "read_to_eof", "expect": [
-          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"}
+          {"utf8": true, "comment": "valid UTF-8 (read_to_string)"}
         ]}
       ],
       "expect_events": [
@@ -249,7 +249,7 @@
         {"op": "read_exact", "len": 25, "expect": [{"equals": "HTTP/1.1 100 Continue\r\n\r\n"}]},
         {"op": "write", "data": "hello"},
         {"op": "read_to_eof", "expect": [
-          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"}
+          {"utf8": true, "comment": "valid UTF-8 (read_to_string)"}
         ]}
       ],
       "expect_events": [
@@ -267,7 +267,7 @@
         {"op": "write", "data": "hello"},
         {"op": "read_exact", "len": 17, "expect": [{"equals": "HTTP/1.0 200 OK\r\n"}]},
         {"op": "read_to_eof", "expect": [
-          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"}
+          {"utf8": true, "comment": "valid UTF-8 (read_to_string)"}
         ]}
       ],
       "expect_events": [
@@ -283,7 +283,7 @@
         {"op": "connect"},
         {"op": "write", "data": "POST /foo HTTP/1.1\r\nHost: example.domain\r\nExpect: 100-continue\r\nConnection: Close\r\n\r\n"},
         {"op": "read_to_eof", "expect": [
-          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"},
+          {"utf8": true, "comment": "valid UTF-8 (read_to_string)"},
           {"starts_with": "HTTP/1.1 200 OK\r\n"}
         ]}
       ]
@@ -302,7 +302,7 @@
         {"op": "connect"},
         {"op": "write", "data": "POST /foo HTTP/1.1\r\nHost: example.domain\r\nExpect: 100-continue\r\nContent-Length: 100\r\nConnection: Close\r\n\r\n"},
         {"op": "read_to_eof", "expect": [
-          {"regex": "(?su)\\A.*\\z", "comment": "valid UTF-8 (read_to_string)"},
+          {"utf8": true, "comment": "valid UTF-8 (read_to_string)"},
           {"starts_with": "HTTP/1.1 400 Bad Request\r\n"}
         ]}
       ],
@@ -346,7 +346,7 @@
         {"op": "write", "data": "GET / HTTP/1.1\r\nHost: example.domain\r\n\r\nGET / HTTP/1.1\r\nHost: example.domain\r\nConnection: close\r\n\r\n"},
         {"op": "read_once", "max": 4096, "expect": [
           {"min_len": 1},
-          {"regex": "\\AHTTP/1\\.1 200 OK\r\ncontent-length: 12\r\n[^\n]*\n\r\nHello World\nHTTP/1\\.1 200 OK\r\ncontent-length: 12\r\nconnection: close\r\n[^\n]*\n\r\nHello World\n"}
+          {"starts_with": "HTTP/1.1 200 OK\r\ncontent-length: 12\r\ndate: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\nHello World\nHTTP/1.1 200 OK\r\ncontent-length: 12\r\nconnection: close\r\ndate: Sun, 06 Nov 1994 08:49:37 GMT\r\n\r\nHello World\n", "comment": "both responses in one read (the date is normalized)"}
         ]},
         {"op": "read_once", "max": 4096, "expect": [{"len": 0}, {"end": "eof"}]}
       ]
