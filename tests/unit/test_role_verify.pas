@@ -31,6 +31,7 @@ type
     procedure Extra_incremental_parse_split_at_every_byte;
     procedure Extra_is_complete_fast_exhaustive_model;
     procedure Extra_content_length_values;
+    procedure Extra_host_required_once;
     procedure Extra_content_length_and_transfer_encoding_order;
     procedure Extra_transfer_encoding_values;
     procedure Extra_connection_expect_upgrade_values;
@@ -193,15 +194,15 @@ begin
   Add('GET / HTTP/1.1'#10'Host: x'#10#10, 0);
   Add('GET / HTTP/1.1'#13#10'Host: x'#10#13#10, 0);
   Add('GET / HTTP/1.1'#13#10'Host: x'#13#10#10, 0);
-  Add(#13#10#13#10'GET / HTTP/1.1'#13#10#13#10, 0);
+  Add(#13#10#13#10'GET / HTTP/1.1'#13#10'Host: x'#13#10#13#10, 0);
   Add('POST /a/b?c=d#e HTTP/1.0'#13#10'Content-Length: 5'#13#10'Connection: keep-alive'#13#10#13#10'hello', 5);
   Add('CONNECT example.com:443 HTTP/1.1'#13#10'Host: example.com:443'#13#10#13#10, 0);
-  Add('OPTIONS * HTTP/1.1'#13#10#13#10, 0);
+  Add('OPTIONS * HTTP/1.1'#13#10'Host: x'#13#10#13#10, 0);
   Add('PUT http://u:p@[::1]:8080/p?q HTTP/1.1'#13#10'Transfer-Encoding: gzip, chunked'#13#10 +
-    'Expect: 100-continue'#13#10#13#10'5'#13#10'hello'#13#10'0'#13#10#13#10, 15);
+    'Expect: 100-continue'#13#10'Host: x'#13#10#13#10'5'#13#10'hello'#13#10'0'#13#10#13#10, 15);
   Add('M-SEARCH * HTTP/1.1'#13#10'X:'#13#10'Y: '#9' a'#9'b '#9#13#10'Upgrade: websocket'#13#10 +
-    'Connection: Upgrade'#13#10#13#10, 0);
-  Add('GET /caf'#$C3#$A9' HTTP/1.1'#13#10'x-a: '#$C3#$A9#$80#13#10#13#10, 0);
+    'Connection: Upgrade'#13#10'Host: x'#13#10#13#10, 0);
+  Add('GET /caf'#$C3#$A9' HTTP/1.1'#13#10'x-a: '#$C3#$A9#$80#13#10'Host: x'#13#10#13#10, 0);
   Result := A;
 end;
 
@@ -376,9 +377,16 @@ procedure TTestRoleVerify.Extra_content_length_values;
 var
   H: THttpHeaders;
 
+  { the tables give the head length without the "Host: x" CRLF line (9
+    bytes) that every request carries }
   procedure C(const V: RawByteString; const X: TExpect);
+  var
+    Y: TExpect;
   begin
-    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Content-Length: ' + V + #13#10#13#10, X, H);
+    Y := X;
+    if Y.Status = spsComplete then
+      Inc(Y.HeadLen, 9);
+    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Content-Length: ' + V + #13#10 + 'Host: x'#13#10#13#10, Y, H);
   end;
 
 begin
@@ -410,6 +418,53 @@ begin
   end;
 end;
 
+{ RFC 9112 section 3.2 (not in hyper): an HTTP/1.1 request needs exactly
+  one Host line; a request of any version may not have two. }
+procedure TTestRoleVerify.Extra_host_required_once;
+var
+  H: THttpHeaders;
+  Msg: TParsedRequestHead;
+begin
+  H := THttpHeaders.Create;
+  try
+    { missing in HTTP/1.1, also with an absolute-form target or CONNECT }
+    CheckParse(Self, 'GET / HTTP/1.1'#13#10#13#10, Err(h1peHeaderHost), H);
+    CheckParse(Self, 'GET / HTTP/1.1'#13#10'X: y'#13#10#13#10, Err(h1peHeaderHost), H);
+    CheckParse(Self, 'GET http://h/ HTTP/1.1'#13#10#13#10, Err(h1peHeaderHost), H);
+    CheckParse(Self, 'CONNECT h:1 HTTP/1.1'#13#10#13#10, Err(h1peHeaderHost), H);
+    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Content-Length: 5'#13#10#13#10'hello', Err(h1peHeaderHost), H);
+    { a name that only looks like Host }
+    CheckParse(Self, 'GET / HTTP/1.1'#13#10'Hosts: x'#13#10#13#10, Err(h1peHeaderHost), H);
+    CheckParse(Self, 'GET / HTTP/1.1'#13#10'X-Host: x'#13#10#13#10, Err(h1peHeaderHost), H);
+    { HTTP/1.0 had no Host }
+    CheckParse(Self, 'GET / HTTP/1.0'#13#10#13#10, Ok(18, 0), H);
+    { one line, any case, an empty value (RFC 9112 3.2 allows it when the
+      target has no authority) }
+    CheckParse(Self, 'GET / HTTP/1.1'#13#10'Host: x'#13#10#13#10, Ok(27, 0), H);
+    CheckParse(Self, 'GET / HTTP/1.1'#13#10'hOsT: x'#13#10#13#10, Ok(27, 0), H);
+    CheckParse(Self, 'GET / HTTP/1.1'#13#10'Host:'#13#10#13#10, Ok(25, 0), H);
+    AssertTrue(ParseG('GET / HTTP/1.1'#13#10'A: b'#13#10'Host: h:80'#13#10'C: d'#13#10#13#10, H, Msg) = spsComplete);
+    AssertEquals(3, H.Count);
+    AssertEquals('h:80', H.GetValue('host'));
+    { two lines: an error in every version, whatever the values }
+    CheckParse(Self, 'GET / HTTP/1.1'#13#10'Host: a'#13#10'Host: b'#13#10#13#10, Err(h1peHeaderHost), H);
+    CheckParse(Self, 'GET / HTTP/1.1'#13#10'Host: a'#13#10'host: a'#13#10#13#10, Err(h1peHeaderHost), H);
+    CheckParse(Self, 'GET / HTTP/1.1'#13#10'Host: a'#13#10'X: y'#13#10'HOST: b'#13#10#13#10, Err(h1peHeaderHost), H);
+    CheckParse(Self, 'GET / HTTP/1.0'#13#10'Host: a'#13#10'Host: b'#13#10#13#10, Err(h1peHeaderHost), H);
+    { the error leaves no partial header list }
+    AssertEquals(0, H.Count);
+    { a list in one line is one line }
+    CheckParse(Self, 'GET / HTTP/1.1'#13#10'Host: a, b'#13#10#13#10, Ok(30, 0), H);
+    AssertEquals(400, ServerErrorStatus(h1peHeaderHost));
+    AssertEquals('missing or duplicate host header', H1ParseErrorDescription(h1peHeaderHost));
+    { the other framing errors keep their own error }
+    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Content-Length: x'#13#10#13#10, Err(h1peHeaderContentLengthInvalid), H);
+    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Transfer-Encoding: gzip'#13#10#13#10, Err(h1peHeaderTransferEncodingInvalid), H);
+  finally
+    H.Free;
+  end;
+end;
+
 procedure TTestRoleVerify.Extra_content_length_and_transfer_encoding_order;
 var
   H: THttpHeaders;
@@ -419,28 +474,28 @@ begin
   try
     { a Content-Length after Transfer-Encoding is skipped before it is
       parsed, so even an invalid one is accepted (and not stored) }
-    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Transfer-Encoding: chunked'#13#10'Content-Length: +5'#13#10#13#10,
-      Ok(67, DECODED_LENGTH_CHUNKED, 0), H);
-    AssertEquals(1, H.Count);
+    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Transfer-Encoding: chunked'#13#10'Content-Length: +5'#13#10'Host: x'#13#10#13#10,
+      Ok(76, DECODED_LENGTH_CHUNKED, 0), H);
+    AssertEquals(2, H.Count);   { Transfer-Encoding and Host }
     AssertFalse(H.Contains(HN_CONTENT_LENGTH));
-    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Transfer-Encoding: chunked'#13#10'Content-Length: 18446744073709551616'#13#10#13#10,
-      Ok(85, DECODED_LENGTH_CHUNKED, 0), H);
+    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Transfer-Encoding: chunked'#13#10'Content-Length: 18446744073709551616'#13#10'Host: x'#13#10#13#10,
+      Ok(94, DECODED_LENGTH_CHUNKED, 0), H);
     { ... but before it, it is parsed first }
-    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Content-Length: +5'#13#10'Transfer-Encoding: chunked'#13#10#13#10,
+    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Content-Length: +5'#13#10'Transfer-Encoding: chunked'#13#10'Host: x'#13#10#13#10,
       Err(h1peHeaderContentLengthInvalid), H);
-    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Content-Length: 18446744073709551616'#13#10'Transfer-Encoding: chunked'#13#10#13#10,
+    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Content-Length: 18446744073709551616'#13#10'Transfer-Encoding: chunked'#13#10'Host: x'#13#10#13#10,
       Err(h1peHeaderContentLengthInvalid), H);
     { equal duplicates are stored once, then removed by TE }
     AssertTrue(ParseG('POST / HTTP/1.1'#13#10'Content-Length: 5'#13#10'content-length: 5'#13#10 +
-      'X: y'#13#10'Transfer-Encoding: chunked'#13#10#13#10, H, Msg) = spsComplete);
+      'X: y'#13#10'Transfer-Encoding: chunked'#13#10'Host: x'#13#10#13#10, H, Msg) = spsComplete);
     AssertEquals(DECODED_LENGTH_CHUNKED, Msg.Decode);
     AssertFalse(Msg.KeepAlive);
-    AssertEquals(2, H.Count);
+    AssertEquals(3, H.Count);   { X, Transfer-Encoding and Host }
     AssertEquals('y', H.GetValue('x'));
     AssertEquals('chunked', H.GetValue('transfer-encoding'));
     { TE, CL, TE: both TE lines kept, CL dropped }
     AssertTrue(ParseG('POST / HTTP/1.1'#13#10'Content-Length: 5'#13#10'Transfer-Encoding: gzip'#13#10 +
-      'Transfer-Encoding: chunked'#13#10'Content-Length: 7'#13#10#13#10, H, Msg) = spsComplete);
+      'Transfer-Encoding: chunked'#13#10'Content-Length: 7'#13#10'Host: x'#13#10#13#10, H, Msg) = spsComplete);
     AssertEquals(DECODED_LENGTH_CHUNKED, Msg.Decode);
     AssertEquals(2, H.CountOf('transfer-encoding'));
     AssertEquals(0, H.CountOf('content-length'));
@@ -458,9 +513,16 @@ procedure TTestRoleVerify.Extra_transfer_encoding_values;
 var
   H: THttpHeaders;
 
+  { the tables give the head length without the "Host: x" CRLF line (9
+    bytes) that every request carries }
   procedure C(const V: RawByteString; const X: TExpect);
+  var
+    Y: TExpect;
   begin
-    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Transfer-Encoding: ' + V + #13#10#13#10, X, H);
+    Y := X;
+    if Y.Status = spsComplete then
+      Inc(Y.HeadLen, 9);
+    CheckParse(Self, 'POST / HTTP/1.1'#13#10'Transfer-Encoding: ' + V + #13#10 + 'Host: x'#13#10#13#10, Y, H);
   end;
 
 begin
@@ -494,13 +556,13 @@ var
 
   function KA(const Ver, V: RawByteString): Boolean;
   begin
-    AssertTrue(ParseG('GET / HTTP/' + Ver + #13#10'Connection: ' + V + #13#10#13#10, H, Msg) = spsComplete);
+    AssertTrue(ParseG('GET / HTTP/' + Ver + #13#10'Connection: ' + V + #13#10'Host: x'#13#10#13#10, H, Msg) = spsComplete);
     Result := Msg.KeepAlive;
   end;
 
   function EC(const Ver, V: RawByteString): Boolean;
   begin
-    AssertTrue(ParseG('POST / HTTP/' + Ver + #13#10'Expect: ' + V + #13#10#13#10, H, Msg) = spsComplete);
+    AssertTrue(ParseG('POST / HTTP/' + Ver + #13#10'Expect: ' + V + #13#10'Host: x'#13#10#13#10, H, Msg) = spsComplete);
     Result := Msg.ExpectContinue;
   end;
 
@@ -527,7 +589,7 @@ begin
       is_http_11 }
     AssertTrue(ParseG('CONNECT h:1 HTTP/1.0'#13#10'Upgrade: x'#13#10#13#10, H, Msg) = spsComplete);
     AssertFalse(Msg.WantsUpgrade);
-    AssertTrue(ParseG('CONNECT h:1 HTTP/1.1'#13#10'Upgrade: x'#13#10#13#10, H, Msg) = spsComplete);
+    AssertTrue(ParseG('CONNECT h:1 HTTP/1.1'#13#10'Upgrade: x'#13#10'Host: x'#13#10#13#10, H, Msg) = spsComplete);
     AssertTrue(Msg.WantsUpgrade);
   finally
     H.Free;
@@ -548,23 +610,23 @@ begin
   try
     C('GET / HTTP/1.1'#13, Partial);
     C('GET / HTTP/1.1'#13'X', Err(h1peHeaderToken));
-    C('GET / HTTP/1.1'#13#13#10#13#10, Err(h1peHeaderToken));
-    C('GET / HTTP/1.1'#10#13#10, Ok(17, 0));
-    C('GET / HTTP/1.1'#13#10'a: b'#13'c'#13#10#13#10, Err(h1peHeaderToken));
-    C('GET / HTTP/1.1'#13#10'a: b'#13#13#10#13#10, Err(h1peHeaderToken));
-    C('GET / HTTP/1.1'#13#10'a: b'#10#10, Ok(22, 0));
-    C('GET / HTTP/1.1'#13#10#13'a: b'#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#13#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#10'Host: x'#10#13#10, Ok(25, 0));
+    C('GET / HTTP/1.1'#13#10'a: b'#13'c'#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#13#10'a: b'#13#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#13#10'a: b'#10'Host: x'#10#10, Ok(30, 0));
+    C('GET / HTTP/1.1'#13#10#13'a: b'#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
     C('GET / HTTP/1.1'#13#10'a: b'#13#10#13#13#10, Err(h1peHeaderToken));
     C('GET / HTTP/1.1'#13#10'a: b'#13#10#13'x', Err(h1peHeaderToken));
-    C('GET / HTTP/1.1'#13#10' a: b'#13#10#13#10, Err(h1peHeaderToken));
-    C('GET / HTTP/1.1'#13#10#9'a: b'#13#10#13#10, Err(h1peHeaderToken));
-    C('GET / HTTP/1.1'#13#10'a: b'#13#10' c'#13#10#13#10, Err(h1peHeaderToken));
-    C('GET / HTTP/1.1'#13#10'a:b'#13#10#13#10, Ok(23, 0));
-    C('GET / HTTP/1.1'#13#10'a :b'#13#10#13#10, Err(h1peHeaderToken));
-    C('GET / HTTP/1.1'#13#10':b'#13#10#13#10, Err(h1peHeaderToken));
-    C('GET / HTTP/1.1'#13#10'a'#13#10#13#10, Err(h1peHeaderToken));
-    C('GET / HTTP/1.1'#13#10'a: '#0#13#10#13#10, Err(h1peHeaderToken));
-    C('GET / HTTP/1.1'#13#10'a: '#127#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#13#10' a: b'#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#13#10#9'a: b'#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#13#10'a: b'#13#10' c'#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#13#10'a:b'#13#10'Host: x'#13#10#13#10, Ok(32, 0));
+    C('GET / HTTP/1.1'#13#10'a :b'#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#13#10':b'#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#13#10'a'#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#13#10'a: '#0#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#13#10'a: '#127#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
     C('GET'#9'/ HTTP/1.1'#13#10#13#10, Err(h1peMethod));
     C('GET /'#9'HTTP/1.1'#13#10#13#10, Err(h1peUri));
     C(' GET / HTTP/1.1'#13#10#13#10, Err(h1peMethod));
@@ -575,9 +637,9 @@ begin
     { the HTTP/2 preface is a Version error here; VersionH2 is decided by
       the connection, not by Server::parse }
     C('PRI * HTTP/2.0'#13#10#13#10'SM'#13#10#13#10, Err(h1peVersion));
-    C('GET / HTTP/1.1'#13#10#13#10#13#10, Ok(18, 0));
-    C(#10#10'GET / HTTP/1.1'#10#10, Ok(18, 0));
-    C(#13#13#10'GET / HTTP/1.1'#13#10#13#10, Err(h1peHeaderToken));
+    C('GET / HTTP/1.1'#13#10'Host: x'#13#10#13#10#13#10, Ok(27, 0));
+    C(#10#10'GET / HTTP/1.1'#10'Host: x'#10#10, Ok(26, 0));
+    C(#13#13#10'GET / HTTP/1.1'#13#10'Host: x'#13#10#13#10, Err(h1peHeaderToken));
   finally
     H.Free;
   end;
@@ -596,17 +658,17 @@ begin
     CheckParse(Self, #$FF' / HTTP/1.1'#13#10#13#10, Err(h1peMethod), H);
     { http::Method: case-sensitive standard methods, any other token is an
       extension method (inline up to 15 bytes, allocated beyond: same result) }
-    AssertTrue(ParseG('get / HTTP/1.1'#13#10#13#10, H, Msg) = spsComplete);
+    AssertTrue(ParseG('get / HTTP/1.1'#13#10'Host: x'#13#10#13#10, H, Msg) = spsComplete);
     AssertTrue(Msg.Method = hmExtension);
-    S := StringOfChar('A', 16) + ' / HTTP/1.1'#13#10#13#10;
+    S := StringOfChar('A', 16) + ' / HTTP/1.1'#13#10'Host: x'#13#10#13#10;
     AssertTrue(ParseG(S, H, Msg) = spsComplete);
     AssertTrue(Msg.Method = hmExtension);
     AssertEquals(16, Msg.MethodSlice.Len);
-    S := 'M-SEARCH * HTTP/1.1'#13#10#13#10;
+    S := 'M-SEARCH * HTTP/1.1'#13#10'Host: x'#13#10#13#10;
     AssertTrue(ParseG(S, H, Msg) = spsComplete);
     AssertTrue(Msg.Method = hmExtension);
     AssertEquals('M-SEARCH', SliceStr(S, Msg.MethodSlice));
-    AssertTrue(ParseG('DELETE / HTTP/1.1'#13#10#13#10, H, Msg) = spsComplete);
+    AssertTrue(ParseG('DELETE / HTTP/1.1'#13#10'Host: x'#13#10#13#10, H, Msg) = spsComplete);
     AssertTrue(Msg.Method = hmDelete);
   finally
     H.Free;
@@ -622,10 +684,19 @@ var
   var
     I: Integer;
   begin
-    Result := 'GET / HTTP/1.1'#13#10;
+    { HTTP/1.0 without chunked, so that no Host line is needed (N = 0
+      must be valid); HTTP/1.1 with chunked (Transfer-Encoding is an
+      error in 1.0), whose second line is the Host line. N = 1 with
+      chunked is only used where the count is already over the limit. }
+    if Chunked then
+      Result := 'GET / HTTP/1.1'#13#10
+    else
+      Result := 'GET / HTTP/1.0'#13#10;
     for I := 0 to N - 1 do
       if (I = 0) and Chunked then
         Result := Result + 'transfer-encoding: chunked'#13#10
+      else if (I = 1) and Chunked then
+        Result := Result + 'host: v'#13#10
       else
         Result := Result + 'k' + IntToStr(I) + ': v'#13#10;
     Result := Result + #13#10;
@@ -687,15 +758,15 @@ begin
   H := THttpHeaders.Create;
   try
     { request-target: MAX_URI_LEN = 65534 (role.rs), checked before http::Uri }
-    S := 'GET /' + StringOfChar('a', 65533) + ' HTTP/1.1'#13#10#13#10;
+    S := 'GET /' + StringOfChar('a', 65533) + ' HTTP/1.1'#13#10'Host: x'#13#10#13#10;
     CheckParse(Self, S, Ok(Length(S), 0), H);
     CheckParse(Self, 'GET /' + StringOfChar('a', 65534) + ' HTTP/1.1'#13#10#13#10, Err(h1peUriTooLong), H);
-    S := 'GET http://h/' + StringOfChar('a', 65525) + ' HTTP/1.1'#13#10#13#10;
+    S := 'GET http://h/' + StringOfChar('a', 65525) + ' HTTP/1.1'#13#10'Host: h'#13#10#13#10;
     CheckParse(Self, S, Ok(Length(S), 0), H);
     CheckParse(Self, 'GET http://h/' + StringOfChar('a', 65526) + ' HTTP/1.1'#13#10#13#10, Err(h1peUriTooLong), H);
     AssertEquals(414, ServerErrorStatus(h1peUriTooLong));
     { scheme: MAX_SCHEME_LEN = 64 (http), SchemeTooLong -> Parse::Uri }
-    S := 'GET ' + StringOfChar('a', 64) + '://h/p HTTP/1.1'#13#10#13#10;
+    S := 'GET ' + StringOfChar('a', 64) + '://h/p HTTP/1.1'#13#10'Host: h'#13#10#13#10;
     AssertTrue(ParseG(S, H, Msg) = spsComplete);
     AssertTrue(Msg.Uri.Scheme = usOther);
     AssertEquals(64, Msg.Uri.SchemeLen);
@@ -705,13 +776,13 @@ begin
     AssertTrue(Msg.UriError = ueSchemeTooLong);
     { header name: >= 64 KiB -> TooLarge (record_header_indices); a long
       value has no limit without max_header_size }
-    S := 'GET / HTTP/1.1'#13#10 + StringOfChar('n', 65535) + ': v'#13#10#13#10;
+    S := 'GET / HTTP/1.1'#13#10 + StringOfChar('n', 65535) + ': v'#13#10'Host: x'#13#10#13#10;
     CheckParse(Self, S, Ok(Length(S), 0), H);
-    CheckParse(Self, 'GET / HTTP/1.1'#13#10 + StringOfChar('n', 65536) + ': v'#13#10#13#10, Err(h1peTooLarge), H);
-    S := 'GET / HTTP/1.1'#13#10'x: ' + StringOfChar('v', 70000) + #13#10#13#10;
+    CheckParse(Self, 'GET / HTTP/1.1'#13#10 + StringOfChar('n', 65536) + ': v'#13#10'Host: x'#13#10#13#10, Err(h1peTooLarge), H);
+    S := 'GET / HTTP/1.1'#13#10'x: ' + StringOfChar('v', 70000) + #13#10 + 'Host: x'#13#10#13#10;
     CheckParse(Self, S, Ok(Length(S), 0), H);
     { max_header_size is checked first }
-    AssertTrue(ParseG('GET / HTTP/1.1'#13#10 + StringOfChar('n', 65536) + ': v'#13#10#13#10, H, Msg, -1, 100) = spsError);
+    AssertTrue(ParseG('GET / HTTP/1.1'#13#10 + StringOfChar('n', 65536) + ': v'#13#10'Host: x'#13#10#13#10, H, Msg, -1, 100) = spsError);
     AssertTrue(Msg.Error = h1peTooLarge);
     AssertTrue(ParseG('GET /' + StringOfChar('a', 65534) + ' HTTP/1.1'#13#10#13#10, H, Msg, -1, 100) = spsError);
     AssertTrue(Msg.Error = h1peTooLarge);

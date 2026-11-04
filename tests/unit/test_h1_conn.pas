@@ -301,7 +301,7 @@ end;
 procedure TTestConnRs.Conn_reads_request_head;
 begin
   { conn.rs:1342-1355 }
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue('ready some', ReadHead = poSome);
   AssertTrue('GET', FMsg.Method = hmGet);
@@ -350,7 +350,7 @@ var
   S: RawByteString;
 begin
   { conn.rs:1428-1452; .wait(1s) is the pending read after the bytes }
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 5' + CRLF + CRLF + '12345').ReadPending;
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 5' + CRLF + 'Host: x' + CRLF + CRLF + '12345').ReadPending;
   InitConn;
   AssertTrue('request', ReadHead = poSome);
   AssertEquals('DecodedLength::new(5)', 5, Int64(FMsg.Decode));
@@ -672,7 +672,7 @@ end;
 procedure TTestConnState.Event_request_head;
 begin
   { conn.rs:299-334 from (Init, Init, Busy) }
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   AssertTrue('no body: KeepAlive', FConn.State.Reading = rdKeepAlive);
@@ -685,7 +685,7 @@ begin
 
   FMock.Free;
   FMock := TMockTransport.Create;
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 3' + CRLF + 'Connection: close' + CRLF + CRLF);
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 3' + CRLF + 'Connection: close' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   AssertTrue('body', FConn.State.Reading = rdBody);
@@ -705,7 +705,7 @@ begin
 
   FMock.Free;
   FMock := TMockTransport.Create;
-  FMock.Read('GET / HTTP/1.1' + CRLF + 'Upgrade: websocket' + CRLF + 'TE: trailers' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Upgrade: websocket' + CRLF + 'TE: trailers' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   AssertTrue('Wants::UPGRADE', FWants = [wantUpgrade]);
@@ -716,7 +716,7 @@ procedure TTestConnState.Event_body_chunk_and_end;
 var
   S: RawByteString;
 begin
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 6' + CRLF + CRLF + 'abc').ReadPending.Read('def');
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 6' + CRLF + 'Host: x' + CRLF + CRLF + 'abc').ReadPending.Read('def');
   InitConn;
   AssertTrue(ReadHead = poSome);
   AssertTrue('chunk', ReadBodyStr(S) = poSome);
@@ -732,7 +732,7 @@ end;
 procedure TTestConnState.Event_response_head;
 begin
   { conn.rs:602-612: Body(enc) unless eof; eof: Closed if is_last else KeepAlive }
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   WriteHeadStatus(200, blkKnown, 5);
@@ -743,7 +743,7 @@ begin
 
   FMock.Free;
   FMock := TMockTransport.Create;
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   WriteHeadStatus(204, blkNone, 0);
@@ -753,7 +753,7 @@ begin
 
   FMock.Free;
   FMock := TMockTransport.Create;
-  FMock.Read('GET / HTTP/1.1' + CRLF + 'Connection: close' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Connection: close' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   WriteHeadStatus(200, blkNone, 0);
@@ -763,7 +763,7 @@ begin
 
   FMock.Free;
   FMock := TMockTransport.Create;
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   WriteHeadStatus(200, blkUnknown, 0);
@@ -775,7 +775,7 @@ procedure TTestConnState.Event_body_frames_and_end;
 const
   A: RawByteString = 'hello';
 begin
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   WriteHeadStatus(200, blkKnown, 10);
@@ -792,7 +792,7 @@ var
 begin
   { (KeepAlive, KeepAlive, Busy) --flush--> try_keep_alive -> idle -> (Init, Init, Idle);
     maybe_notify then reads (empty buffer, not blocked): Pending -> no notify }
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   D := DateStr;
@@ -811,7 +811,7 @@ procedure TTestConnState.Event_eof_idle_and_busy;
 begin
   { EOF found by maybe_notify while idle: close(); found by the head read
     while busy: Ready(None) (server_accepts_eof_while_busy) }
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF).ReadEof;
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF).ReadEof;
   InitConn;
   AssertTrue(ReadHead = poSome);
   FConn.State.Writing := wrKeepAlive;
@@ -825,7 +825,7 @@ begin
   { GracefulShutdown = disable_keep_alive (1.11): an idle connection closes,
     a busy one finishes its exchange and then closes (try_keep_alive with
     KA Disabled -> close) }
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   FConn.DisableKeepAlive;
@@ -881,7 +881,7 @@ var
   S: RawByteString;
 begin
   { conn.rs:313-322 and 400-412 }
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Expect: 100-continue' + CRLF + 'Content-Length: 5' + CRLF + CRLF)
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Expect: 100-continue' + CRLF + 'Content-Length: 5' + CRLF + 'Host: x' + CRLF + CRLF)
     .Write('HTTP/1.1 100 Continue' + CRLF + CRLF).Read('hello');
   InitConn;
   AssertTrue(ReadHead = poSome);
@@ -904,7 +904,7 @@ var
   D: RawByteString;
 begin
   { "Write the 100 Continue if not already responded" }
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Expect: 100-continue' + CRLF + 'Content-Length: 2' + CRLF + CRLF + 'ok');
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Expect: 100-continue' + CRLF + 'Content-Length: 2' + CRLF + 'Host: x' + CRLF + CRLF + 'ok');
   InitConn;
   AssertTrue(ReadHead = poSome);
   D := DateStr;
@@ -928,7 +928,7 @@ end;
 
 procedure TTestConnBehavior.Expect_continue_none_for_empty_body;
 begin
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Expect: 100-continue' + CRLF + 'Content-Length: 0' + CRLF + CRLF);
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Expect: 100-continue' + CRLF + 'Content-Length: 0' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   AssertTrue('ignoring expect-continue since body is empty', FConn.State.Reading = rdKeepAlive);
@@ -939,7 +939,7 @@ procedure TTestConnBehavior.Expect_continue_drain_skips_100;
 begin
   { conn.rs:876-892: Continue -> Body without the 100, one read attempt;
     a tiny body that is already there drains (expect_continue_waits_for_body_poll) }
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Expect: 100-continue' + CRLF + 'Content-Length: 2' + CRLF + CRLF + 'hi');
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Expect: 100-continue' + CRLF + 'Content-Length: 2' + CRLF + 'Host: x' + CRLF + CRLF + 'hi');
   InitConn;
   AssertTrue(ReadHead = poSome);
   FConn.PollDrainOrCloseRead;
@@ -949,7 +949,7 @@ end;
 
 procedure TTestConnBehavior.Drain_closes_when_body_not_buffered;
 begin
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 10' + CRLF + CRLF + 'abc').ReadPending;
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 10' + CRLF + 'Host: x' + CRLF + CRLF + 'abc').ReadPending;
   InitConn;
   AssertTrue(ReadHead = poSome);
   FConn.PollDrainOrCloseRead;
@@ -962,7 +962,7 @@ var
   H, T: THttpHeaders;
 begin
   { conn.rs:757-760: no TE: trailers -> nothing written, still Body }
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   H := THttpHeaders.Create;
@@ -987,7 +987,7 @@ var
   D: RawByteString;
 begin
   { allowed + declared: "0\r\n" + fields grouped by name (T1) + "\r\n", KeepAlive }
-  FMock.Read('GET / HTTP/1.1' + CRLF + 'TE: trailers' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'TE: trailers' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   H := THttpHeaders.Create;
@@ -1020,7 +1020,7 @@ var
 begin
   { allowed but nothing declared (Chunked(None)): encode_trailers -> None,
     the state stays Body, end_body then writes 0\r\n\r\n (5.2 T3) }
-  FMock.Read('GET / HTTP/1.1' + CRLF + 'TE: trailers' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'TE: trailers' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   H := THttpHeaders.Create;
@@ -1043,7 +1043,7 @@ var
   H, T: THttpHeaders;
 begin
   { allowed + declared + keep-alive off (is_last): Closed }
-  FMock.Read('GET / HTTP/1.1' + CRLF + 'TE: trailers' + CRLF + 'Connection: close' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'TE: trailers' + CRLF + 'Connection: close' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   H := THttpHeaders.Create;
@@ -1067,7 +1067,7 @@ var
 begin
   { 2.8: close_read, 400 head (connection: close, content-length: 0, date),
     error stored, Pending; then the shutdown; take_error gives the parse error }
-  FMock.Read('GET / HTTP/1.1' + CRLF + 'Bad Header' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Bad Header' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   FConn.SetHeaderReadTimeout(-1);
   D := DateStr;
@@ -1133,7 +1133,7 @@ procedure TTestConnBehavior.Informational_status_writes_500;
 var
   D: RawByteString;
 begin
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   D := DateStr;
@@ -1154,7 +1154,7 @@ var
 begin
   { role.rs: an invalid content-length from the service: new_user_header,
     nothing written, Closed }
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   H := THttpHeaders.Create;
@@ -1178,7 +1178,7 @@ var
   Raised: Boolean;
   V: THttpVersion;
 begin
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   for V in [hv09, hv3] do
@@ -1210,7 +1210,7 @@ procedure TTestConnBehavior.End_body_not_eof_is_aborted;
 const
   A: RawByteString = 'abc';
 begin
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   WriteHeadStatus(200, blkKnown, 10);
@@ -1298,7 +1298,7 @@ var
 begin
   { conn.rs:713-724: an existing Connection header without close gets
     "close" appended (grouped on the wire) }
-  FMock.Read('GET / HTTP/1.1' + CRLF + 'Connection: close' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Connection: close' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   H := THttpHeaders.Create;
@@ -1324,7 +1324,7 @@ begin
     { a close value already present: nothing appended }
     FMock.Free;
     FMock := TMockTransport.Create;
-    FMock.Read('GET / HTTP/1.1' + CRLF + 'Connection: close' + CRLF + CRLF);
+    FMock.Read('GET / HTTP/1.1' + CRLF + 'Connection: close' + CRLF + 'Host: x' + CRLF + CRLF);
     InitConn;
     AssertTrue(ReadHead = poSome);
     H.Clear;
@@ -1388,7 +1388,7 @@ begin
   { 5. data: notify_read; 6. bytes already buffered: notify without a read }
   FMock.Free;
   FMock := TMockTransport.Create;
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   FConn.State.Idle;
   FConn.MaybeNotify;
@@ -1410,7 +1410,7 @@ end;
 procedure TTestConnBehavior.Mid_message_detect_eof;
 begin
   { conn.rs:493-510 }
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF).ReadEof;
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF).ReadEof;
   InitConn;
   AssertTrue(ReadHead = poSome);
   AssertTrue('mid message', FConn.IsMidMessage);
@@ -1427,7 +1427,7 @@ begin
 
   FMock.Free;
   FMock := TMockTransport.Create;
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF).ReadPending.Read('GET /2 HTTP/1.1' + CRLF + CRLF).ReadError(32);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF).ReadPending.Read('GET /2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF).ReadError(32);
   InitConn;
   AssertTrue(ReadHead = poSome);
   AssertTrue('pending', FConn.MidMessageDetectEof(FErr) = prPending);
@@ -1443,7 +1443,7 @@ procedure TTestConnBehavior.Pipelined_head_needs_no_read;
 var
   D: RawByteString;
 begin
-  FMock.Read('GET /1 HTTP/1.1' + CRLF + CRLF + 'GET /2 HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET /1 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF + 'GET /2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   D := DateStr;
@@ -1463,7 +1463,7 @@ procedure TTestConnBehavior.Chunked_body_across_reads_with_trailers;
 var
   S: RawByteString;
 begin
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Transfer-Encoding: chunked' + CRLF + CRLF + '5' + CRLF + 'hel')
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Transfer-Encoding: chunked' + CRLF + 'Host: x' + CRLF + CRLF + '5' + CRLF + 'hel')
     .ReadPending.Read('lo' + CRLF + '0' + CRLF + 'x-t: 1' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
@@ -1482,7 +1482,7 @@ procedure TTestConnBehavior.Body_decode_error;
 var
   S: RawByteString;
 begin
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Transfer-Encoding: chunked' + CRLF + CRLF + 'zz' + CRLF);
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Transfer-Encoding: chunked' + CRLF + 'Host: x' + CRLF + CRLF + 'zz' + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   AssertTrue('error', ReadBodyStr(S) = poErr);
@@ -1497,7 +1497,7 @@ procedure TTestConnBehavior.Body_io_error;
 var
   S: RawByteString;
 begin
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 5' + CRLF + CRLF).ReadError(104);
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 5' + CRLF + 'Host: x' + CRLF + CRLF).ReadError(104);
   InitConn;
   AssertTrue(ReadHead = poSome);
   AssertTrue('error', ReadBodyStr(S) = poErr);
@@ -1509,7 +1509,7 @@ procedure TTestConnBehavior.Body_eof_is_incomplete_body;
 var
   S: RawByteString;
 begin
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 5' + CRLF + CRLF + 'ab').ReadEof;
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 5' + CRLF + 'Host: x' + CRLF + CRLF + 'ab').ReadEof;
   InitConn;
   AssertTrue(ReadHead = poSome);
   AssertTrue('ab', ReadBodyStr(S) = poSome);
@@ -1538,7 +1538,7 @@ end;
 
 procedure TTestConnBehavior.Header_read_timeout_cancelled_by_head;
 begin
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   FConn.SetHeaderReadTimeout(100);
   AssertTrue(ReadHead = poSome);
@@ -1556,7 +1556,7 @@ begin
   { State::idle sets notify_read when a timeout is configured, so the
     dispatcher re-enters poll_read_head and arms the timer again: the header
     timeout is also the keep-alive idle timeout (2.3) }
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   FConn.SetHeaderReadTimeout(100);
   AssertTrue(ReadHead = poSome);
@@ -1628,7 +1628,7 @@ procedure TTestConnBehavior.Upgrade_response_closes;
 begin
   { a 101 is is_last: Closed; the read side closes with try_keep_alive
     (KeepAlive, Closed) -> close() }
-  FMock.Read('GET / HTTP/1.1' + CRLF + 'Upgrade: x' + CRLF + 'Connection: upgrade' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Upgrade: x' + CRLF + 'Connection: upgrade' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   AssertTrue(wantUpgrade in FWants);
@@ -1645,7 +1645,7 @@ var
   D: RawByteString;
 begin
   { write_body_and_end: Length exact -> KeepAlive; chunked -> data + end in one entry }
-  FMock.Read('GET / HTTP/1.1' + CRLF + CRLF);
+  FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
   D := DateStr;
@@ -1688,7 +1688,7 @@ begin
     the request body makes the connection idle at once }
   { the last ReadPending: maybe_notify's read after going idle (an EOF there
     would close the connection) }
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 3' + CRLF + CRLF).ReadPending.Read('abc')
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 3' + CRLF + 'Host: x' + CRLF + CRLF).ReadPending.Read('abc')
     .ReadPending;
   InitConn;
   FConn.DisableDateHeader;
@@ -1710,7 +1710,7 @@ begin
   { decision 13 (S4 survivor 3): the last-chunk arrives in its own read; the
     decoder returns an empty eof frame, which conn.rs:381-386 turns into
     Ready(None), not an empty data frame }
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Transfer-Encoding: chunked' + CRLF + CRLF +
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Transfer-Encoding: chunked' + CRLF + 'Host: x' + CRLF + CRLF +
     '3' + CRLF + 'abc' + CRLF).ReadPending.Read('0' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
@@ -1791,9 +1791,9 @@ begin
     the 200 head and its body. }
   Big := StringOfChar('h', 5000);
   FMock.Vectored(True)
-    .Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 5' + CRLF + CRLF)
+    .Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 5' + CRLF + 'Host: x' + CRLF + CRLF)
     .Write(HEAD_200_BIG).WritePending
-    .Read('abcde' + 'GET / HTTP/1.1' + CRLF + 'Bad Header' + CRLF + CRLF)
+    .Read('abcde' + 'GET / HTTP/1.1' + CRLF + 'Bad Header' + CRLF + 'Host: x' + CRLF + CRLF)
     .Write(Big + 'HTTP/1.1 400 Bad Request' + CRLF + 'connection: close' + CRLF +
       'content-length: 0' + CRLF + CRLF);
   InitConn;
@@ -1830,10 +1830,10 @@ begin
     through the dispatcher) }
   Big := StringOfChar('h', 5000);
   FMock.Vectored(True)
-    .Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 5' + CRLF + CRLF)
+    .Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 5' + CRLF + 'Host: x' + CRLF + CRLF)
     .Write(HEAD_200_BIG).WritePending
     .Read('abcde' + 'POST /2 HTTP/1.1' + CRLF + 'Expect: 100-continue' + CRLF +
-      'Content-Length: 3' + CRLF + CRLF)
+      'Content-Length: 3' + CRLF + 'Host: x' + CRLF + CRLF)
     .ReadPending
     .Write(Big + 'HTTP/1.1 100 Continue' + CRLF + CRLF);
   InitConn;
@@ -2059,7 +2059,7 @@ end;
 
 procedure TTestConnBodyRate.PostHead(Len: Integer; const First: RawByteString);
 begin
-  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: ' + IntToStr(Len) + CRLF + CRLF + First);
+  FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: ' + IntToStr(Len) + CRLF + 'Host: x' + CRLF + CRLF + First);
 end;
 
 procedure TTestConnBodyRate.Off_by_default;

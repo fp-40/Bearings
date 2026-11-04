@@ -405,6 +405,7 @@ These are hyper's body-decoder errors (src/proto/h1/decode.rs). `kind` comes fro
 | `invalid_input` | `Invalid chunk size LF` | CR not followed by LF after the size line |
 | `invalid_input` | `Invalid chunk body CR` / `Invalid chunk body LF` | chunk data not followed by CRLF |
 | `invalid_input` | `Invalid chunk end LF` / `Invalid trailer end LF` | bad final CRLF |
+| `invalid_input` | `Invalid trailer line: LF without CR` | a bare LF in the trailer section (`0` CRLF LF, or a trailer line ending with LF); not in hyper, which takes the LF as a trailer byte (docs/design/deviations.md) |
 | `invalid_input` | `Invalid header name: ...` / `Invalid header value: ...` / `Partial header` / httparse error text | malformed trailer field |
 | `io` | OS error text | socket error while reading the body |
 | `other` | error text | anything else |
@@ -419,7 +420,7 @@ Exactly one class, checked in this order (hyper `Error` predicates):
 | `timeout` | `is_timeout()` | header read timeout fired (no response written) |
 | `parse_too_large` | `is_parse_too_large()` | request head over `max_buf_size` / `max_header_size`, too many headers, a header name of 65536 bytes or more (431 written), or a request-target longer than 65534 bytes (414 written) |
 | `parse_version_h2` | `is_parse_version_h2()` | the HTTP/2 connection preface `PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` arrived on the HTTP/1 connection (nothing written) |
-| `parse` | `is_parse()` | any other request-head parse error: method, request-target, version, header syntax, invalid Content-Length or Transfer-Encoding (400 written) |
+| `parse` | `is_parse()` | any other request-head parse error: method, request-target, version, header syntax, invalid Content-Length or Transfer-Encoding, an HTTP/1.1 request without `Host` or a request with two `Host` lines (400 written; the `Host` rule is not in hyper) |
 | `incomplete` | `is_incomplete_message()` | EOF in the middle of a request head, or EOF while a request was in progress with `half_close` false |
 | `user` | `is_user()` | the handler failed (including test_service body errors), or the handler returned a 1xx final status (hyper writes a 500) |
 | `canceled`, `closed`, `body_write_aborted`, `shutdown` | the matching predicate | rare internal cases |

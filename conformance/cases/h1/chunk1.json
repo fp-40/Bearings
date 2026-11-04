@@ -363,7 +363,7 @@
       "server": {"handler": "test_service", "replies": [{}]},
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\nContent-Length: 5\r\nHost: x\r\n\r\nhello"},
         {"op": "read_once", "max": 256}
       ],
       "expect_events": [
@@ -377,7 +377,7 @@
       "server": {"handler": "test_service", "replies": [{}]},
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "POST / HTTP/1.1\r\nContent-Length: +5\r\n\r\nhello"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\nContent-Length: +5\r\nHost: x\r\n\r\nhello"},
         {"op": "read_once", "max": 256, "expect": [
           {"starts_with": "HTTP/1.1 400 Bad Request\r\n"}
         ]}

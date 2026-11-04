@@ -572,7 +572,7 @@ begin
   M := TMockTransport.Create;
   H := THttpHeaders.Create;
   try
-    M.Read('GET /a HTTP/1.1' + CRLF + CRLF + 'GET /b HTTP/1.1' + CRLF + CRLF).Write('RESP1RESP2');
+    M.Read('GET /a HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF + 'GET /b HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF).Write('RESP1RESP2');
     Io.Init(M, nil);
     Io.SetFlushPipeline(True);
     Err := Default(THyperError);
@@ -1049,7 +1049,7 @@ end;
 function RunReads(Release: Boolean; Pool: PBlockPool; out Releases: Integer;
   out Expected: RawByteString): RawByteString;
 const
-  HEADS = 'POST / HTTP/1.1' + #13#10 + 'Content-Length: 300000' + #13#10#13#10;
+  HEADS = 'POST / HTTP/1.1' + #13#10 + 'Content-Length: 300000' + #13#10 + 'Host: x'#13#10#13#10;
 var
   M: TMockTransport;
   Io: TH1Io;
@@ -1208,8 +1208,8 @@ begin
   M := TMockTransport.Create;
   H := THttpHeaders.Create;
   try
-    Req1 := 'GET /first HTTP/1.1' + CRLF + 'X: ' + StringOfChar('a', 100) + CRLF + CRLF;
-    Req2 := 'GET / HTTP/1.1' + CRLF + CRLF;
+    Req1 := 'GET /first HTTP/1.1' + CRLF + 'X: ' + StringOfChar('a', 100) + CRLF + 'Host: x' + CRLF + CRLF;
+    Req2 := 'GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF;
     M.Read(Copy(Req1, 1, 110)).ReadPending.Read(Copy(Req1, 111, MaxInt) + Req2).ReadPending;
     Io.Init(M, nil);
     Err := Default(THyperError);
@@ -1243,10 +1243,10 @@ var
   I: Integer;
 const
   CASES: array[0..3] of RawByteString = (
-    'GET / HTTP/1.1' + #13#10 + 'Content-Length: abc' + #13#10#13#10 + 'XYZ',
-    'GET / HTTP/1.1' + #13#10 + 'Transfer-Encoding: gzip' + #13#10#13#10 + 'XYZ',
+    'GET / HTTP/1.1' + #13#10 + 'Content-Length: abc' + #13#10 + 'Host: x'#13#10#13#10 + 'XYZ',
+    'GET / HTTP/1.1' + #13#10 + 'Transfer-Encoding: gzip' + #13#10 + 'Host: x'#13#10#13#10 + 'XYZ',
     'GET / HTTP/1.0' + #13#10 + 'Transfer-Encoding: chunked' + #13#10#13#10 + 'XYZ',
-    'GET http://a:b:c/ HTTP/1.1' + #13#10#13#10 + 'XYZ');
+    'GET http://a:b:c/ HTTP/1.1' + #13#10 + 'Host: x'#13#10#13#10 + 'XYZ');
   ERRS: array[0..3] of TH1ParseError = (h1peHeaderContentLengthInvalid,
     h1peHeaderTransferEncodingInvalid, h1peHeaderTransferEncodingUnexpected, h1peUri);
 begin
@@ -1540,7 +1540,7 @@ begin
   M := TMockTransport.Create;
   H := THttpHeaders.Create;
   try
-    M.Read('GET / HTTP/1.1' + CRLF + 'Upgrade: foo' + CRLF + CRLF + 'LEFTOVER');
+    M.Read('GET / HTTP/1.1' + CRLF + 'Upgrade: foo' + CRLF + 'Host: x' + CRLF + CRLF + 'LEFTOVER');
     Io.Init(M, nil);
     Err := Default(THyperError);
     AssertTrue(Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prOk);
@@ -1799,7 +1799,7 @@ begin
   try
     Io.Init(T, nil);
     Io.SetFlushPipeline(True);
-    Got := 'GET /1 HTTP/1.1' + CRLF + CRLF + 'GET /2 HTTP/1.1' + CRLF + CRLF + 'GET /3 HTTP/1.1' + CRLF + CRLF;
+    Got := 'GET /1 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF + 'GET /2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF + 'GET /3 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF;
     AssertEquals(Length(Got), fpSend(Sv[1], PAnsiChar(Got), Length(Got), 0));
     Err := Default(THyperError);
     AssertTrue('request 1', Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prOk);
@@ -1842,7 +1842,7 @@ begin
   M := TMockTransport.Create;
   H := THttpHeaders.Create;
   try
-    M.Vectored(True).Read('GET /a HTTP/1.1' + CRLF + CRLF + 'GET /b HTTP/1.1' + CRLF + CRLF)
+    M.Vectored(True).Read('GET /a HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF + 'GET /b HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF)
       .Write('HEAD1' + Big).Write('HEAD2small');
     Io.Init(M, nil);
     Io.SetFlushPipeline(True);

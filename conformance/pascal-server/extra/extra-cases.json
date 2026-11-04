@@ -330,7 +330,7 @@
     },
     {
      "op": "write",
-     "data": "GET / HTTP/1.1\r\nUpgrade: foo\r\nConnection: upgrade\r\n\r\n"
+     "data": "GET / HTTP/1.1\r\nUpgrade: foo\r\nConnection: upgrade\r\nHost: x\r\n\r\n"
     },
     {
      "op": "read_to_eof",
@@ -376,7 +376,7 @@
     },
     {
      "op": "write",
-     "data": "GET / HTTP/1.1\r\nUpgrade: foo\r\nConnection: upgrade\r\n\r\n"
+     "data": "GET / HTTP/1.1\r\nUpgrade: foo\r\nConnection: upgrade\r\nHost: x\r\n\r\n"
     },
     {
      "op": "read_to_eof",
@@ -553,7 +553,7 @@
     },
     {
      "op": "write",
-     "data": "GET / HTTP/1.1\r\nUpgrade: foo\r\nConnection: upgrade\r\n\r\n"
+     "data": "GET / HTTP/1.1\r\nUpgrade: foo\r\nConnection: upgrade\r\nHost: x\r\n\r\n"
     },
     {
      "op": "read_to_eof",
@@ -729,7 +729,7 @@
     },
     {
      "op": "write",
-     "data": "GET /p?q=1 HTTP/1.1\r\nA: 1\r\nB: 2\r\na: 3\r\nX-L: éÿ\r\n\r\n"
+     "data": "GET /p?q=1 HTTP/1.1\r\nA: 1\r\nB: 2\r\na: 3\r\nX-L: éÿ\r\nHost: x\r\n\r\n"
     },
     {
      "op": "read_response",
@@ -771,6 +771,10 @@
       [
        "x-l",
        "éÿ"
+      ],
+      [
+       "host",
+       "x"
       ]
      ]
     }
@@ -792,7 +796,7 @@
     },
     {
      "op": "write",
-     "data": "GET http://h:81/a/b?c=d HTTP/1.1\r\n\r\nOPTIONS * HTTP/1.1\r\nHost: x\r\n\r\n"
+     "data": "GET http://h:81/a/b?c=d HTTP/1.1\r\nHost: x\r\n\r\nOPTIONS * HTTP/1.1\r\nHost: x\r\n\r\n"
     },
     {
      "op": "read_response"

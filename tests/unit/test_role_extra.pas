@@ -92,7 +92,7 @@ begin
     AssertTrue(Msg.Error = h1peVersion);
     AssertEquals(400, ServerErrorStatus(Msg.Error));
     { bad header byte -> Header(Token) }
-    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'a'#1'b: c'#13#10#13#10, DefaultParseContext, H, Msg) = spsError);
+    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'a'#1'b: c'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsError);
     AssertTrue(Msg.Error = h1peHeaderToken);
     { 101 headers -> TooLarge -> 431 }
     S := 'GET / HTTP/1.1'#13#10;
@@ -103,18 +103,18 @@ begin
     AssertTrue(Msg.Error = h1peTooLarge);
     AssertEquals(431, ServerErrorStatus(Msg.Error));
     { request-target longer than MAX_URI_LEN -> 414 }
-    S := 'GET /' + StringOfChar('a', MAX_URI_LEN) + ' HTTP/1.1'#13#10#13#10;
+    S := 'GET /' + StringOfChar('a', MAX_URI_LEN) + ' HTTP/1.1'#13#10'Host: x'#13#10#13#10;
     AssertTrue(ParseStr(S, DefaultParseContext, H, Msg) = spsError);
     AssertTrue(Msg.Error = h1peUriTooLong);
     AssertEquals(414, ServerErrorStatus(Msg.Error));
     { exactly MAX_URI_LEN is fine }
-    S := 'GET /' + StringOfChar('a', MAX_URI_LEN - 1) + ' HTTP/1.1'#13#10#13#10;
+    S := 'GET /' + StringOfChar('a', MAX_URI_LEN - 1) + ' HTTP/1.1'#13#10'Host: x'#13#10#13#10;
     AssertTrue(ParseStr(S, DefaultParseContext, H, Msg) = spsComplete);
     { header name of 64 KiB -> TooLarge (record_header_indices) }
-    S := 'GET / HTTP/1.1'#13#10 + StringOfChar('n', 1 shl 16) + ': v'#13#10#13#10;
+    S := 'GET / HTTP/1.1'#13#10 + StringOfChar('n', 1 shl 16) + ': v'#13#10'Host: x'#13#10#13#10;
     AssertTrue(ParseStr(S, DefaultParseContext, H, Msg) = spsError);
     AssertTrue(Msg.Error = h1peTooLarge);
-    S := 'GET / HTTP/1.1'#13#10 + StringOfChar('n', (1 shl 16) - 1) + ': v'#13#10#13#10;
+    S := 'GET / HTTP/1.1'#13#10 + StringOfChar('n', (1 shl 16) - 1) + ': v'#13#10'Host: x'#13#10#13#10;
     AssertTrue(ParseStr(S, DefaultParseContext, H, Msg) = spsComplete);
     { errors without an automatic response }
     AssertEquals(0, ServerErrorStatus(h1peNone));
@@ -147,7 +147,7 @@ begin
     AssertTrue(ServerParseHeaders(PByte(PAnsiChar('G@T / HTTP/1.1'#13#10)), 16, -1, DefaultParseContext, H, Msg) = spsError);
     AssertTrue(ServerParseHeaders(PByte(Pointer(S)), Length(S), Length(S) - 2, DefaultParseContext, H, Msg) = spsComplete);
     { body bytes after the head are not consumed }
-    S := 'POST / HTTP/1.1'#13#10'content-length: 3'#13#10#13#10'abc';
+    S := 'POST / HTTP/1.1'#13#10'content-length: 3'#13#10'Host: x'#13#10#13#10'abc';
     AssertTrue(ParseStr(S, DefaultParseContext, H, Msg) = spsComplete);
     AssertEquals(Length(S) - 3, Msg.HeadLen);
     AssertEquals(QWord(3), Msg.Decode);
@@ -164,22 +164,23 @@ begin
   H := THttpHeaders.Create;
   try
     { DecodedLength MAX_LEN = u64::MAX - 2 }
-    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'content-length: 18446744073709551613'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'content-length: 18446744073709551613'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
     AssertEquals(DECODED_LENGTH_MAX, Msg.Decode);
-    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'content-length: 18446744073709551614'#13#10#13#10, DefaultParseContext, H, Msg) = spsError);
+    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'content-length: 18446744073709551614'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsError);
     AssertTrue(Msg.Error = h1peTooLarge);
     { overflow of u64 -> invalid }
-    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'content-length: 18446744073709551616'#13#10#13#10, DefaultParseContext, H, Msg) = spsError);
+    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'content-length: 18446744073709551616'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsError);
     AssertTrue(Msg.Error = h1peHeaderContentLengthInvalid);
     { comma lists are not accepted in requests (content_length_parse) }
-    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'content-length: 10, 10'#13#10#13#10, DefaultParseContext, H, Msg) = spsError);
+    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'content-length: 10, 10'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsError);
     AssertTrue(Msg.Error = h1peHeaderContentLengthInvalid);
     { leading zeros are fine }
-    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'content-length: 007'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'content-length: 007'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
     AssertEquals(QWord(7), Msg.Decode);
     { the second equal Content-Length is not stored }
-    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'Content-Length: 4'#13#10'content-length: 4'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
-    AssertEquals(1, H.Count);
+    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'Content-Length: 4'#13#10'content-length: 4'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertEquals(2, H.Count);
+    AssertEquals(1, H.CountOf('content-length'));
     AssertEquals('Content-Length', H.Name(0));
   finally
     H.Free;
@@ -194,20 +195,20 @@ var
 begin
   H := THttpHeaders.Create;
   try
-    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'Expect: 100-Continue'#13#10'content-length: 1'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'Expect: 100-Continue'#13#10'content-length: 1'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
     AssertTrue(Msg.ExpectContinue);
-    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'Expect: 100-continue, x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'Expect: 100-continue, x'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
     AssertFalse(Msg.ExpectContinue);
     { the last Expect line decides }
-    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'Expect: 100-continue'#13#10'Expect: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertTrue(ParseStr('POST / HTTP/1.1'#13#10'Expect: 100-continue'#13#10'Expect: x'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
     AssertFalse(Msg.ExpectContinue);
 
-    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'Upgrade: websocket'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'Upgrade: websocket'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
     AssertTrue(Msg.WantsUpgrade);
     AssertTrue(ParseStr('GET / HTTP/1.0'#13#10'Upgrade: websocket'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
     AssertFalse(Msg.WantsUpgrade);
 
-    S := 'CONNECT example.com:443 HTTP/1.1'#13#10#13#10;
+    S := 'CONNECT example.com:443 HTTP/1.1'#13#10'Host: x'#13#10#13#10;
     AssertTrue(ParseStr(S, DefaultParseContext, H, Msg) = spsComplete);
     AssertTrue(Msg.Method = hmConnect);
     AssertTrue(Msg.WantsUpgrade);
@@ -222,7 +223,7 @@ begin
     AssertTrue(Msg.Version = hv10);
     AssertTrue(ParseStr('GET / HTTP/1.0'#13#10'Connection: Keep-Alive'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
     AssertTrue(Msg.KeepAlive);
-    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'Connection: foo, CLOSE'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'Connection: foo, CLOSE'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
     AssertFalse(Msg.KeepAlive);
 
     AssertTrue(MethodFromBytes(PByte(PAnsiChar('get')), 3) = hmExtension);
@@ -250,9 +251,11 @@ begin
     AssertTrue(H.NamePtr(0) = B + 17);
     AssertTrue(H.ValuePtr(0) = B + 23);
     AssertEquals('z', H.Value(1));
-    { reusing the list for the next request clears it }
-    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
-    AssertEquals(0, H.Count);
+    { reusing the list for the next request clears it: only the new
+      request's Host line is left }
+    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertEquals(1, H.Count);
+    AssertEquals('x', H.Value(0));
   finally
     H.Free;
   end;

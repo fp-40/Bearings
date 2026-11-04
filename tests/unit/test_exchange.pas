@@ -316,7 +316,7 @@ begin
     AssertEquals('head unpinned', 0, B^.Pins);
     AssertEquals('no wake needed', 0, Wakes);
     { the next request on the same exchange (count is 1): reused }
-    StartRequest('GET /2 HTTP/1.1' + CRLF + CRLF, 2);
+    StartRequest('GET /2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF, 2);
     AssertEquals('new response head', 0, FEx.ResponseHeaders.Count);
     AssertFalse(FEx.Answered);
     AssertEquals(2, Integer(FEx.RequestNo));
@@ -337,7 +337,7 @@ begin
   C := TDelayCall.Create;
   try
     C.DelayMs := 10;
-    StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+    StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
     AssertTrue('pending', C.Poll(FEx) = cpPending);
     AssertTrue('timer armed', C.Timer.T.Deadline > 0);
     AssertTrue('not yet', C.Poll(FEx) = cpPending);
@@ -365,7 +365,7 @@ begin
     future is dropped without a poll (handler_dropped, 3.1) }
   Svc := TPlaintextService.Create;
   try
-    StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+    StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
     C := Svc.Call(FEx);
     FEx.Cancel;
     C.Drop(FEx, False);
@@ -391,7 +391,7 @@ begin
   C := TDelayCall.Create;
   try
     C.DelayMs := 10;
-    StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+    StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
     AssertTrue(C.Poll(FEx) = cpPending);
     FEx.Cancel;
     C.Drop(FEx, False);
@@ -409,7 +409,7 @@ procedure TTestExchangeLifetime.Cancel_after_answer;
 begin
   { answered but not yet collected by poll_msg: the CAS of 3.2.3 rule 5 fails,
     the state stays answered }
-  StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+  StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   AssertTrue(FEx.Respond(BodyEmpty));
   FEx.Cancel;
   AssertFalse('not canceled', FEx.IsCanceled);
@@ -423,7 +423,7 @@ begin
   C := TDelayCall.Create;
   try
     C.DelayMs := 10;
-    StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+    StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
     AssertTrue(C.Poll(FEx) = cpPending);
     { the connection ends; the exchange goes back to the pool while the
       call (a buggy one: no Cancel in its Drop) leaves the timer armed }
@@ -445,11 +445,11 @@ begin
   C := TDelayCall.Create;
   try
     C.DelayMs := 10;
-    StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+    StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
     AssertTrue(C.Poll(FEx) = cpPending);
     FEx.Respond(BodyEmpty);
     FEx.CompleteCall;
-    StartRequest('GET /2 HTTP/1.1' + CRLF + CRLF, 2);
+    StartRequest('GET /2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF, 2);
     FLoop.Timers.Advance(FLoop.NowMs + 50);
     AssertEquals('request 2 is not woken by request 1''s timer', 0, Wakes);
     C.Timer.Cancel(FEx);
@@ -465,7 +465,7 @@ begin
   { the production behaviour: the completion counts and fails the exchange;
     NoResponseIsExpected keeps this -Sa build from raising }
   N0 := NoResponseFailures;
-  StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+  StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   FEx.NoResponseIsExpected;
   FEx.CompleteCall;
   AssertTrue('failed', FEx.Resp.Failed);
@@ -482,7 +482,7 @@ begin
     completion without a terminal call, after the exchange was left
     consistent (done, failed, request released) }
   N0 := NoResponseFailures;
-  StartRequest('GET /no-answer?x=1 HTTP/1.1' + CRLF + CRLF);
+  StartRequest('GET /no-answer?x=1 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   Msg := '';
   try
     FEx.CompleteCall;
@@ -497,10 +497,10 @@ begin
   AssertEquals('handler returned no response', FEx.Resp.FailText);
   AssertTrue('request released', FEx.Head.Released);
   { the opt-out is per request: cleared by BeginRequest }
-  StartRequest('GET /2 HTTP/1.1' + CRLF + CRLF, 2);
+  StartRequest('GET /2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF, 2);
   FEx.NoResponseIsExpected;
   FEx.CompleteCall;
-  StartRequest('GET /3 HTTP/1.1' + CRLF + CRLF, 3);
+  StartRequest('GET /3 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF, 3);
   Msg := '';
   try
     FEx.CompleteCall;
@@ -560,7 +560,7 @@ var
   Closed: Boolean;
   Slot: TUpgradeSlot;
 begin
-  StartRequest('POST / HTTP/1.1' + CRLF + 'Content-Length: 4' + CRLF + CRLF);
+  StartRequest('POST / HTTP/1.1' + CRLF + 'Content-Length: 4' + CRLF + 'Host: x' + CRLF + CRLF);
   B := FEx.Head.View.Block;
   Slot := TUpgradeSlot.Create;
   try
@@ -583,7 +583,7 @@ var
   Ch: TByteSlice;
   V: TBytesView;
 begin
-  StartRequest('POST / HTTP/1.1' + CRLF + 'Transfer-Encoding: chunked' + CRLF + CRLF + 'abc');
+  StartRequest('POST / HTTP/1.1' + CRLF + 'Transfer-Encoding: chunked' + CRLF + 'Host: x' + CRLF + CRLF + 'abc');
   V := FBuf.SplitTo(3);
   AssertTrue('nothing yet', FEx.TryRead(Ch) = brPending);
   AssertTrue(FEx.Chan.TrySendData(V));
@@ -603,7 +603,7 @@ procedure TTestExchangeRequest.Try_read_error_kinds;
 var
   Ch: TByteSlice;
 begin
-  StartRequest('POST / HTTP/1.1' + CRLF + 'Content-Length: 4' + CRLF + CRLF);
+  StartRequest('POST / HTTP/1.1' + CRLF + 'Content-Length: 4' + CRLF + 'Host: x' + CRLF + CRLF);
   FEx.Chan.SendError(NewBodyDecode(deIncompleteBody));
   AssertTrue(FEx.TryRead(Ch) = brError);
   AssertTrue(FEx.BodyErrorKind = bekUnexpectedEof);
@@ -629,7 +629,7 @@ procedure TTestExchangeRequest.Try_read_canceled;
 var
   Ch: TByteSlice;
 begin
-  StartRequest('POST / HTTP/1.1' + CRLF + 'Content-Length: 4' + CRLF + CRLF);
+  StartRequest('POST / HTTP/1.1' + CRLF + 'Content-Length: 4' + CRLF + 'Host: x' + CRLF + CRLF);
   FEx.Cancel;
   AssertTrue(FEx.TryRead(Ch) = brCanceled);
 end;
@@ -663,7 +663,7 @@ var
   S: RawByteString;
   Raised: Boolean;
 begin
-  StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+  StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   AssertTrue(FEx.RespondText(404, 'not found'#10));
   AssertEquals(404, FEx.Status);
   AssertEquals('text/plain; charset=utf-8', FEx.ResponseHeaders.GetValue('content-type'));
@@ -677,7 +677,7 @@ begin
   FEx.CompleteCall;
 
   { a content-type set earlier is replaced, not duplicated; the given type is kept }
-  StartRequest('GET /2 HTTP/1.1' + CRLF + CRLF, 2);
+  StartRequest('GET /2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF, 2);
   FEx.ResponseHeaders.Add('content-type', 'text/plain');
   AssertTrue(FEx.RespondText(200, '<p>hi</p>', 'text/html; charset=utf-8'));
   AssertEquals(1, FEx.ResponseHeaders.CountOf('content-type'));
@@ -685,7 +685,7 @@ begin
   FEx.CompleteCall;
 
   { an invalid content-type raises (the validating mutator) and leaves the exchange unanswered }
-  StartRequest('GET /3 HTTP/1.1' + CRLF + CRLF, 3);
+  StartRequest('GET /3 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF, 3);
   Raised := False;
   try
     FEx.RespondText(200, 'x', 'text/plain'#13#10'x-injected: 1');
@@ -700,7 +700,7 @@ begin
   FEx.CompleteCall;
 
   { canceled: refused }
-  StartRequest('GET /4 HTTP/1.1' + CRLF + CRLF, 4);
+  StartRequest('GET /4 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF, 4);
   FEx.Cancel;
   AssertFalse('canceled', FEx.RespondText(200, 'late'));
   AssertEquals('the head was not touched', 200, FEx.Status);
@@ -709,7 +709,7 @@ end;
 
 procedure TTestExchangeResponse.Respond_once;
 begin
-  StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+  StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   AssertTrue(FEx.Respond(BodyStatic(@HELLO[0], 5)));
   AssertFalse('second terminal call refused', FEx.Respond(CountedBody));
   AssertEquals('refused body released', 1, ReleasedBodies);
@@ -722,14 +722,14 @@ var
 begin
   Src := TCountSource.Create;
   try
-    StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+    StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
     AssertTrue(FEx.RespondStream(Src));
     AssertTrue(FEx.Resp.Source = Src);
     AssertFalse('refused: Done called', FEx.RespondStream(Src));
     AssertEquals(1, Src.DoneCalls);
     FEx.Resp.Source := nil;
 
-    StartRequest('GET /2 HTTP/1.1' + CRLF + CRLF, 2);
+    StartRequest('GET /2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF, 2);
     AssertTrue(FEx.Fail('boom'));
     AssertTrue(FEx.Resp.Failed);
     AssertEquals('boom', FEx.Resp.FailText);
@@ -748,7 +748,7 @@ const
   Good: RawByteString = 'Very Good';
   Bad: RawByteString = 'Bad'#10'Reason';
 begin
-  StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+  StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   AssertFalse('LF refused', FEx.SetReason(PByte(Bad), Length(Bad)));
   AssertFalse(FEx.Resp.Head.HasReason);
   AssertTrue(FEx.SetReason(PByte(Good), Length(Good)));
@@ -756,7 +756,7 @@ begin
   SetString(S, PAnsiChar(FEx.Resp.Head.ReasonP), FEx.Resp.Head.ReasonLen);
   AssertEquals('copied', 'Very Good', S);
   AssertTrue('a copy, not the caller''s bytes', FEx.Resp.Head.ReasonP <> PByte(Good));
-  StartRequest('GET /2 HTTP/1.1' + CRLF + CRLF, 2);
+  StartRequest('GET /2 HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF, 2);
   AssertFalse('reset per request', FEx.Resp.Head.HasReason);
 end;
 
@@ -766,7 +766,7 @@ var
   Before: SizeInt;
   S: RawByteString;
 begin
-  StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+  StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   S := 'dynamic body';
   B := BodyCopy(FEx, Pointer(S), Length(S));
   S[1] := 'X';
@@ -788,11 +788,11 @@ begin
   Slot := TUpgradeSlot.Create;
   Slot2 := nil;
   try
-    StartRequest('GET / HTTP/1.1' + CRLF + CRLF);
+    StartRequest('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
     FEx.OnUpgrade(H);
     AssertEquals('OnUpgrade::none()', 'no upgrade available', H.Failed);
     H.Failed := '';
-    StartRequest('GET / HTTP/1.1' + CRLF + 'Upgrade: x' + CRLF + 'Connection: upgrade' + CRLF + CRLF, 2);
+    StartRequest('GET / HTTP/1.1' + CRLF + 'Upgrade: x' + CRLF + 'Connection: upgrade' + CRLF + 'Host: x' + CRLF + CRLF, 2);
     AssertTrue(FEx.WantsUpgrade);
     Slot.State := usPending;
     Slot.RxAlive := True;
@@ -813,7 +813,7 @@ begin
     AssertTrue(Slot.State = usFulfilled);
     { drop(Pending) on a slot whose handler got nothing yet }
     Slot2 := TUpgradeSlot.Create;
-    StartRequest('GET / HTTP/1.1' + CRLF + 'Upgrade: x' + CRLF + 'Connection: upgrade' + CRLF + CRLF, 3);
+    StartRequest('GET / HTTP/1.1' + CRLF + 'Upgrade: x' + CRLF + 'Connection: upgrade' + CRLF + 'Host: x' + CRLF + CRLF, 3);
     Slot2.State := usPending;
     FEx.LinkUpgrade(Slot2);
     FEx.OnUpgrade(H);

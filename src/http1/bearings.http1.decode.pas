@@ -131,7 +131,8 @@ type
     deTrailerNewLine,         { InvalidInput : CR not followed by LF in place of the final empty line }
     deTrailerTooManyHeaders,  { InvalidInput : more trailer fields than the allowed count }
     deTrailerPartial,         { InvalidInput : trailer block ends inside a field line }
-    deTrailerInvalidName      { InvalidInput : trailer field name longer than MAX_HEADER_NAME_LEN }
+    deTrailerInvalidName,     { InvalidInput : trailer field name longer than MAX_HEADER_NAME_LEN }
+    deTrailerBareLf           { InvalidInput : LF without CR in the trailer section (not in hyper; see Step) }
   );
 
   TDecodeResult = record
@@ -203,7 +204,8 @@ function DecodeErrorMessage(E: TDecodeError): string;
 { Parses Len bytes of trailer fields ("Name: value" lines) ending with the
   empty line, allowing at most MaxCount fields. Dest (may be nil) is
   cleared, then gets every field in order (duplicates kept). Each line may
-  end with CRLF or a bare LF. Leading and trailing spaces and tabs of a
+  end with CRLF or a bare LF (TDecoder refuses a bare LF in the trailer
+  section before it calls this: deTrailerBareLf). Leading and trailing spaces and tabs of a
   value are removed. A name longer than MAX_HEADER_NAME_LEN is reported
   only after every line parsed, so a syntax error on a later line is
   reported first. }
@@ -325,6 +327,7 @@ begin
     deTrailerTooManyHeaders: Result := 'too many headers';
     deTrailerPartial: Result := 'Partial header';
     deTrailerInvalidName: Result := 'Invalid header name';
+    deTrailerBareLf: Result := 'Invalid trailer line: LF without CR';
   end;
 end;
 
@@ -663,6 +666,14 @@ begin
       end;
     csTrailer:
       begin
+        { a bare LF would end the line for ParseTrailers but not here, so
+          the two would disagree on where the body ends: the bytes between
+          (a pipelined request) would be dropped. Refused instead. }
+        if B = 10 then
+        begin
+          E := deTrailerBareLf;
+          Exit(False);
+        end;
         if not TrailerPut(B) then
         begin
           E := deTrailerBytesOverLimit;
@@ -701,6 +712,15 @@ begin
           Exit(False);
         end;
         FState := csEndLf;
+      end
+      else if B = 10 then
+      begin
+        { "0" CRLF LF, or a trailer line followed by a bare LF: the end of
+          the body for a parser that takes a bare LF as a line end, a
+          trailer byte for hyper's state machine (which then reads on to
+          the next CRLF CRLF). Refused, as in csTrailer. }
+        E := deTrailerBareLf;
+        Exit(False);
       end
       else
       begin
@@ -818,8 +838,9 @@ begin
       csTrailer:
         if Pos < InputLen then
         begin
-          { copy trailer bytes up to CR in one scan }
-          K := FindByte(Input + Pos, InputLen - Pos, 13);
+          { copy trailer bytes up to CR or LF in one scan (Step refuses
+            a bare LF) }
+          K := FindCrOrLf(Input + Pos, InputLen - Pos);
           if K > 0 then
           begin
             if not TrailerAppend(Input + Pos, K) then

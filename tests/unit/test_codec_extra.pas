@@ -194,6 +194,7 @@ const
   E_HP_NAME = 'InvalidInput:invalid header name';     { httparse Error::HeaderName }
   E_HP_VALUE = 'InvalidInput:invalid header value';   { httparse Error::HeaderValue }
   E_HP_TOO_MANY = 'InvalidInput:too many headers';    { httparse Error::TooManyHeaders }
+  E_TRL_BARE_LF = 'InvalidInput:Invalid trailer line: LF without CR';  { not in hyper }
   E_HN_INVALID = 'InvalidInput:Invalid header name';  { http HeaderName::try_from }
 
 { Runs Body with: one read, one byte per read, two reads split at every
@@ -320,11 +321,18 @@ end;
 
 procedure TTestCodecExtra.Extra_decode_trailer_parsing;
 begin
-  // the decoder counts CRLF lines; httparse also ends a line at a bare LF,
-  // so it finds 2 fields with room for 1
-  CheckBody('bare LF', 'C', 0, -1, -1, '0'#13#10'a: b'#10'c: d'#13#10#13#10, ErrR(E_HP_TOO_MANY, ''));
-  // httparse sees the empty line first: trailers frame with no fields
-  CheckBody('starts with LF', 'C', 0, -1, -1, '0'#13#10#10'foo: bar'#13#10#13#10, OkR('TRL:', '', 0));
+  // A bare LF in the trailer section is refused. hyper's state machine
+  // ends trailer lines only at CRLF while httparse also ends them at a bare
+  // LF: there, "0 CRLF LF" ended the body for httparse but the decoder read
+  // on to the next CRLF CRLF, and the bytes between (a pipelined request)
+  // were dropped.
+  CheckBody('bare LF', 'C', 0, -1, -1, '0'#13#10'a: b'#10'c: d'#13#10#13#10, ErrR(E_TRL_BARE_LF, ''));
+  CheckBody('starts with LF', 'C', 0, -1, -1, '0'#13#10#10'foo: bar'#13#10#13#10, ErrR(E_TRL_BARE_LF, ''));
+  CheckBody('starts with LF, request behind', 'C', 0, -1, -1,
+    '0'#13#10#10'GET /smuggled HTTP/1.1'#13#10'Host: x'#13#10#13#10, ErrR(E_TRL_BARE_LF, ''));
+  CheckBody('field line ends with LF, then CRLF', 'C', 0, -1, -1,
+    '0'#13#10'X: y'#10#13#10'GET /smuggled HTTP/1.1'#13#10#13#10, ErrR(E_TRL_BARE_LF, ''));
+  CheckBody('LF after a trailer CRLF', 'C', 0, -1, -1, '0'#13#10'X: y'#13#10#10, ErrR(E_TRL_BARE_LF, ''));
   CheckBody('obs-fold', 'C', 0, -1, -1, '0'#13#10'a: b'#13#10' c'#13#10#13#10, ErrR(E_HP_NAME, ''));
   CheckBody('empty and trimmed values', 'C', 0, -1, -1,
     '0'#13#10'a:'#13#10'b: '#9' x '#9#13#10#13#10, OkR('TRL:a=-,b=78', '', 0));
@@ -349,8 +357,10 @@ begin
   // so a later httparse error wins over a too-long name
   CheckBody('long name, then bad line', 'C', 0, -1, 200000,
     '0'#13#10 + StringOfChar('a', 65536) + ': v'#13#10'b@: x'#13#10#13#10, ErrR(E_HP_NAME, ''));
-  CheckBody('long name, then too many', 'C', 0, -1, 200000,
-    '0'#13#10 + StringOfChar('a', 65536) + ': v'#10'b: x'#13#10#13#10, ErrR(E_HP_TOO_MANY, ''));
+  // a bare LF is refused by the decoder while it reads, before the
+  // trailer lines are parsed
+  CheckBody('long name, then bare LF', 'C', 0, -1, 200000,
+    '0'#13#10 + StringOfChar('a', 65536) + ': v'#10'b: x'#13#10#13#10, ErrR(E_TRL_BARE_LF, ''));
 end;
 
 procedure TTestCodecExtra.Extra_decode_cr_lf_handling;
@@ -370,8 +380,8 @@ begin
   CheckBody('digit after LWS', 'C', 0, -1, -1, '1 2'#13#10,
     ErrR('InvalidInput:Invalid chunk size linear white space', ''));
   CheckBody('tab LWS then extension', 'C', 0, -1, -1, '1'#9';x'#13#10'a'#13#10'0'#13#10#13#10, OkR('END', 'a', 0));
-  // a lone LF after the last chunk starts a trailer section
-  CheckBody('last chunk then LF', 'C', 0, -1, -1, '0'#13#10#10, ErrR(E_EOF_LINE, ''));
+  // a lone LF after the last chunk is refused (hyper: a trailer byte)
+  CheckBody('last chunk then LF', 'C', 0, -1, -1, '0'#13#10#10, ErrR(E_TRL_BARE_LF, ''));
 end;
 
 procedure TTestCodecExtra.Extra_decode_empty_input;

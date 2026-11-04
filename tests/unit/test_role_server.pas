@@ -233,55 +233,55 @@ begin
   H := THttpHeaders.Create;
   try
     { no length or transfer-encoding means 0-length body }
-    AssertEquals(DECODED_LENGTH_ZERO, Parse('GET / HTTP/1.1'#13#10#13#10).Decode);
-    AssertEquals(DECODED_LENGTH_ZERO, Parse('POST / HTTP/1.1'#13#10#13#10).Decode);
+    AssertEquals(DECODED_LENGTH_ZERO, Parse('GET / HTTP/1.1'#13#10'Host: x'#13#10#13#10).Decode);
+    AssertEquals(DECODED_LENGTH_ZERO, Parse('POST / HTTP/1.1'#13#10'Host: x'#13#10#13#10).Decode);
 
     { transfer-encoding: chunked }
-    AssertEquals(DECODED_LENGTH_CHUNKED, Parse('POST / HTTP/1.1'#13#10'transfer-encoding: chunked'#13#10#13#10).Decode);
-    AssertEquals(DECODED_LENGTH_CHUNKED, Parse('POST / HTTP/1.1'#13#10'transfer-encoding: gzip, chunked'#13#10#13#10).Decode);
-    AssertEquals(DECODED_LENGTH_CHUNKED, Parse('POST / HTTP/1.1'#13#10'transfer-encoding: gzip'#13#10'transfer-encoding: chunked'#13#10#13#10).Decode);
+    AssertEquals(DECODED_LENGTH_CHUNKED, Parse('POST / HTTP/1.1'#13#10'transfer-encoding: chunked'#13#10'Host: x'#13#10#13#10).Decode);
+    AssertEquals(DECODED_LENGTH_CHUNKED, Parse('POST / HTTP/1.1'#13#10'transfer-encoding: gzip, chunked'#13#10'Host: x'#13#10#13#10).Decode);
+    AssertEquals(DECODED_LENGTH_CHUNKED, Parse('POST / HTTP/1.1'#13#10'transfer-encoding: gzip'#13#10'transfer-encoding: chunked'#13#10'Host: x'#13#10#13#10).Decode);
 
     { content-length }
-    AssertEquals(QWord(10), Parse('POST / HTTP/1.1'#13#10'content-length: 10'#13#10#13#10).Decode);
+    AssertEquals(QWord(10), Parse('POST / HTTP/1.1'#13#10'content-length: 10'#13#10'Host: x'#13#10#13#10).Decode);
 
     { transfer-encoding and content-length = chunked }
-    Msg := Parse('POST / HTTP/1.1'#13#10'content-length: 10'#13#10'transfer-encoding: chunked'#13#10#13#10);
+    Msg := Parse('POST / HTTP/1.1'#13#10'content-length: 10'#13#10'transfer-encoding: chunked'#13#10'Host: x'#13#10#13#10);
     AssertEquals(DECODED_LENGTH_CHUNKED, Msg.Decode);
     AssertFalse(H.Contains(HN_CONTENT_LENGTH));
     AssertFalse(Msg.KeepAlive);
 
-    Msg := Parse('POST / HTTP/1.1'#13#10'transfer-encoding: chunked'#13#10'content-length: 10'#13#10#13#10);
+    Msg := Parse('POST / HTTP/1.1'#13#10'transfer-encoding: chunked'#13#10'content-length: 10'#13#10'Host: x'#13#10#13#10);
     AssertEquals(DECODED_LENGTH_CHUNKED, Msg.Decode);
     AssertFalse(H.Contains(HN_CONTENT_LENGTH));
     AssertFalse(Msg.KeepAlive);
 
-    Msg := Parse('POST / HTTP/1.1'#13#10'transfer-encoding: gzip'#13#10'content-length: 10'#13#10'transfer-encoding: chunked'#13#10#13#10);
+    Msg := Parse('POST / HTTP/1.1'#13#10'transfer-encoding: gzip'#13#10'content-length: 10'#13#10'transfer-encoding: chunked'#13#10'Host: x'#13#10#13#10);
     AssertEquals(DECODED_LENGTH_CHUNKED, Msg.Decode);
     AssertFalse(H.Contains(HN_CONTENT_LENGTH));
     AssertFalse(Msg.KeepAlive);
 
-    Msg := Parse('POST / HTTP/1.1'#13#10'connection: keep-alive'#13#10'content-length: 10'#13#10'transfer-encoding: chunked'#13#10#13#10);
+    Msg := Parse('POST / HTTP/1.1'#13#10'connection: keep-alive'#13#10'content-length: 10'#13#10'transfer-encoding: chunked'#13#10'Host: x'#13#10#13#10);
     AssertEquals(DECODED_LENGTH_CHUNKED, Msg.Decode);
     AssertFalse(H.Contains(HN_CONTENT_LENGTH));
     AssertFalse(Msg.KeepAlive);
 
     { multiple content-lengths of same value are fine }
-    AssertEquals(QWord(10), Parse('POST / HTTP/1.1'#13#10'content-length: 10'#13#10'content-length: 10'#13#10#13#10).Decode);
+    AssertEquals(QWord(10), Parse('POST / HTTP/1.1'#13#10'content-length: 10'#13#10'content-length: 10'#13#10'Host: x'#13#10#13#10).Decode);
 
     { multiple content-lengths with different values is an error }
-    AssertTrue(ParseErr('POST / HTTP/1.1'#13#10'content-length: 10'#13#10'content-length: 11'#13#10#13#10,
+    AssertTrue(ParseErr('POST / HTTP/1.1'#13#10'content-length: 10'#13#10'content-length: 11'#13#10'Host: x'#13#10#13#10,
       'multiple content-lengths') = h1peHeaderContentLengthInvalid);
 
     { content-length with prefix is not allowed }
-    AssertTrue(ParseErr('POST / HTTP/1.1'#13#10'content-length: +10'#13#10#13#10,
+    AssertTrue(ParseErr('POST / HTTP/1.1'#13#10'content-length: +10'#13#10'Host: x'#13#10#13#10,
       'prefixed content-length') = h1peHeaderContentLengthInvalid);
 
     { transfer-encoding that isn't chunked is an error }
-    AssertTrue(ParseErr('POST / HTTP/1.1'#13#10'transfer-encoding: gzip'#13#10#13#10,
+    AssertTrue(ParseErr('POST / HTTP/1.1'#13#10'transfer-encoding: gzip'#13#10'Host: x'#13#10#13#10,
       'transfer-encoding but not chunked') = h1peHeaderTransferEncodingInvalid);
-    AssertTrue(ParseErr('POST / HTTP/1.1'#13#10'transfer-encoding: chunked, gzip'#13#10#13#10,
+    AssertTrue(ParseErr('POST / HTTP/1.1'#13#10'transfer-encoding: chunked, gzip'#13#10'Host: x'#13#10#13#10,
       'transfer-encoding doesn''t end in chunked') = h1peHeaderTransferEncodingInvalid);
-    AssertTrue(ParseErr('POST / HTTP/1.1'#13#10'transfer-encoding: chunked'#13#10'transfer-encoding: afterlol'#13#10#13#10,
+    AssertTrue(ParseErr('POST / HTTP/1.1'#13#10'transfer-encoding: chunked'#13#10'transfer-encoding: afterlol'#13#10'Host: x'#13#10#13#10,
       'transfer-encoding multiple lines doesn''t end in chunked') = h1peHeaderTransferEncodingInvalid);
 
     { http/1.0 }
@@ -309,9 +309,9 @@ begin
   H := THttpHeaders.Create;
   try
     AssertFalse('close before keep-alive is still close',
-      Parse('GET / HTTP/1.1'#13#10'connection: close'#13#10'connection: keep-alive'#13#10#13#10).KeepAlive);
+      Parse('GET / HTTP/1.1'#13#10'connection: close'#13#10'connection: keep-alive'#13#10'Host: x'#13#10#13#10).KeepAlive);
     AssertFalse('keep-alive before close is still close',
-      Parse('GET / HTTP/1.1'#13#10'connection: keep-alive'#13#10'connection: close'#13#10#13#10).KeepAlive);
+      Parse('GET / HTTP/1.1'#13#10'connection: keep-alive'#13#10'connection: close'#13#10'Host: x'#13#10#13#10).KeepAlive);
     AssertTrue('HTTP/1.0 keep-alive is not undone by an unrelated token',
       Parse('GET / HTTP/1.0'#13#10'connection: keep-alive'#13#10'connection: foo'#13#10#13#10).KeepAlive);
     AssertFalse('HTTP/1.0 close wins over an earlier keep-alive',
@@ -476,7 +476,10 @@ var
   var
     I: Integer;
   begin
-    Result := 'GET / HTTP/1.1'#13#10;
+    { HTTP/1.0: the header count is the subject, and an HTTP/1.1 request
+      needs a Host line, so with Num = 0 (and MaxHeaders = 0) it could not
+      be valid }
+    Result := 'GET / HTTP/1.0'#13#10;
     for I := 0 to Num - 1 do
       Result := Result + 'key' + IntToStr(I) + ': val' + IntToStr(I) + #13#10;
     Result := Result + #13#10;
@@ -505,10 +508,10 @@ begin
   H := THttpHeaders.Create;
   try
     { check generator }
-    AssertEquals('GET / HTTP/1.1'#13#10#13#10, GenReqWithHeaders(0));
-    AssertEquals('GET / HTTP/1.1'#13#10'key0: val0'#13#10#13#10, GenReqWithHeaders(1));
-    AssertEquals('GET / HTTP/1.1'#13#10'key0: val0'#13#10'key1: val1'#13#10#13#10, GenReqWithHeaders(2));
-    AssertEquals('GET / HTTP/1.1'#13#10'key0: val0'#13#10'key1: val1'#13#10'key2: val2'#13#10#13#10, GenReqWithHeaders(3));
+    AssertEquals('GET / HTTP/1.0'#13#10#13#10, GenReqWithHeaders(0));
+    AssertEquals('GET / HTTP/1.0'#13#10'key0: val0'#13#10#13#10, GenReqWithHeaders(1));
+    AssertEquals('GET / HTTP/1.0'#13#10'key0: val0'#13#10'key1: val1'#13#10#13#10, GenReqWithHeaders(2));
+    AssertEquals('GET / HTTP/1.0'#13#10'key0: val0'#13#10'key1: val1'#13#10'key2: val2'#13#10#13#10, GenReqWithHeaders(3));
 
     { default max_headers is 100 }
     Parse(-1, 0, True);
@@ -586,9 +589,9 @@ procedure TTestRoleServer.Test_is_complete_fast;
   end;
 
 begin
-  Check('GET / HTTP/1.1'#13#10'a: b'#13#10#13#10, True);
-  Check('GET / HTTP/1.1'#10'a: b'#10#10, True);
-  Check('GET / HTTP/1.1'#13#10'a: b'#10#13#10, True);
+  Check('GET / HTTP/1.1'#13#10'a: b'#13#10'Host: x'#13#10#13#10, True);
+  Check('GET / HTTP/1.1'#10'a: b'#10'Host: x'#10#10, True);
+  Check('GET / HTTP/1.1'#13#10'a: b'#10'Host: x'#10#13#10, True);
   { Not }
   Check('GET / HTTP/1.1'#13#10'a: b'#13#10#13, False);
   Check('GET / HTTP/1.1'#10'a: b'#10, False);
@@ -602,7 +605,7 @@ var
 begin
   H := THttpHeaders.Create;
   try
-    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'a: b'#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'a: b'#10'Host: x'#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
   finally
     H.Free;
   end;
@@ -621,7 +624,7 @@ begin
     AssertTrue(Msg.Error = h1peHeaderToken);
     AssertEquals(400, ServerErrorStatus(Msg.Error));
     { the same bytes as the hyper test's header line, in a request }
-    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'Access-Control-Allow-Credentials : true'#13#10#13#10,
+    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'Access-Control-Allow-Credentials : true'#13#10'Host: x'#13#10#13#10,
       DefaultParseContext, H, Msg) = spsError);
     AssertTrue(Msg.Error = h1peHeaderToken);
   finally
@@ -636,9 +639,9 @@ var
 begin
   H := THttpHeaders.Create;
   try
-    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'server: hello'#9'world'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'server: hello'#9'world'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
     AssertEquals('hello'#9'world', H.GetValue('server'));
-    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'x: a'#9'b'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'x: a'#9'b'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
     AssertEquals('a'#9'b', H.GetValue('x'));
   finally
     H.Free;
@@ -654,12 +657,12 @@ begin
     it, so the server answers 400 }
   H := THttpHeaders.Create;
   try
-    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'x: obs'#13#10' fold'#13#10#9' line'#13#10#13#10,
+    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'x: obs'#13#10' fold'#13#10#9' line'#13#10'Host: x'#13#10#13#10,
       DefaultParseContext, H, Msg) = spsError);
     AssertTrue(Msg.Error = h1peHeaderToken);
     AssertEquals(400, ServerErrorStatus(Msg.Error));
     { a normal line is fine }
-    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'x: a normal line'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
+    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'x: a normal line'#13#10'Host: x'#13#10#13#10, DefaultParseContext, H, Msg) = spsComplete);
     AssertEquals('a normal line', H.GetValue('x'));
   finally
     H.Free;

@@ -2,6 +2,20 @@
 
 All notable changes to Bearings are documented in this file.
 
+# Unreleased
+
+Two request smuggling fixes, found by checking Bearings against the CVEs of the last five years.
+
+- **A bare LF in the trailer section of a chunked request body is refused.** Before, after `0` CRLF LF, or after a trailer line that ended with LF, the decoder read on to the next CRLF CRLF while the trailer parser stopped at the LF, so the bytes in between were dropped without an error. Behind a proxy that ends the body at the bare LF (RFC 9112 2.2 lets a recipient take a bare LF as a line end), the next request on the connection was swallowed and the proxy's responses were matched to the wrong requests (the class of CVE-2025-43859). The decoder now fails the body with `deTrailerBareLf` ("Invalid trailer line: LF without CR"), and the connection closes after the response. hyper behaves as Bearings did before.
+- **An HTTP/1.1 request without `Host`, or any request with two `Host` lines, gets 400** (RFC 9112 3.2). With two lines, the server and a proxy could each use a different one. The handler is not called. HTTP/1.0 requests may still omit `Host`. The new parse error is `h1peHeaderHost` ("missing or duplicate host header"). Clients that send HTTP/1.1 without `Host` (hand-written test scripts, some health checks) must add it.
+- **`cmWithoutShutdown` writes the automatic error response before it hands the socket back.** A bad request is answered with a buffered 400 and the error is stored; when the socket did not take the 400 at once, the connection ended with the error and the 400 was dropped. The write buffer is now flushed first, as it is before a shutdown. hyper behaves as Bearings did before. The split fuzz found it.
+
+Development:
+
+- The unit tests and the conformance cases send `Host` in their HTTP/1.1 requests. Tests that counted header lines, or compared head lengths, count the `Host` line.
+- `python/tests/test_raw.py` sends the smuggling attempts and the requests with a missing or repeated `Host` to a running server.
+- `test_role_diff` and `test_codec_diff`, which compare with hyper, now report the two differences above as mismatches.
+
 # 0.4.1
 
 - **Raising the descriptor limit is now a choice: `TServerConfig.RaiseFdLimit`.** 0.4.0 raised the process's soft limit on open file descriptors to the hard limit at every `Start`. That was wrong for a library: the limit belongs to the whole process, `select()` cannot take a descriptor >= 1024 (the reason systemd leaves the soft limit there), and child processes inherit the raised limit. `ProductionServerConfig` and `BenchmarkServerConfig` set the option; `Default(TServerConfig)` does not.

@@ -136,7 +136,7 @@
       },
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"},
         {"op": "read_to_eof", "expect": [
           {"starts_with": "HTTP/1.1 200 OK\r\n"},
           {"len": 100808}

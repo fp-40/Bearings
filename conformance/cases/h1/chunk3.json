@@ -75,7 +75,7 @@
       },
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"},
         {"op": "shutdown_write"},
         {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 200 OK\r\n"}],
          "timing": {"since": "connect", "min_ms": 425, "max_ms": 1000},
@@ -96,7 +96,7 @@
       },
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"},
         {"op": "close"}
       ],
       "expect_events": [
@@ -118,7 +118,7 @@
       },
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"},
         {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 500 "}]}
       ],
       "expect_events": [
@@ -132,7 +132,7 @@
       "server": {"handler": "test_service"},
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": ["GET / HTTP/1.1\r\n", {"repeat": "x", "count": 65536}, ": foo\r\n\r\n"]},
+        {"op": "write", "data": ["GET / HTTP/1.1\r\n", {"repeat": "x", "count": 65536}, ": foo\r\nHost: x\r\n\r\n"]},
         {"op": "read_once", "max": 1024, "expect": [
           {"starts_with": "HTTP/1.1 431 Request Header Fields Too Large\r\n"}
         ]}
@@ -156,7 +156,7 @@
          "timing": {"since": "connect", "min_ms": 4250, "max_ms": 5500},
          "expect": [{"len": 0}, {"end": "closed"}]},
         {"op": "sleep", "ms": 4000, "comment": "hyper's client writes the rest of the head at t=9 s"},
-        {"op": "write", "data": "Works: 0\r\n\r\n", "may_fail": true}
+        {"op": "write", "data": "Works: 0\r\nHost: x\r\n\r\n", "may_fail": true}
       ],
       "expect_events": [
         {"event": "conn_close", "outcome": "timeout"}
@@ -198,7 +198,7 @@
         {"op": "connect"},
         {"op": "write", "data": "GET / HTTP/1.1\r\n"},
         {"op": "sleep", "ms": 3000},
-        {"op": "write", "data": "Something: 1\r\n\r\n", "mark": "request_1_sent"},
+        {"op": "write", "data": "Something: 1\r\nHost: x\r\n\r\n", "mark": "request_1_sent"},
         {"op": "sleep", "ms": 3000},
         {"op": "write", "data": "GET / HTTP/1.1\r\n"},
         {"op": "read_to_eof", "timeout_ms": 3000, "allow_reset": true,
@@ -209,7 +209,7 @@
            {"end": "closed"}
          ]},
         {"op": "sleep", "ms": 1000, "comment": "hyper's client writes the rest of request 2 at t=9 s"},
-        {"op": "write", "data": "Something: 1\r\n\r\n", "may_fail": true}
+        {"op": "write", "data": "Something: 1\r\nHost: x\r\n\r\n", "may_fail": true}
       ],
       "expect_events": [
         {"event": "request", "req": 1},
@@ -230,7 +230,7 @@
       },
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n"},
         {"op": "read_to_eof", "timeout_ms": 6000, "allow_reset": true,
          "timing": {"since": "connect", "min_ms": 2550, "max_ms": 3500},
          "expect": [
@@ -239,7 +239,7 @@
            {"end": "closed"}
          ]},
         {"op": "sleep", "ms": 3000, "comment": "hyper's client writes request 2 at t=6 s"},
-        {"op": "write", "data": "GET / HTTP/1.1\r\n\r\n", "may_fail": true}
+        {"op": "write", "data": "GET / HTTP/1.1\r\nHost: x\r\n\r\n", "may_fail": true}
       ],
       "expect_events": [
         {"event": "request", "req": 1},
@@ -267,7 +267,7 @@
       },
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "GET / HTTP/1.1\r\nUpgrade: foobar\r\nConnection: upgrade\r\n\r\neagerly optimistic"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nUpgrade: foobar\r\nConnection: upgrade\r\nHost: x\r\n\r\neagerly optimistic"},
         {"op": "read_once", "max": 256, "expect": [
           {"starts_with": "HTTP/1.1 101 Switching Protocols\r\n"}
         ]},
@@ -299,7 +299,7 @@
       },
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "CONNECT localhost:80 HTTP/1.1\r\n\r\neagerly optimistic"},
+        {"op": "write", "data": "CONNECT localhost:80 HTTP/1.1\r\nHost: x\r\n\r\neagerly optimistic"},
         {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 200 OK\r\n"}]},
         {"op": "control", "command": "signal", "name": "read_200"},
         {"op": "read_once", "max": 256, "expect": [{"equals": "foo=bar"}]},
@@ -330,7 +330,7 @@
       },
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "GET / HTTP/1.1\r\nUpgrade: foobar\r\nConnection: upgrade\r\n\r\neagerly optimistic"},
+        {"op": "write", "data": "GET / HTTP/1.1\r\nUpgrade: foobar\r\nConnection: upgrade\r\nHost: x\r\n\r\neagerly optimistic"},
         {"op": "read_once", "max": 256, "expect": [
           {"starts_with": "HTTP/1.1 101 Switching Protocols\r\n"},
           {"scope": "head", "not_contains": "content-length", "ci": true}
@@ -357,12 +357,12 @@
       },
       "steps": [
         {"op": "connect", "conn": "c1"},
-        {"op": "write", "conn": "c1", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\nupgrade: yolo\r\nconnection: upgrade\r\n\r\n"},
+        {"op": "write", "conn": "c1", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\nupgrade: yolo\r\nconnection: upgrade\r\nHost: x\r\n\r\n"},
         {"op": "read_response", "conn": "c1", "expect": [{"status": 200}]},
         {"op": "close", "conn": "c1"},
         {"op": "await_event", "match": {"event": "conn_close", "conn": 1}},
         {"op": "connect", "conn": "c2"},
-        {"op": "write", "conn": "c2", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\nupgrade: yolo\r\nconnection: upgrade\r\n\r\n"},
+        {"op": "write", "conn": "c2", "data": "GET http://127.0.0.1:${port}/ HTTP/1.1\r\nupgrade: yolo\r\nconnection: upgrade\r\nHost: x\r\n\r\n"},
         {"op": "read_response", "conn": "c2", "expect": [{"status": 200}]},
         {"op": "close", "conn": "c2"}
       ],
@@ -390,7 +390,7 @@
       },
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "CONNECT localhost HTTP/1.1\r\n\r\neagerly optimistic"},
+        {"op": "write", "data": "CONNECT localhost HTTP/1.1\r\nHost: x\r\n\r\neagerly optimistic"},
         {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 200 OK\r\n"}]},
         {"op": "control", "command": "signal", "name": "read_200"},
         {"op": "read_once", "max": 256, "expect": [{"equals": "foo=bar"}]},
@@ -424,7 +424,7 @@
       "server": {"handler": "hello_world"},
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "POST / HTTP/1.1\r\nContent-Length: foo\r\n\r\n"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\nContent-Length: foo\r\nHost: x\r\n\r\n"},
         {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 400 "}]}
       ],
       "expect_events": [

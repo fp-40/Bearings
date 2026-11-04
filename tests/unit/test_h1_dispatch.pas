@@ -205,6 +205,8 @@ type
     procedure Upgrades_ignored_no_shutdown;
     procedure With_upgrades_delivers_after_close;
     procedure Without_shutdown_parts;
+    procedure Without_shutdown_pending_write_response;
+    procedure Without_shutdown_pending_write_error_response;
     procedure Idle_releases_exchange_and_blocks;
     procedure Header_read_timeout;
     procedure Body_rate_rule_outcome_io;
@@ -1210,6 +1212,45 @@ begin
   AssertEquals('rest', 'rest', FObs.PartsRest);
   AssertEquals('no shutdown', 0, FIo.ShutdownCalls);
   AssertTrue('conn_close before parts', LogIndex(FLog, 'conn_close') < LogIndex(FLog, 'parts'));
+end;
+
+{ cmWithoutShutdown: the socket is handed back instead of shut down, but
+  what is still in the write buffer (the socket took nothing yet) is written
+  first, as before a shutdown. }
+procedure TTestDispatchBehavior.Without_shutdown_pending_write_response;
+begin
+  FCfg.Mode := cmWithoutShutdown;
+  FCfg.KeepAlive := False;
+  FIo.AddRead(GET_REQ + 'rest');
+  FIo.AddWritePending;
+  Start;
+  Drive;
+  AssertTrue('done', Done);
+  AssertTrue('the pending write was seen', LogCount(FLog, 'write pending') >= 1);
+  AssertEquals('the response was written', 1, Count('HTTP/1.1 200 OK', FIo.Written));
+  AssertTrue('the response body', AnsiEndsStr(CRLF + CRLF + FSvc.RespBody, FIo.Written));
+  AssertEquals('parts', 1, FObs.PartsCount);
+  AssertEquals('rest', 'rest', FObs.PartsRest);
+  AssertEquals('no shutdown', 0, FIo.ShutdownCalls);
+end;
+
+procedure TTestDispatchBehavior.Without_shutdown_pending_write_error_response;
+begin
+  { a request without Host: the automatic 400 is buffered, the socket does
+    not take it at once; it must still leave before the connection ends
+    with the parse error }
+  FCfg.Mode := cmWithoutShutdown;
+  FIo.AddRead('GET / HTTP/1.1' + CRLF + CRLF);
+  FIo.AddWritePending;
+  Start;
+  Drive;
+  AssertTrue('done', Done);
+  AssertTrue('the pending write was seen', LogCount(FLog, 'write pending') >= 1);
+  AssertTrue('400 written: ' + FIo.Written,
+    AnsiStartsStr('HTTP/1.1 400 Bad Request' + CRLF, FIo.Written));
+  AssertTrue('outcome parse', FObs.Outcome = coParse);
+  AssertEquals('no service call', 0, FSvc.Calls);
+  AssertEquals('no shutdown', 0, FIo.ShutdownCalls);
 end;
 
 procedure TTestDispatchBehavior.Idle_releases_exchange_and_blocks;

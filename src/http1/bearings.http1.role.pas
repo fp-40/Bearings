@@ -23,6 +23,9 @@
     proxy in front of the server and the server must agree on where a
     request ends; if they disagree, an attacker can hide a second request
     inside the body of the first one ("request smuggling");
+  - Host (RFC 9112 section 3.2): an HTTP/1.1 request without a Host line,
+    or a request of any version with more than one, is rejected with 400
+    (hyper accepts both);
   - keep-alive: HTTP/1.1 keeps the connection open unless "Connection:
     close"; HTTP/1.0 closes it unless "Connection: keep-alive";
   - "Expect: 100-continue" (the client waits for an interim "100 Continue"
@@ -116,6 +119,7 @@ type
     h1peHeaderContentLengthInvalid,        { bad or conflicting Content-Length }
     h1peHeaderTransferEncodingInvalid,     { last coding is not chunked }
     h1peHeaderTransferEncodingUnexpected,  { Transfer-Encoding in HTTP/1.0 }
+    h1peHeaderHost,                        { HTTP/1.1 without Host, or more than one Host line (not in hyper) }
     h1peTooLarge,
     h1peStatus,
     h1peInternal,
@@ -278,13 +282,14 @@ var
 
 type
   THdrKind = (hkOther, hkContentLength, hkTransferEncoding, hkConnection,
-    hkDate, hkTrailer, hkExpect, hkUpgrade);
+    hkDate, hkTrailer, hkExpect, hkUpgrade, hkHost);
 
 const
   STR_CONTENT_LENGTH: array[0..13] of AnsiChar = 'content-length';
   STR_TRANSFER_ENCODING: array[0..16] of AnsiChar = 'transfer-encoding';
   STR_CONNECTION: array[0..9] of AnsiChar = 'connection';
   STR_DATE: array[0..3] of AnsiChar = 'date';
+  STR_HOST: array[0..3] of AnsiChar = 'host';
   STR_TRAILER: array[0..6] of AnsiChar = 'trailer';
   STR_EXPECT: array[0..5] of AnsiChar = 'expect';
   STR_UPGRADE: array[0..6] of AnsiChar = 'upgrade';
@@ -304,7 +309,8 @@ function ClassifyName(P: PByte; Len: SizeInt): THdrKind;
 begin
   Result := hkOther;
   case Len of
-    4: if EqLower(P, @STR_DATE[0], 4) then Result := hkDate;
+    4: if EqLower(P, @STR_DATE[0], 4) then Result := hkDate
+       else if EqLower(P, @STR_HOST[0], 4) then Result := hkHost;
     6: if EqLower(P, @STR_EXPECT[0], 6) then Result := hkExpect;
     7: if EqLower(P, @STR_TRAILER[0], 7) then Result := hkTrailer
        else if EqLower(P, @STR_UPGRADE[0], 7) then Result := hkUpgrade;
@@ -484,7 +490,7 @@ function ServerParseSlots(Buf: PByte; Len: SizeInt; const Ctx: TH1ParseContext;
 var
   Req: TParsedRequest;
   R: TParseResult;
-  IsHttp11, IsCl, IsTe, IsTeChunked, HasConLen, SawClose: Boolean;
+  IsHttp11, IsCl, IsTe, IsTeChunked, HasConLen, SawClose, HasHost: Boolean;
   ConLen, L: QWord;
   I: Integer;
   H: PHeaderSlice;
@@ -577,6 +583,7 @@ begin
   HasConLen := False;
   ConLen := 0;
   SawClose := False;
+  HasHost := False;
   Msg.WantsUpgrade := Msg.Method = hmConnect;
 
   for I := 0 to Req.NumHeaders - 1 do
@@ -642,6 +649,14 @@ begin
       hkUpgrade:
         { upgrades are only allowed with HTTP/1.1 }
         Msg.WantsUpgrade := IsHttp11;
+      hkHost:
+        begin
+          { RFC 9112 section 3.2: more than one Host line is a 400 in
+            any version; the server and a proxy could each take another }
+          if HasHost then
+            Exit(Fail(h1peHeaderHost));
+          HasHost := True;
+        end;
     end;
     Headers.AddExternal(H^.Name.Off, H^.Name.Len, H^.Value.Off, H^.Value.Len);
   end;
@@ -650,6 +665,10 @@ begin
     known when the final coding is chunked }
   if IsTe and not IsTeChunked then
     Exit(Fail(h1peHeaderTransferEncodingInvalid));
+  { RFC 9112 section 3.2: an HTTP/1.1 request without Host is a 400
+    (HTTP/1.0 had no Host) }
+  if IsHttp11 and not HasHost then
+    Exit(Fail(h1peHeaderHost));
   { both framing headers: a sign of a smuggling attempt or a broken
     intermediary; serve this request, then close the connection }
   if IsTe and IsCl then
@@ -691,7 +710,7 @@ begin
   case E of
     h1peMethod, h1peHeaderToken, h1peHeaderContentLengthInvalid,
     h1peHeaderTransferEncodingInvalid, h1peHeaderTransferEncodingUnexpected,
-    h1peUri, h1peVersion:
+    h1peHeaderHost, h1peUri, h1peVersion:
       Result := 400;
     h1peTooLarge:
       Result := 431;
@@ -715,6 +734,7 @@ begin
     h1peHeaderContentLengthInvalid: Result := 'invalid content-length parsed';
     h1peHeaderTransferEncodingInvalid: Result := 'invalid transfer-encoding parsed';
     h1peHeaderTransferEncodingUnexpected: Result := 'unexpected transfer-encoding parsed';
+    h1peHeaderHost: Result := 'missing or duplicate host header';
     h1peTooLarge: Result := 'message head is too large';
     h1peStatus: Result := 'invalid HTTP status-code parsed';
     h1peInternal: Result := 'internal error in the HTTP/1 parser, please report';

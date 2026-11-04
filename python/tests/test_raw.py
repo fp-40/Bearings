@@ -2,6 +2,8 @@
 import socket
 import threading
 
+import pytest
+
 from conftest import WsClient
 
 from bearings import VERSION, FileWrapper, Listener, Server, WebSocketHandler
@@ -169,6 +171,88 @@ def test_the_body_cannot_be_read_after_the_request(serve):
     else:
         raise AssertionError("the body was read after the request")
 
+
+
+def record_paths(paths):
+    """A raw app that reads the body and keeps the path of every request."""
+
+    def app(head, input, listener):
+        paths.append(head.split("\0")[1])
+        try:
+            input.read()
+        except Exception:
+            pass
+        return 200, [], b"ok"
+
+    return app
+
+
+HIDDEN = b"GET /hidden HTTP/1.1\r\nHost: x\r\n\r\n"
+
+
+@pytest.mark.parametrize(
+    "trailers",
+    [
+        b"0\r\n\n",                  # the last chunk, then a bare LF
+        b"0\r\nX: y\n\r\n",          # a trailer line that ends with a bare LF
+        b"0\r\nX: y\r\n\n",          # a bare LF in place of the final CRLF
+    ],
+)
+def test_a_bare_lf_in_the_trailers_hides_no_request(serve, trailers):
+    """A bare LF in the trailer section is refused: before, the body ended
+    for a parser that takes a bare LF as a line end, while Bearings read on
+    to the next CRLF CRLF and dropped the request in between."""
+    paths = []
+    client = serve(record_paths(paths), raw=True)
+    answer = client.raw(
+        b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+        b"5\r\nhello\r\n" + trailers + HIDDEN
+    )
+    # the connection ends after the first request: the hidden request is
+    # neither served nor swallowed as trailers
+    assert paths == ["/"]
+    assert answer.count(b"HTTP/1.1 ") <= 1
+
+
+def test_valid_trailers_keep_the_connection(serve):
+    paths = []
+    client = serve(record_paths(paths), raw=True)
+    answer = client.raw(
+        b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n"
+        b"5\r\nhello\r\n0\r\nX: y\r\n\r\n"
+        b"GET /next HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+    )
+    assert paths == ["/", "/next"]
+    assert answer.count(b"HTTP/1.1 200 ") == 2
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        b"GET / HTTP/1.1\r\n\r\n",
+        b"GET http://x/ HTTP/1.1\r\n\r\n",
+        b"GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n",
+        b"GET / HTTP/1.1\r\nHost: a\r\nhost: a\r\n\r\n",
+        b"GET / HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n",
+    ],
+)
+def test_a_missing_or_repeated_host_is_400(serve, head):
+    """RFC 9112 section 3.2: an HTTP/1.1 request needs one Host line, and no
+    request may have two."""
+    paths = []
+    client = serve(record_paths(paths), raw=True)
+    answer = client.raw(head + HIDDEN)
+    assert answer.startswith(b"HTTP/1.1 400 ")
+    assert answer.count(b"HTTP/1.1 ") == 1   # the connection closes after it
+    assert paths == []
+
+
+def test_http_1_0_needs_no_host(serve):
+    paths = []
+    client = serve(record_paths(paths), raw=True)
+    answer = client.raw(b"GET / HTTP/1.0\r\n\r\n")
+    assert answer.startswith(b"HTTP/1.0 200 ")
+    assert paths == ["/"]
 
 def test_a_client_that_leaves_while_streaming(serve):
     closed = threading.Event()

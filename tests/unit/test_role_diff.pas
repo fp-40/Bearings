@@ -111,6 +111,7 @@ begin
     h1peHeaderContentLengthInvalid: Result := 'Header(ContentLengthInvalid)';
     h1peHeaderTransferEncodingInvalid: Result := 'Header(TransferEncodingInvalid)';
     h1peHeaderTransferEncodingUnexpected: Result := 'Header(TransferEncodingUnexpected)';
+    h1peHeaderHost: Result := 'Header(Host)';   { not in hyper: RFC 9112 3.2 }
     h1peTooLarge: Result := 'TooLarge';
     h1peStatus: Result := 'Status';
     h1peInternal: Result := 'Internal';

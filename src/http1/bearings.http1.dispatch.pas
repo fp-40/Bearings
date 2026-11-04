@@ -692,6 +692,21 @@ begin
           Err := NewShutdown(Errno);
           Exit(prErr);
         end;
+    end
+  else
+    { cmWithoutShutdown: the socket is handed back instead of shut down,
+      but what is still buffered is written first, as PollShutdown does:
+      the automatic error response of a bad request is buffered and the
+      error stored (TH1Conn.OnParseError), so the connection is done while
+      the socket may not have taken the response yet. hyper's poll_inner
+      returns the error at once here and drops it. }
+    case Conn.Io.PollFlush(Errno) of
+      ipPending: Exit(prPending);
+      ipError:
+        begin
+          Err := NewBodyWrite(Errno);       { as in PollFlush }
+          Exit(prErr);
+        end;
     end;
   if Conn.TakeError(Err) then
     Exit(prErr);

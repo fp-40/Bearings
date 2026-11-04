@@ -22,7 +22,7 @@
       "server": {"handler": "test_service"},
       "steps": [
         {"op": "connect"},
-        {"op": "write", "data": "POST / HTTP/1.1\r\nHost: example.domain\r\nTransfer-Encoding: chunked\r\n\r\nf0000000000000003\r\nabc\r\n0\r\n\r\nGET /sneaky HTTP/1.1\r\n\r\n"},
+        {"op": "write", "data": "POST / HTTP/1.1\r\nHost: example.domain\r\nTransfer-Encoding: chunked\r\n\r\nf0000000000000003\r\nabc\r\n0\r\n\r\nGET /sneaky HTTP/1.1\r\nHost: x\r\n\r\n"},
         {"op": "read_once", "max": 256}
       ],
       "expect_events": [
