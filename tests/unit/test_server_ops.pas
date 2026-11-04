@@ -1919,8 +1919,6 @@ begin
     + 'bearings_connections_closed_total{outcome="parse"} 0'#10
     + 'bearings_connections_closed_total{outcome="incomplete"} 0'#10
     + 'bearings_connections_closed_total{outcome="user"} 0'#10
-    + 'bearings_connections_closed_total{outcome="canceled"} 0'#10
-    + 'bearings_connections_closed_total{outcome="closed"} 0'#10
     + 'bearings_connections_closed_total{outcome="body_write_aborted"} 0'#10
     + 'bearings_connections_closed_total{outcome="shutdown"} 0'#10
     + 'bearings_connections_closed_total{outcome="io"} 0'#10

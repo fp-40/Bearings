@@ -31,9 +31,6 @@
     hekBody, hekBodyWrite reading the request body or writing the response
                           body failed.
     hekShutdown           shutting down the write side of the socket failed.
-    hekCanceled, hekChannelClosed, hekUnexpectedMessage   kept for
-                          completeness; the HTTP/1 server code does not
-                          create them.
 
   Causes (TErrorCause): ecErrno an errno from a system call; ecDecode an
   error found by the request body decoder (bearings.http1.decode: a bad chunk
@@ -71,11 +68,10 @@ type
   TPollResult = (prOk, prErr, prPending);        { done, failed (see Err), or not yet }
   TPollOpt = (poSome, poErr, poNone, poPending);  { an item, failed, no more items, or not yet }
 
-  THyperErrorKind = (hekNone, hekParse, hekUser, hekIncompleteMessage, hekUnexpectedMessage,
-    hekCanceled, hekChannelClosed, hekIo, hekHeaderTimeout, hekBody, hekBodyWrite,
-    hekBodyWriteAborted, hekShutdown);
-  THyperUserKind = (hukNone, hukBody, hukService, hukUnsupportedStatusCode, hukNoUpgrade,
-    hukManualUpgrade, hukHeader);
+  THyperErrorKind = (hekNone, hekParse, hekUser, hekIncompleteMessage, hekIo, hekHeaderTimeout,
+    hekBody, hekBodyWrite, hekBodyWriteAborted, hekShutdown);
+  THyperUserKind = (hukNone, hukBody, hukService, hukUnsupportedStatusCode, hukManualUpgrade,
+    hukHeader);
   TErrorCause = (ecNone, ecErrno, ecDecode, ecStatic, ecConnText, ecInner);
 
   { Plain data: no managed fields, no owned objects (see the unit header). }
@@ -91,7 +87,7 @@ type
     NotEofRemaining: QWord;          { hekBodyWriteAborted }
     { ecConnText: the text is in the owning connection's FErrorText (cold RawByteString field) }
     function IsParse: Boolean;  function IsParseTooLarge: Boolean;  function IsParseVersionH2: Boolean;
-    function IsUser: Boolean;  function IsCanceled: Boolean;  function IsClosed: Boolean;
+    function IsUser: Boolean;
     function IsIncompleteMessage: Boolean;  function IsBodyWriteAborted: Boolean;
     function IsShutdown: Boolean;  function IsTimeout: Boolean;   { hekHeaderTimeout only }
     function HasIoSource: Boolean;                                { the cause is an errno or a decoder error }
@@ -104,7 +100,7 @@ type
 
   { How a connection ended (conformance/SPEC.md 7.2). }
   TConnOutcome = (coOk, coTimeout, coParseTooLarge, coParseVersionH2, coParse, coIncomplete,
-    coUser, coCanceled, coClosed, coBodyWriteAborted, coShutdown, coIo, coOther);
+    coUser, coBodyWriteAborted, coShutdown, coIo, coOther);
 
 function NewParse(E: TH1ParseError): THyperError;      function NewIncomplete: THyperError;
 function NewTooLarge: THyperError;                      function NewVersionH2: THyperError;
@@ -115,7 +111,6 @@ function NewBodyWriteAborted(Remaining: QWord): THyperError;
 function NewShutdown(Errno: cint): THyperError;         function NewUserService: THyperError;
 function NewUserBody: THyperError;                      function NewUserHeader: THyperError;
 function NewUserUnsupportedStatusCode: THyperError;     function NewUserManualUpgrade: THyperError;
-function NewClosed: THyperError;
 { The error as text for logs: the kind's description, then ": " and the cause. Cold path (it
   builds strings). ConnText: the connection's FErrorText, used for an ecConnText cause. }
 function ErrorDescription(const E: THyperError; const ConnText: RawByteString): string;
@@ -151,16 +146,6 @@ function THyperError.IsUser: Boolean;
 begin
   { hekBodyWriteAborted is an application error too }
   Result := (Kind = hekUser) or (Kind = hekBodyWriteAborted);
-end;
-
-function THyperError.IsCanceled: Boolean;
-begin
-  Result := Kind = hekCanceled;
-end;
-
-function THyperError.IsClosed: Boolean;
-begin
-  Result := Kind = hekChannelClosed;
 end;
 
 function THyperError.IsIncompleteMessage: Boolean;
@@ -328,12 +313,6 @@ begin
   Result.User := hukManualUpgrade;
 end;
 
-function NewClosed: THyperError;
-begin
-  Result := Default(THyperError);
-  Result.Kind := hekChannelClosed;
-end;
-
 { ---- text for logs ---- }
 
 function KindDescription(const E: THyperError): string;
@@ -346,16 +325,12 @@ begin
         hukBody: Result := 'error from user''s Body stream';
         hukService: Result := 'error from user''s Service';
         hukUnsupportedStatusCode: Result := 'response has 1xx status code, not supported by server';
-        hukNoUpgrade: Result := 'no upgrade available';
         hukManualUpgrade: Result := 'upgrade expected but low level API in use';
         hukHeader: Result := 'user sent unexpected header';
       else
         Result := '';
       end;
     hekIncompleteMessage: Result := 'connection closed before message completed';
-    hekUnexpectedMessage: Result := 'received unexpected message from connection';
-    hekCanceled: Result := 'operation was canceled';
-    hekChannelClosed: Result := 'channel closed';
     hekIo: Result := 'connection error';
     hekHeaderTimeout: Result := 'read header from client timeout';
     hekBody: Result := 'error reading a body from connection';
@@ -415,10 +390,6 @@ begin
     Result := coIncomplete
   else if E.IsUser then
     Result := coUser
-  else if E.IsCanceled then
-    Result := coCanceled
-  else if E.IsClosed then
-    Result := coClosed
   else if E.IsBodyWriteAborted then
     Result := coBodyWriteAborted
   else if E.IsShutdown then

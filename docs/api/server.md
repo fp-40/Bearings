@@ -157,7 +157,7 @@ Metric | Kind | Meaning
 `bearings_connections_open` | gauge | HTTP connections in the loops' lists
 `bearings_connections_counted` | gauge | the connection limit's count (0 without a limit)
 `bearings_connections_accepted_total` | counter | accepted by the listeners
-`bearings_connections_closed_total{outcome=...}` | counter | by `TConnOutcome` (`ok`, `timeout`, `parse_too_large`, `parse_version_h2`, `parse`, `incomplete`, `user`, `canceled`, `closed`, `body_write_aborted`, `shutdown`, `io`, `other`)
+`bearings_connections_closed_total{outcome=...}` | counter | by `TConnOutcome` (`ok`, `timeout`, `parse_too_large`, `parse_version_h2`, `parse`, `incomplete`, `user`, `body_write_aborted`, `shutdown`, `io`, `other`)
 `bearings_requests_total` | counter | request heads read
 `bearings_requests_in_flight` | gauge | connections with a service call in progress or a response body being written (counted at snapshot time)
 `bearings_responses_total{status=...}` | counter | completed responses by class `1xx` .. `5xx`, `other`

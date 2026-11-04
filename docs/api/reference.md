@@ -212,12 +212,12 @@ Member | Description | Thread
 
 Member | Description | Thread
 ------ | ----------- | ------
-`THyperError` and its predicates (`IsParse`, `IsParseTooLarge`, `IsParseVersionH2`, `IsUser`, `IsCanceled`, `IsClosed`, `IsIncompleteMessage`, `IsBodyWriteAborted`, `IsShutdown`, `IsTimeout`, `HasIoSource`) | why an HTTP message failed (section 9) | any (plain value)
+`THyperError` and its predicates (`IsParse`, `IsParseTooLarge`, `IsParseVersionH2`, `IsUser`, `IsIncompleteMessage`, `IsBodyWriteAborted`, `IsShutdown`, `IsTimeout`, `HasIoSource`) | why an HTTP message failed (section 9) | any (plain value)
 `THyperErrorKind`, `THyperUserKind`, `TErrorCause` | its enumerations | -
 `TPollResult` (`prOk`, `prErr`, `prPending`), `TPollOpt` (`poSome`, `poErr`, `poNone`, `poPending`) | results of the connection code's poll routines | internal
 `EH1Panic` | a program error inside the HTTP/1 code | -
 `TConnOutcome` | how a connection ended | -
-`New*` (`NewParse`, `NewIncomplete`, `NewTooLarge`, `NewVersionH2`, `NewIo`, `NewHeaderTimeout`, `NewBodyDecode`, `NewBodyIo`, `NewBodyStatic`, `NewBodyWrite`, `NewBodyWriteAborted`, `NewShutdown`, `NewUserService`, `NewUserBody`, `NewUserHeader`, `NewUserUnsupportedStatusCode`, `NewUserManualUpgrade`, `NewClosed`) | constructors of error values (the connection code uses them) | any
+`New*` (`NewParse`, `NewIncomplete`, `NewTooLarge`, `NewVersionH2`, `NewIo`, `NewHeaderTimeout`, `NewBodyDecode`, `NewBodyIo`, `NewBodyStatic`, `NewBodyWrite`, `NewBodyWriteAborted`, `NewShutdown`, `NewUserService`, `NewUserBody`, `NewUserHeader`, `NewUserUnsupportedStatusCode`, `NewUserManualUpgrade`) | constructors of error values (the connection code uses them) | any
 `ErrorDescription(E, ConnText): string` | the log text of an error | any
 `OutcomeOf(R, E): TConnOutcome` | maps a result to an outcome | any
 

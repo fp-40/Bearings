@@ -21,14 +21,11 @@ text the application passed to `Fail` or `AbortStream`, `ecInner`). The
 kinds: `hekParse` (malformed or too large request head; `Parse` holds the
 parser's reason, `h1peVersionH2` means an HTTP/2 preface), `hekUser` (the
 application did something wrong: `User: THyperUserKind` = `hukService`,
-`hukBody`, `hukHeader`, `hukUnsupportedStatusCode`, `hukNoUpgrade`,
-`hukManualUpgrade`), `hekBodyWriteAborted` (the response body ended before
+`hukBody`, `hukHeader`, `hukUnsupportedStatusCode`, `hukManualUpgrade`), `hekBodyWriteAborted` (the response body ended before
 its declared length; `NotEofRemaining` bytes missing), `hekIncompleteMessage`
 (the connection closed in the middle of a message), `hekIo`,
-`hekHeaderTimeout`, `hekBody`, `hekBodyWrite`, `hekShutdown`;
-`hekCanceled`, `hekChannelClosed` and `hekUnexpectedMessage` exist but the
-server code does not create them. The predicates `IsParse`,
-`IsParseTooLarge`, `IsParseVersionH2`, `IsUser`, `IsCanceled`, `IsClosed`,
+`hekHeaderTimeout`, `hekBody`, `hekBodyWrite`, `hekShutdown`. The
+predicates `IsParse`, `IsParseTooLarge`, `IsParseVersionH2`, `IsUser`,
 `IsIncompleteMessage`, `IsBodyWriteAborted`, `IsShutdown`, `IsTimeout`,
 `HasIoSource` classify one. `ErrorDescription(E, ConnText)` builds the log
 text. The `New*` constructors build the values; a program normally only
@@ -37,8 +34,8 @@ reads them.
 A program sees these through the connection observer (section 11):
 `OnConnClose(ConnId, Data, Outcome: TConnOutcome, Detail)`. `TConnOutcome`
 is how the connection ended: `coOk`, `coTimeout`, `coParseTooLarge`,
-`coParseVersionH2`, `coParse`, `coIncomplete`, `coUser`, `coCanceled`,
-`coClosed`, `coBodyWriteAborted`, `coShutdown`, `coIo`, `coOther`;
+`coParseVersionH2`, `coParse`, `coIncomplete`, `coUser`,
+`coBodyWriteAborted`, `coShutdown`, `coIo`, `coOther`;
 `OutcomeOf(R: TPollResult, E)` maps a result to one, in that order of
 tests (`conformance/SPEC.md` 7.2). The parser's own error responses (400
 for a malformed head, 414 for a too long request-target, 431 for a too

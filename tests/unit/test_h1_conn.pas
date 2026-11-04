@@ -1993,8 +1993,6 @@ begin
   AssertTrue('User::BodyWriteAborted is_user', E.IsUser and E.IsBodyWriteAborted);
   E := NewShutdown(32);
   AssertTrue(E.IsShutdown and E.HasIoSource);
-  E := NewClosed;
-  AssertTrue(E.IsClosed);
   E := NewUserService;
   AssertTrue(E.IsUser and not E.HasIoSource);
   E := NewUserManualUpgrade;
@@ -2016,14 +2014,10 @@ begin
   AssertTrue(OutcomeOf(prErr, NewUserService) = coUser);
   AssertTrue(OutcomeOf(prErr, NewUserBody) = coUser);
   AssertTrue(OutcomeOf(prErr, NewBodyWriteAborted(1)) = coUser);
-  AssertTrue(OutcomeOf(prErr, NewClosed) = coClosed);
   AssertTrue(OutcomeOf(prErr, NewShutdown(32)) = coShutdown);
   AssertTrue(OutcomeOf(prErr, NewIo(104)) = coIo);
   AssertTrue(OutcomeOf(prErr, NewBodyIo(104)) = coIo);
   AssertTrue(OutcomeOf(prErr, NewBodyStatic('connection error')) = coOther);
-  E := Default(THyperError);
-  E.Kind := hekCanceled;
-  AssertTrue(OutcomeOf(prErr, E) = coCanceled);
 end;
 
 procedure TTestHyperError.Descriptions;
@@ -2042,7 +2036,6 @@ begin
   AssertEquals('response has 1xx status code, not supported by server',
     ErrorDescription(NewUserUnsupportedStatusCode, ''));
   AssertEquals('user sent unexpected header', ErrorDescription(NewUserHeader, ''));
-  AssertEquals('channel closed', ErrorDescription(NewClosed, ''));
   AssertTrue('io: os error text', Pos('(os error 104)', ErrorDescription(NewIo(104), '')) > 0);
   AssertEquals('connection error: ', Copy(ErrorDescription(NewIo(104), ''), 1, 18));
 end;

@@ -425,7 +425,7 @@ Exactly one class, checked in this order (hyper `Error` predicates):
 | `parse` | `is_parse()` | any other request-head parse error: method, request-target, version, header syntax, invalid Content-Length or Transfer-Encoding, an HTTP/1.1 request without `Host` or a request with two `Host` lines (400 written; the `Host` rule is not in hyper) |
 | `incomplete` | `is_incomplete_message()` | EOF in the middle of a request head, or EOF while a request was in progress with `half_close` false |
 | `user` | `is_user()` | the handler failed (including test_service body errors), or the handler returned a 1xx final status (hyper writes a 500) |
-| `canceled`, `closed`, `body_write_aborted`, `shutdown` | the matching predicate | rare internal cases |
+| `body_write_aborted`, `shutdown` | the matching predicate | rare internal cases |
 | `io` | source is an `io::Error` | socket error; in bearings also a request body error (malformed framing, a socket error, the body rate rule) after the handler answered, where hyper reports `ok` (docs/design.md section 10) |
 | `other` | none of the above | |
 

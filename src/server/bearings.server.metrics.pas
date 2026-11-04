@@ -96,8 +96,8 @@ uses
 
 const
   OUTCOME_LABELS: array[TConnOutcome] of RawByteString = ('ok', 'timeout', 'parse_too_large',
-    'parse_version_h2', 'parse', 'incomplete', 'user', 'canceled', 'closed', 'body_write_aborted',
-    'shutdown', 'io', 'other');
+    'parse_version_h2', 'parse', 'incomplete', 'user', 'body_write_aborted', 'shutdown', 'io',
+    'other');
   STATUS_LABELS: array[TStatusClass] of RawByteString = ('1xx', '2xx', '3xx', '4xx', '5xx', 'other');
 
 function StatusClassOf(Status: Word): TStatusClass;

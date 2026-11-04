@@ -313,8 +313,8 @@ procedure TConfObserver.OnConnClose(ConnId: QWord; Data: Pointer; Outcome: TConn
   const Detail: string);
 const
   NAMES: array[TConnOutcome] of string = ('ok', 'timeout', 'parse_too_large',
-    'parse_version_h2', 'parse', 'incomplete', 'user', 'canceled', 'closed',
-    'body_write_aborted', 'shutdown', 'io', 'other');
+    'parse_version_h2', 'parse', 'incomplete', 'user', 'body_write_aborted', 'shutdown', 'io',
+    'other');
 var
   D: TConnData;
   Line: RawByteString;
