@@ -17,11 +17,8 @@
   TConfObserver: conn_open at accept (connections numbered 1, 2, ... in
   accept order; an atomic counter, as --loops N accepts on several loops), the TCountingTransport wrapper (the reference's CountIo,
   always present; it emits bytes_read only when the spec asks), conn_close
-  with OutcomeOf / ErrorDescription, graceful_shutdown_on_accept (OnStart:
-  after the dispatcher is set up, before its first Run), and the
-  without_shutdown parts: when the request's reply stored an upgrade with
-  on_upgrade false, the upgrade task runs on the returned socket, else the
-  socket is closed (the reference's serve_conn).
+  with OutcomeOf / ErrorDescription, and graceful_shutdown_on_accept
+  (OnStart: after the dispatcher is set up, before its first Run).
 
   --executor worker (docs/design.md section 9): TConfService.Call returns a
   TConfWorkerCall (a TOffloadCall per call). Its first Poll, on the loop,
@@ -56,7 +53,6 @@ type
   public
     Conn: QWord;
     Loop: TLoop;
-    PendingUpgrade: TUpgradeSpec;    { reply upgrade with on_upgrade false (without_shutdown) }
   end;
 
   { the reference's CountIo: counts the bytes the HTTP layer reads; with Emit, a bytes_read
@@ -94,7 +90,6 @@ type
     procedure OnStart(ConnId: QWord; Data: Pointer; Task: TLoopTask); override;
     procedure OnConnClose(ConnId: QWord; Data: Pointer; Outcome: TConnOutcome;
       const Detail: string); override;
-    procedure OnParts(ConnId: QWord; Data: Pointer; var Parts: TConnParts); override;
   end;
 
   TConfBlockingHandler = class;
@@ -122,7 +117,6 @@ type
     NoUpgrade: Boolean;              { upgrade::on on a request without one }
     EmitNoUpgrade: Boolean;          { set by the worker (step 8): the loop emits upgrade_error }
     ArmUpgrade: Boolean;             { set by the worker (step 8): the loop sets UpHandler.Armed }
-    PendingUpgrade: TUpgradeSpec;    { set by the worker (step 8): the loop sets Data.PendingUpgrade }
     function Poll(Ex: TExchange): TCallPoll; override;
     procedure Drop(Ex: TExchange; Completed: Boolean); override;
     procedure ReleaseRef;
@@ -333,33 +327,7 @@ begin
     WriteLn(StdErr, 'beconf: conn ', D.Conn, ' closed: ', NAMES[Outcome], ': ', Detail);
   end;
   EmitLine(Line + '}');
-  { without_shutdown and Ok: OnParts follows and frees the data }
-  if not ((Spec.Cfg.Mode = cmWithoutShutdown) and (Outcome = coOk)) then
-    D.Free;
-end;
-
-procedure TConfObserver.OnParts(ConnId: QWord; Data: Pointer; var Parts: TConnParts);
-var
-  D: TConnData;
-  U: TUpgraded;
-begin
-  D := TConnData(Data);
-  try
-    if D.PendingUpgrade <> nil then
-    begin
-      { run_upgrade on parts.io.into_stream() with parts.read_buf; the
-        socket's readiness source moves to the stream before the connection
-        task is freed }
-      U := TUpgraded.CreateFrom(D.Loop, Parts.Transport, Parts.Rest, Parts.Src, True);
-      Parts.Transport := nil;
-      Parts.Rest := Default(TBytesView);
-      StartUpgrade(D.Conn, D.PendingUpgrade, U);
-    end
-    else
-      inherited OnParts(ConnId, Data, Parts);   { drop: close(2) }
-  finally
-    D.Free;
-  end;
+  D.Free;
 end;
 
 { ---- TConfService ---- }
@@ -574,19 +542,14 @@ begin
           Done_(Ex, ErrDone(Conn, Req, Reply.Error));
           Exit(cpReady);
         end;
-        { 8. upgrade }
-        if Reply.Upgrade <> nil then
+        { 8. upgrade (with on_upgrade false the actions never run) }
+        if (Reply.Upgrade <> nil) and Reply.Upgrade.OnUpgrade then
         begin
-          if Reply.Upgrade.OnUpgrade then
-          begin
-            if UpHandler <> nil then
-              UpHandler.Armed := True    { tokio::spawn(on_upgrade.await ...) }
-            else if NoUpgrade then
-              EmitLater(Ex.Loop, '{"event":"upgrade_error","conn":' + JUInt(Conn)
-                + ',"message":"no upgrade available"}');
-          end
-          else
-            Data.PendingUpgrade := Reply.Upgrade;
+          if UpHandler <> nil then
+            UpHandler.Armed := True    { tokio::spawn(on_upgrade.await ...) }
+          else if NoUpgrade then
+            EmitLater(Ex.Loop, '{"event":"upgrade_error","conn":' + JUInt(Conn)
+              + ',"message":"no upgrade available"}');
         end;
         { 9. the response }
         Respond_(Ex);
@@ -646,8 +609,6 @@ begin
       between the worker's ReleaseRequest and step 8) }
     if ArmUpgrade then
       UpHandler.Armed := True;
-    if PendingUpgrade <> nil then
-      Data.PendingUpgrade := PendingUpgrade;
     if EmitNoUpgrade then
     begin
       EmitNoUpgrade := False;
@@ -807,19 +768,14 @@ begin
     end;
     Exit;
   end;
-  { 8. upgrade }
-  if R.Upgrade <> nil then
+  { 8. upgrade (with on_upgrade false the actions never run) }
+  if (R.Upgrade <> nil) and R.Upgrade.OnUpgrade then
   begin
-    if R.Upgrade.OnUpgrade then
-    begin
-      { the loop applies these after cpReady (TConfWorkerCall.Poll) }
-      if C.UpHandler <> nil then
-        C.ArmUpgrade := True
-      else if C.NoUpgrade then
-        C.EmitNoUpgrade := True
-    end
-    else
-      C.PendingUpgrade := R.Upgrade;
+    { the loop applies these after cpReady (TConfWorkerCall.Poll) }
+    if C.UpHandler <> nil then
+      C.ArmUpgrade := True
+    else if C.NoUpgrade then
+      C.EmitNoUpgrade := True
   end;
   { 9. the response }
   SetHead(Ex, R);

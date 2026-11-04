@@ -223,7 +223,7 @@ Unknown fields are errors. Every `config` field is optional. Defaults are hyper 
 | `auto_date_header` | bool | `true` | `auto_date_header(v)` | `false`: do not add a `date` header |
 | `ignore_invalid_headers` | bool | `false` | `ignore_invalid_headers(v)` | silently skip malformed request header lines instead of answering 400 |
 | `allow_multiple_spaces_in_request_line_delimiters` | bool | `false` | same name | accept several spaces between request-line elements |
-| `conn_mode` | `"plain"` \| `"with_upgrades"` \| `"without_shutdown"` | `"plain"` | section 6.1 | how the connection is driven |
+| `conn_mode` | `"plain"` \| `"with_upgrades"` | `"plain"` | section 6.1 | how the connection is driven |
 | `graceful_shutdown_on_accept` | bool | `false` | `graceful_shutdown()` before the first poll | start graceful shutdown on every connection right after accept (section 6.2) |
 
 ---
@@ -307,8 +307,8 @@ For each request, in this order:
 5. Release the request (drop it, including any unread body).
 6. If `delay_ms` > 0, sleep.
 7. If `error` is set, fail the handler with that message. Stop.
-8. If `upgrade` is set: with `on_upgrade` true, start the upgrade task (6.3); with `on_upgrade`
-   false, remember the spec for the `without_shutdown` hand-off (6.1).
+8. If `upgrade` is set and `on_upgrade` is true, start the upgrade task (6.3); with `on_upgrade`
+   false the actions never run.
 9. Return the response: status, reason, version, headers (5.3), body (5.4).
 
 When the handler fails (steps 4 or 7), the HTTP layer writes nothing for that request and the
@@ -324,7 +324,6 @@ connection ends with outcome `user`.
 |---|---|---|
 | `plain` | `serve_connection(io, svc).await` | upgrades are not supported. The connection ends when the HTTP layer is done |
 | `with_upgrades` | `serve_connection(io, svc).with_upgrades().await` | after a 101 response (or a 2xx response to CONNECT) to a request whose handler registered with `on_upgrade`, the HTTP layer hands the connection to the upgrade task, together with the bytes it had already read past the request head. The connection outcome is `ok` |
-| `without_shutdown` | `serve_connection(io, svc).without_shutdown().await` | the connection is driven to completion without shutting down the socket. After a 101 / CONNECT-2xx response the HTTP layer stops and returns the socket plus its unread buffered bytes (hyper `Parts { io, read_buf }`). If the request's reply had `upgrade` with `on_upgrade` false, the upgrade actions (6.3) then run on that socket |
 
 `conn_close` is emitted when the HTTP layer finishes, **before** any upgrade actions run.
 
@@ -348,7 +347,7 @@ Triggered by the `graceful_shutdown` control command or `graceful_shutdown_on_ac
 
 | field | type | default | meaning |
 |---|---|---|---|
-| `on_upgrade` | bool | `true` | `true`: the handler registers for the upgrade (hyper `upgrade::on`), and the actions run when the HTTP layer hands over the connection (`conn_mode` `with_upgrades`). `false`: the handler does not register; the actions run on the socket returned by `without_shutdown` |
+| `on_upgrade` | bool | `true` | `true`: the handler registers for the upgrade (hyper `upgrade::on`), and the actions run when the HTTP layer hands over the connection (`conn_mode` `with_upgrades`). `false`: the handler does not register, and the actions never run (until 2026-11-04 they ran on the socket a `without_shutdown` mode returned; that mode is gone) |
 | `await_signal` | string | none | before writing, wait until the runner sends `signal <name>` (stands in for the oneshot channels hyper's tests use to wait until the client has read the 101) |
 | `write` | byte string | none | write these bytes on the raw socket |
 | `read_to_eof` | bool | `true` | then read from the raw socket until EOF |
@@ -658,7 +657,7 @@ value), use a lower bound of about 85 % of the nominal value and an upper bound 
 | a custom `service_fn` | `test_service` with a reply using `read_body`, `delay_ms`, `status`, `error`, `upgrade` |
 | `http1::Builder::new().xxx(..)` | `config.xxx` |
 | `.timer(TokioTimer)` | `"timer": true` |
-| `.with_upgrades()` / `.without_shutdown()` | `"conn_mode": "with_upgrades"` / `"without_shutdown"` |
+| `.with_upgrades()` | `"conn_mode": "with_upgrades"` |
 | `connect(addr)` | `{"op":"connect"}` |
 | `write_all(b)` | `{"op":"write","data":b}` |
 | `req.read(&mut [0; N])` | `{"op":"read_once","max":N}` |
@@ -680,7 +679,7 @@ value), use a lower bound of about 85 % of the nominal value and an upper bound 
 | oneshot "client has read the 101" | `control` `signal` + upgrade `await_signal` |
 | `conn.graceful_shutdown()` | `control` `graceful_shutdown`, or `graceful_shutdown_on_accept` |
 | the server has polled (read) the first `n` bytes before the test acts | `"bytes_read_events": true` in the server spec + `{"op":"await_event","match":{"event":"bytes_read","conn":1,"total":n}}` |
-| `parts.read_buf` / upgraded IO `read_to_end` | `upgraded.read_buf` / `upgrade_read.data` events |
+| upgraded IO `read_buf` / `read_to_end` | `upgraded.read_buf` / `upgrade_read.data` events |
 | t! macro (integration.rs) | `test_service` with one reply per message; the request bytes the hyper h1 client sends: absolute-form `GET http://127.0.0.1:${port}/path HTTP/1.1`, no Host header, `content-length` only for non-empty bodies; `[run3 h1 via proxy]` adds `"via_proxy": "h1"` |
 | `#[ignore]` | `"pending": "#[ignore] upstream: <reason>"` |
 

@@ -143,7 +143,7 @@
       "source": "tests/server.rs:1513",
       "notes": "http1::Builder with timer + header_read_timeout(5 s), driven with without_shutdown(). The service would return 200 with an empty body; it is never called. hyper's client timeline: t=0 'GET / HTTP/1.1\\r\\n'; t=3 s 'Something: 1\\r\\n'; t=9 s 'Works: 0\\r\\n\\r\\n' with expect_err. That client thread is not joined (not enforced), and on Linux the first write after the peer's FIN succeeds, so the literal expect_err does not hold even against hyper (the reference server accepts this write: result ok). The intended client assertion, 'the server has closed the connection before t=9 s', is encoded as a read_to_eof after write 2 whose per-read timeout ends at t=9 s, with no response bytes (hyper returns Err(new_header_timeout) from poll_read_head without writing a response, conn.rs:262-270). The timing window 4250..5500 ms after connect is a port decision (SPEC 13), not a hyper assertion: the timer starts at the first head read after accept and is not reset by partial data (conn.rs:224-238); the reference closes at about 5000 ms. Write 3 is kept with may_fail. Server check (enforced): without_shutdown().await.expect_err('header timeout'); hyper only asserts Err; the class 'timeout' is what hyper produces. The request event is forbidden because the head never completes before the timeout.",
       "server": {
-        "config": {"timer": true, "header_read_timeout_ms": 5000, "conn_mode": "without_shutdown"},
+        "config": {"timer": true, "header_read_timeout_ms": 5000},
         "handler": "test_service",
         "replies": [{"read_body": false}]
       },
@@ -190,7 +190,7 @@
       "source": "tests/server.rs:1581",
       "notes": "http1::Builder with timer + header_read_timeout(5 s), driven with without_shutdown(); the service ignores the request and returns 200 with an empty body. hyper's client never reads. Its timeline: t=0 'GET / HTTP/1.1\\r\\n'; t=3 'Something: 1\\r\\n\\r\\n' (request 1 complete); t=6 'GET / HTTP/1.1\\r\\n'; t=9 'Something: 1\\r\\n\\r\\n'; t=15 'GET / HTTP/1.1\\r\\nSomething: 1\\r\\n'; t=21 'Works: 0\\r\\n\\r\\n\\n        ' with expect_err (writes 1-5 use expect). Only the server check is enforced: without_shutdown().await.unwrap_err().is_timeout() -> conn_close outcome 'timeout'. The client script's implied expectations (request 2 completes, the timeout hits request 3) do NOT match hyper: the header timer restarts when the connection goes back to reading a head after response 1 (conn.rs:224-238), so it fires at about t=8 while request 2 is incomplete. Measured against the reference server: the connection closes 5001 ms after write 2, only request 1 reaches the service, write 4 at t=9 succeeds (first write after FIN), and write 5 at t=15 fails (so hyper's own unjoined thread panics at expect('write 5')). This case encodes the reference behavior: the timeline up to write 4; after write 3, read_to_eof gets response 1 (unread since t=3) and then EOF, with nothing after response 1 (no response to request 2). Port decisions (SPEC 13 and catalog port note): reading response 1 and the timing window 4250..5500 ms after write 2. Writes 5 and 6 are omitted: they only exercise the client kernel's behavior on a socket the server has closed. Write 4 is kept with may_fail.",
       "server": {
-        "config": {"timer": true, "header_read_timeout_ms": 5000, "conn_mode": "without_shutdown"},
+        "config": {"timer": true, "header_read_timeout_ms": 5000},
         "handler": "test_service",
         "replies": [{"read_body": false}, {"read_body": false}, {"read_body": false}]
       },
@@ -224,7 +224,7 @@
       "source": "tests/server.rs:1657",
       "notes": "http1::Builder with timer + header_read_timeout(3 s), driven with without_shutdown(); the service ignores the request and returns 200 with an empty body. hyper's client sends request 1, never reads, sleeps 6 s, and writes request 2 with expect_err. That client thread is not joined (not enforced), and on Linux the first write after the peer's FIN succeeds, so the literal expect_err does not hold against hyper (the reference server accepts the write: result ok). The intended client assertion, 'the idle connection is closed before t=6 s', is encoded as read_to_eof after request 1 (per-read timeout 6 s): the capture is response 1 followed by EOF, with nothing after response 1. Reading response 1 and the timing window 2550..3500 ms after connect are port decisions (SPEC 13, catalog port note): the header timer restarts when the connection waits for the next head, so it acts as a keep-alive idle timeout (conn.rs:224-238); the reference closes about 3000 ms after response 1. Request 2 is still written at t=6 s with may_fail. Server check (enforced): without_shutdown().await.unwrap_err().is_timeout() -> conn_close outcome 'timeout'.",
       "server": {
-        "config": {"timer": true, "header_read_timeout_ms": 3000, "conn_mode": "without_shutdown"},
+        "config": {"timer": true, "header_read_timeout_ms": 3000},
         "handler": "test_service",
         "replies": [{"read_body": false}, {"read_body": false}]
       },
@@ -247,69 +247,6 @@
       ],
       "forbid_events": [
         {"event": "request", "req": 2}
-      ]
-    },
-    {
-      "name": "upgrades",
-      "source": "tests/server.rs:1701",
-      "notes": "Older upgrade API: serve_connection(..).without_shutdown() returns Parts {io, read_buf}. The service ignores the request (no upgrade::on, body not read) and returns 101 with 'upgrade: foobar'. The upgrade actions run on Parts.io (on_upgrade false). The 'read_101' signal stands in for hyper's oneshot: the server writes 'foo=bar' only after the client has read the 101. Client checks (first read starts with 'HTTP/1.1 101 Switching Protocols\\r\\n', second read == 'foo=bar') run in an unjoined thread, but they are enforced indirectly: a failed first check panics before tx.send, so the dropped sender makes the main task's rx.await.unwrap() panic; a failed second check panics before the client writes 'bar=foo', so the server's read_to_end assertion fails. Encoded as written and confirmed against the reference server. Server checks (enforced): without_shutdown().await.unwrap() -> conn_close ok; parts.read_buf == 'eagerly optimistic'; read_to_end of the raw socket == 'bar=foo'.",
-      "server": {
-        "config": {"conn_mode": "without_shutdown"},
-        "handler": "test_service",
-        "replies": [
-          {
-            "status": 101,
-            "headers": [["upgrade", "foobar"]],
-            "read_body": false,
-            "upgrade": {"on_upgrade": false, "await_signal": "read_101", "write": "foo=bar", "read_to_eof": true}
-          }
-        ]
-      },
-      "steps": [
-        {"op": "connect"},
-        {"op": "write", "data": "GET / HTTP/1.1\r\nUpgrade: foobar\r\nConnection: upgrade\r\nHost: x\r\n\r\neagerly optimistic"},
-        {"op": "read_once", "max": 256, "expect": [
-          {"starts_with": "HTTP/1.1 101 Switching Protocols\r\n"}
-        ]},
-        {"op": "control", "command": "signal", "name": "read_101"},
-        {"op": "read_once", "max": 256, "expect": [{"equals": "foo=bar"}]},
-        {"op": "write", "data": "bar=foo"},
-        {"op": "close"}
-      ],
-      "expect_events": [
-        {"event": "conn_close", "outcome": "ok"},
-        {"event": "upgraded", "read_buf": "eagerly optimistic"},
-        {"event": "upgrade_read", "data": "bar=foo", "end": "eof"}
-      ]
-    },
-    {
-      "name": "http_connect",
-      "source": "tests/server.rs:1757",
-      "notes": "Older upgrade API (without_shutdown() -> Parts). Request: 'CONNECT localhost:80 HTTP/1.1' followed by tunnel bytes 'eagerly optimistic'. The service ignores the request and returns 200 with an empty body. The upgrade actions run on Parts.io (on_upgrade false); the 'read_200' signal stands in for hyper's oneshot (server writes 'foo=bar' only after the client has read the 200). Client checks (first read starts with 'HTTP/1.1 200 OK\\r\\n', second read == 'foo=bar') run in an unjoined thread, but they are enforced indirectly: a failed first check panics before tx.send, so the main task's rx.await.unwrap() panics; a failed second check means the client never writes 'bar=foo', so the server's read_to_end assertion fails. Encoded as written and confirmed against the reference server. hyper does not check the 200 head for content-length/transfer-encoding here, so this case does not either. Server checks (enforced): without_shutdown().await.unwrap() -> conn_close ok; parts.read_buf == 'eagerly optimistic'; read_to_end == 'bar=foo'.",
-      "server": {
-        "config": {"conn_mode": "without_shutdown"},
-        "handler": "test_service",
-        "replies": [
-          {
-            "status": 200,
-            "read_body": false,
-            "upgrade": {"on_upgrade": false, "await_signal": "read_200", "write": "foo=bar", "read_to_eof": true}
-          }
-        ]
-      },
-      "steps": [
-        {"op": "connect"},
-        {"op": "write", "data": "CONNECT localhost:80 HTTP/1.1\r\nHost: x\r\n\r\neagerly optimistic"},
-        {"op": "read_once", "max": 256, "expect": [{"starts_with": "HTTP/1.1 200 OK\r\n"}]},
-        {"op": "control", "command": "signal", "name": "read_200"},
-        {"op": "read_once", "max": 256, "expect": [{"equals": "foo=bar"}]},
-        {"op": "write", "data": "bar=foo"},
-        {"op": "close"}
-      ],
-      "expect_events": [
-        {"event": "conn_close", "outcome": "ok"},
-        {"event": "upgraded", "read_buf": "eagerly optimistic"},
-        {"event": "upgrade_read", "data": "bar=foo", "end": "eof"}
       ]
     },
     {

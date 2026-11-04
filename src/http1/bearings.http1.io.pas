@@ -271,8 +271,8 @@ type
       write buffer holds bytes. }
     function HoldsPipelinedWrite: Boolean; inline;
     { PollFlush without the FlushPipeline skip. The dispatcher calls it
-      once the connection is done (before an upgrade hand-off, handing the
-      transport on as parts, or shutdown), where no later response can join
+      once the connection is done (before an upgrade hand-off or the
+      shutdown), where no later response can join
       the batch, so the held bytes must be written now or they would be
       lost. }
     function PollFlushHeld(out Errno: cint): TIoPoll;

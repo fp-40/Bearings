@@ -124,12 +124,9 @@ type
     Closes: Integer;
     Outcome: TConnOutcome;
     Detail: string;
-    PartsRest: RawByteString;
-    PartsCount: Integer;
     Log: TStrings;
     procedure OnConnClose(ConnId: QWord; Data: Pointer; Outcome_: TConnOutcome;
       const Detail_: string); override;
-    procedure OnParts(ConnId: QWord; Data: Pointer; var Parts: TConnParts); override;
   end;
 
   { ---- fixture ---- }
@@ -204,9 +201,6 @@ type
     procedure Upgrade_plain_mode_manual;
     procedure Upgrades_ignored_no_shutdown;
     procedure With_upgrades_delivers_after_close;
-    procedure Without_shutdown_parts;
-    procedure Without_shutdown_pending_write_response;
-    procedure Without_shutdown_pending_write_error_response;
     procedure Idle_releases_exchange_and_blocks;
     procedure Header_read_timeout;
     procedure Body_rate_rule_outcome_io;
@@ -240,7 +234,6 @@ type
     procedure Proxy_header_eof_before_it_is_ok;
     procedure Max_requests_closes_after_the_last_one;
     procedure Pipeline_flush_keep_alive_off_pipelined;
-    procedure Pipeline_flush_parts_response_written;
     procedure No_pipeline_flush_unchanged_at_end;
     { S7 fix round 7: the docs/design.md 5.3 rule for THttpService.Call, asserted }
     procedure Call_that_answers_asserts;
@@ -261,9 +254,6 @@ type
       upgraded stream; the loop side of TUpgraded (Attach, TryRead with the
       leftover first, TryWrite) runs on it }
     procedure Server_upgrade_through_wrapping_observer;
-    { S6: without_shutdown parts: the observer moves the readiness source
-      (TConnParts.Src) with TUpgraded.CreateFrom and keeps the socket }
-    procedure Server_without_shutdown_parts_keep_socket;
     { S6: TConnObserver.OnStart runs before the first Run (graceful
       shutdown on accept: closed, nothing written) }
     procedure Server_observer_on_start;
@@ -502,18 +492,6 @@ begin
     WriteStr(S, Outcome_);
     Log.Add('conn_close ' + S);
   end;
-end;
-
-procedure TRecObserver.OnParts(ConnId: QWord; Data: Pointer; var Parts: TConnParts);
-begin
-  Inc(PartsCount);
-  SetString(PartsRest, PAnsiChar(Parts.Rest.P), Parts.Rest.Len);
-  if Parts.Rest.Block <> nil then
-    Parts.Rest.Release;
-  Parts.Rest := Default(TBytesView);
-  Parts.Transport.Close;           { the test owns the transport object }
-  if Log <> nil then
-    Log.Add('parts');
 end;
 
 { ---- fixture ---- }
@@ -1200,59 +1178,6 @@ begin
   end;
 end;
 
-procedure TTestDispatchBehavior.Without_shutdown_parts;
-begin
-  FCfg.Mode := cmWithoutShutdown;
-  FCfg.KeepAlive := False;
-  FIo.AddRead(GET_REQ + 'rest');
-  Start;
-  Drive;
-  AssertTrue('done', Done);
-  AssertEquals('parts', 1, FObs.PartsCount);
-  AssertEquals('rest', 'rest', FObs.PartsRest);
-  AssertEquals('no shutdown', 0, FIo.ShutdownCalls);
-  AssertTrue('conn_close before parts', LogIndex(FLog, 'conn_close') < LogIndex(FLog, 'parts'));
-end;
-
-{ cmWithoutShutdown: the socket is handed back instead of shut down, but
-  what is still in the write buffer (the socket took nothing yet) is written
-  first, as before a shutdown. }
-procedure TTestDispatchBehavior.Without_shutdown_pending_write_response;
-begin
-  FCfg.Mode := cmWithoutShutdown;
-  FCfg.KeepAlive := False;
-  FIo.AddRead(GET_REQ + 'rest');
-  FIo.AddWritePending;
-  Start;
-  Drive;
-  AssertTrue('done', Done);
-  AssertTrue('the pending write was seen', LogCount(FLog, 'write pending') >= 1);
-  AssertEquals('the response was written', 1, Count('HTTP/1.1 200 OK', FIo.Written));
-  AssertTrue('the response body', AnsiEndsStr(CRLF + CRLF + FSvc.RespBody, FIo.Written));
-  AssertEquals('parts', 1, FObs.PartsCount);
-  AssertEquals('rest', 'rest', FObs.PartsRest);
-  AssertEquals('no shutdown', 0, FIo.ShutdownCalls);
-end;
-
-procedure TTestDispatchBehavior.Without_shutdown_pending_write_error_response;
-begin
-  { a request without Host: the automatic 400 is buffered, the socket does
-    not take it at once; it must still leave before the connection ends
-    with the parse error }
-  FCfg.Mode := cmWithoutShutdown;
-  FIo.AddRead('GET / HTTP/1.1' + CRLF + CRLF);
-  FIo.AddWritePending;
-  Start;
-  Drive;
-  AssertTrue('done', Done);
-  AssertTrue('the pending write was seen', LogCount(FLog, 'write pending') >= 1);
-  AssertTrue('400 written: ' + FIo.Written,
-    AnsiStartsStr('HTTP/1.1 400 Bad Request' + CRLF, FIo.Written));
-  AssertTrue('outcome parse', FObs.Outcome = coParse);
-  AssertEquals('no service call', 0, FSvc.Calls);
-  AssertEquals('no shutdown', 0, FIo.ShutdownCalls);
-end;
-
 procedure TTestDispatchBehavior.Idle_releases_exchange_and_blocks;
 var
   Free0: Integer;
@@ -1728,21 +1653,6 @@ begin
   AssertTrue('written before the shutdown',
     LogIndex(FLog, 'write') < LogIndex(FLog, 'shutdown'));
   AssertTrue('outcome ok', FObs.Outcome = coOk);
-end;
-
-procedure TTestDispatchBehavior.Pipeline_flush_parts_response_written;
-begin
-  FCfg.Mode := cmWithoutShutdown;
-  FCfg.KeepAlive := False;
-  FCfg.PipelineFlush := True;
-  FIo.AddRead(GET_REQ + 'rest');
-  Start;
-  Drive;
-  AssertTrue('done', Done);
-  AssertEquals('one response', 1, Count('HTTP/1.1 200 OK', FIo.Written));
-  AssertEquals('parts', 1, FObs.PartsCount);
-  AssertEquals('rest', 'rest', FObs.PartsRest);
-  AssertEquals('no shutdown', 0, FIo.ShutdownCalls);
 end;
 
 procedure TTestDispatchBehavior.No_pipeline_flush_unchanged_at_end;
@@ -2293,7 +2203,7 @@ type
 
   TUpCall = class(TServiceCall)
   public
-    Handler: TUpHandler;             { nil: no upgrade::on (without_shutdown) }
+    Handler: TUpHandler;             { nil: the call does not register for the upgrade }
     function Poll(Ex: TExchange): TCallPoll; override;
   end;
 
@@ -2314,14 +2224,11 @@ type
   public
     Loop: TLoop;
     Wrap: TWrapT;
-    WrapTotal: PtrInt;
-    Echo: TRawEcho;                  { OnParts: keep the socket and run Echo on it }
     GsOnStart: Boolean;
     Starts: Integer;
     function OnAccept(ALoop: TLoop; ConnId: QWord; const Peer: TSockAddrStorage): Pointer; override;
     function WrapTransport(T: TTcpTransport; Data: Pointer): TTransport; override;
     procedure OnStart(ConnId: QWord; Data: Pointer; Task: TLoopTask); override;
-    procedure OnParts(ConnId: QWord; Data: Pointer; var Parts: TConnParts); override;
   end;
 
 constructor TWrapT.Create(AInner: TTransport);
@@ -2474,23 +2381,6 @@ begin
     TH1Dispatcher(Task).GracefulShutdown;
 end;
 
-procedure TWrapObserver.OnParts(ConnId: QWord; Data: Pointer; var Parts: TConnParts);
-var
-  U: TUpgraded;
-begin
-  if Echo = nil then
-  begin
-    inherited OnParts(ConnId, Data, Parts);
-    Exit;
-  end;
-  { the bytes the wrapper counted before the hand-off }
-  WrapTotal := Wrap.Total;
-  U := TUpgraded.CreateFrom(Loop, Parts.Transport, Parts.Rest, Parts.Src, True);
-  Parts.Transport := nil;
-  Parts.Rest := Default(TBytesView);
-  U.Attach(Echo);
-end;
-
 const
   UPGRADE_REQ = 'GET / HTTP/1.1' + #13#10 + 'Host: x' + #13#10 + 'Upgrade: foo' + #13#10 +
     'Connection: upgrade' + #13#10#13#10;
@@ -2559,51 +2449,6 @@ begin
   Obs.Free;
   App.Handler.Echo.Free;
   App.Handler.Free;
-  App.Free;
-end;
-
-procedure TTestDispatchServer.Server_without_shutdown_parts_keep_socket;
-var
-  App: TUpApp;
-  Obs: TWrapObserver;
-  Cfg: TServerConfig;
-  Srv: TServer;
-  Head: RawByteString;
-  Closed: Boolean;
-  Live0: LongInt;
-begin
-  Live0 := WrapLive;
-  App := TUpApp.Create;
-  Obs := TWrapObserver.Create;
-  Obs.Echo := TRawEcho.Create;
-  Obs.Echo.Greeting := 'hello-raw';
-  Cfg := TestServerConfig;
-  Cfg.Loops := 1;
-  Cfg.H1.Mode := cmWithoutShutdown;
-  { hyper's defaults: with pipeline_flush the 101 stays in the write buffer
-    when the read buffer holds the leftover, and into_inner drops it }
-  Cfg.H1.PipelineFlush := False;
-  Srv := TServer.Create(Cfg, @App.NewService, Obs);
-  try
-    Srv.Start;
-    RunUpgradeClient(Srv.Port, Head, Closed);
-    Srv.Stop(1000);
-    Srv.Wait;
-    AssertTrue('101 then the raw greeting: ' + Head,
-      AnsiStartsStr('HTTP/1.1 101 Switching Protocols', Head)
-      and AnsiEndsStr(#13#10#13#10 + 'hello-raw', Head));
-    AssertTrue('the raw side read to EOF', Obs.Echo.Finished);
-    AssertEquals('EOF, not an error', 0, Obs.Echo.ReadError);
-    AssertEquals('parts rest first, then the socket', 'leftmore', Obs.Echo.Data);
-    AssertTrue('closed after the raw side', Closed);
-    AssertEquals('the wrapper counted only what the HTTP layer read',
-      Length(UPGRADE_REQ + 'left'), Obs.WrapTotal);
-  finally
-    Srv.Free;
-  end;
-  AssertEquals('wrapper freed', Live0, WrapLive);
-  Obs.Echo.Free;
-  Obs.Free;
   App.Free;
 end;
 

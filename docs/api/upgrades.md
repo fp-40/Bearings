@@ -18,9 +18,6 @@ What happens next depends on `TH1Config.Mode`:
   handed to the handler on the loop thread: `H.Upgraded(U: TUpgraded)`.
 - `cmPlain`: upgrades are not handed over; `H.UpgradeFailed(Msg)` is
   called and the connection ends.
-- `cmWithoutShutdown`: like `cmPlain` for upgrades; when the HTTP
-  connection ends, the socket and the unread bytes go to the observer's
-  `OnParts` instead of being closed (section 11).
 
 If the upgrade does not happen (no 101, the connection failed),
 `UpgradeFailed` is called instead of `Upgraded`. `OnUpgrade` on a request

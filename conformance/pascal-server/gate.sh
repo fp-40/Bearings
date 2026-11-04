@@ -1,8 +1,8 @@
 #!/bin/sh
 # Conformance gate, inline executor (docs/design.md section 9):
 # builds beconf and runs the wire cases against it in assertion mode.
-#   1. the 105 cases, RUNS times in a row, JOBS cases at a time: every run must print
-#      "SUMMARY passed=104 failed=0 pending=1 total=105";
+#   1. the 103 cases, RUNS times in a row, JOBS cases at a time: every run must print
+#      "SUMMARY passed=102 failed=0 pending=1 total=103";
 #   2. the extra cases (extra/extra-cases.json: SPEC behaviors the 105 cases
 #      do not reach) once: every case must pass.
 # Step T1 (user decision 2026-10-08) removed the diff-mode gate (same=104 in
@@ -35,8 +35,8 @@ W="$OUT/beconf${LOOPS:+ --loops $LOOPS}"
 RUNNER=$OUT/runner
 CASES=$CONF/cases/h1
 EXTRA=$CONF/pascal-server/extra/extra-cases.json
-WANT_RUN='SUMMARY passed=104 failed=0 pending=1 total=105'
-WANT_EXTRA='SUMMARY passed=25 failed=0 pending=0 total=25'
+WANT_RUN='SUMMARY passed=102 failed=0 pending=1 total=103'
+WANT_EXTRA='SUMMARY passed=24 failed=0 pending=0 total=24'
 FAIL=0
 echo "gate: load before: $(cat /proc/loadavg)"
 

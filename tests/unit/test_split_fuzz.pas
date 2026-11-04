@@ -74,7 +74,6 @@ type
     Ending: RawByteString;
     procedure OnConnClose(ConnId: QWord; Data: Pointer; Outcome: TConnOutcome;
       const Detail: string); override;
-    procedure OnParts(ConnId: QWord; Data: Pointer; var Parts: TConnParts); override;
   end;
 
   TFreeFlagDispatcher = class(TH1Dispatcher)
@@ -115,15 +114,6 @@ var
 begin
   WriteStr(S, Outcome);
   Ending := Ending + 'conn_close ' + S + ' ' + Detail + #10;
-end;
-
-procedure TFuzzObserver.OnParts(ConnId: QWord; Data: Pointer; var Parts: TConnParts);
-begin
-  Ending := Ending + 'parts ' + IntToStr(Parts.Rest.Len) + #10;
-  if Parts.Rest.Block <> nil then
-    Parts.Rest.Release;
-  Parts.Rest := Default(TBytesView);
-  { the test owns the transport object (OwnsTransport False) }
 end;
 
 destructor TFreeFlagDispatcher.Destroy;

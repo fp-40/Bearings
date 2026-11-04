@@ -842,52 +842,6 @@
    ]
   },
   {
-   "name": "without_shutdown_parse_error",
-   "notes": "",
-   "server": {
-    "config": {
-     "conn_mode": "without_shutdown"
-    },
-    "replies": [
-     {
-      "upgrade": {
-       "on_upgrade": false
-      }
-     }
-    ]
-   },
-   "steps": [
-    {
-     "op": "connect"
-    },
-    {
-     "op": "write",
-     "data": "BAD\r\n\r\n"
-    },
-    {
-     "op": "read_to_eof",
-     "allow_reset": true,
-     "expect": [
-      {
-       "starts_with": "HTTP/1.1 400 Bad Request\r\n"
-      }
-     ]
-    }
-   ],
-   "expect_events": [
-    {
-     "event": "conn_close",
-     "conn": 1,
-     "outcome": "parse"
-    }
-   ],
-   "forbid_events": [
-    {
-     "event": "upgraded"
-    }
-   ]
-  },
-  {
    "name": "keep_alive_false_pipelined",
    "notes": "",
    "server": {

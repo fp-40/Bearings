@@ -9,7 +9,9 @@ time against hyper's reference server (`reference-server/`). Both were removed o
 cases hold the expected values, the runner is the Pascal program in `runner/` (SPEC.md section 1),
 and `pascal-server/gate.sh` checks the cases against the Pascal server. Since then some cases were
 changed (every HTTP/1.1 request carries a `Host` line, RFC 9112 3.2, see
-docs/design/deviations.md; the regex assertions were replaced, SPEC.md section 10), so the
+docs/design/deviations.md; the regex assertions were replaced, SPEC.md section 10; `upgrades`
+and `http_connect`, which needed hyper's `without_shutdown()` mode, were removed, and
+`upgrades_new` / `http_connect_new` cover the same upgrades with `with_upgrades`), so the
 `target/release/...` commands below no longer run. The mutation check now runs as
 `build/conformance/runner run --server build/conformance/dumb-server conformance/cases/h1` (and
 with `'build/conformance/dumb-server --events'`); it gives the same outcome for every case as the

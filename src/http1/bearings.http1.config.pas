@@ -51,11 +51,8 @@ type
       failed, and the connection ends.
     - cmWithUpgrades: after a 101 response the socket and the bytes read
       but not yet parsed are handed to the upgrade handler (for example a
-      WebSocket handler).
-    - cmWithoutShutdown: like cmPlain for upgrades, but when the HTTP
-      connection ends the dispatcher gives the socket and the unparsed
-      bytes back to the caller instead of closing the socket. }
-  TH1ConnMode = (cmPlain, cmWithUpgrades, cmWithoutShutdown);
+      WebSocket handler). }
+  TH1ConnMode = (cmPlain, cmWithUpgrades);
   TTimeoutSetting = (tsDefault, tsDisabled, tsMs);          { absent / null / number }
 
   { The defaults named below are those of ConformanceH1Config. }

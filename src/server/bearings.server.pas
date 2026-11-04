@@ -162,9 +162,9 @@
   of a new thread (the conformance server runs one loop on its main
   thread).
 
-  TConnObserver and TConnParts are declared in bearings.http.exchange,
-  TConnOutcome and OutcomeOf in bearings.http.error (declaring them here would
-  make the unit references circular); the type names are re-exported here.
+  TConnObserver is declared in bearings.http.exchange, TConnOutcome and
+  OutcomeOf in bearings.http.error (declaring them here would make the unit
+  references circular); the type names are re-exported here.
 
   Threading: Create, Start, StartCallerRunsLoop0, RunLoop0, Wait,
   RunUntilSignal and Destroy are called by the thread that owns the
@@ -186,7 +186,6 @@ uses
 
 type
   TConnOutcome = bearings.http.error.TConnOutcome;
-  TConnParts = bearings.http.exchange.TConnParts;
   TConnObserver = bearings.http.exchange.TConnObserver;
 
   { The access log (bearings.server.accesslog). }

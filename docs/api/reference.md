@@ -36,7 +36,7 @@ Member | Description | Thread
 `TServerLoop` | one loop and what it owns: `Loop`, `Listener`, `Service`, `Pool`, `Conns`, `Index`, `Cpu`, `Thread`, `Running`, `Stopping`, `GraceMs`; `AbortConnections` and `Destroy` are internal | loop (read by tests after the loop stopped)
 `EServerError` | `Start` / `RunLoop0` errors | -
 `ProductionServerConfig`, `BenchmarkServerConfig` | the two presets | any
-`TConnOutcome`, `TConnParts`, `TConnObserver` | re-exported from `bearings.http.error` and `bearings.http.exchange` | see there
+`TConnOutcome`, `TConnObserver` | re-exported from `bearings.http.error` and `bearings.http.exchange` | see there
 `STALL_MS`, `StallReports` | `WD_STALL` builds only (section 12) | any (atomic)
 
 ## bearings.http.exchange
@@ -108,7 +108,6 @@ Member | Description | Thread
 `TUpgradeSlot`, `TUpgradeState`, `TUpgradePending` | the connection side of an upgrade | internal
 `TExchangePool` (`Take`, `Give`, `FreeCount`, `Outstanding`) | the per-loop exchange pool | internal (loop)
 `TConnObserver` hooks (section 11) | per-connection hooks | loop
-`TConnParts` | `Transport`, `Rest`, `Src` handed over by `OnParts` | loop
 `BodyCopy(Ex, P, Len): TBodyData` | a body that is a copy of `P^` in a pooled or heap block | any
 `UpgradeSlotsLive`, `ExchangesLive` | object counters for tests | any (atomic)
 `NoResponseFailures` | completions without a terminal call (section 12) | any (atomic)
@@ -161,7 +160,7 @@ Member | Description | Thread
 Member | Description | Thread
 ------ | ----------- | ------
 `TH1Config` | the connection options (section 2) | plain value
-`TH1ConnMode` | `cmPlain`, `cmWithUpgrades`, `cmWithoutShutdown` | -
+`TH1ConnMode` | `cmPlain`, `cmWithUpgrades` | -
 `TTimeoutSetting` | `tsDefault`, `tsDisabled`, `tsMs` | -
 `ConformanceH1Config`, `ProductionH1Config` | the presets | any
 `ValidateH1Config(C, out Msg): Boolean` | checks a configuration | any
@@ -175,7 +174,7 @@ Member | Description | Thread
 `TRawListener.Shutdown(U)` | the server stops gracefully; default `U.Close` | loop
 `TRawListener.Aborted(U)` | the stream is closed by force; release and do not use `U` after it | loop
 `TUpgraded.Track(List)`, `Shutdown`, `TUpgradedList` | the server's per-loop list of upgraded streams and its graceful stop | loop
-`TUpgraded.CreateFrom(Loop, Transport, Rest, FromSrc, OwnsTransport)` | the hand-off constructor (the dispatcher, or an `OnParts` receiver) | loop
+`TUpgraded.CreateFrom(Loop, Transport, Rest, FromSrc, OwnsTransport)` | the hand-off constructor (the dispatcher) | loop
 `TUpgraded.Transport` | the transport | loop
 `TUpgraded.Run`, `Abort` | the loop task's entry points | internal
 `TUpgraded.Leftover(out P, out Len)`, `ConsumeLeftover(N)` | the bytes read before the hand-off | loop

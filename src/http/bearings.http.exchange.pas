@@ -30,8 +30,7 @@
     TBlockingHandler, TOffloadCall  running a handler on a worker thread
                      (TOffloadCall.SaturatedStatus: answer, for example,
                      503 instead of queueing when the pool is saturated).
-    TConnObserver, TConnParts       hooks for tests and the conformance
-                     server.
+    TConnObserver    hooks for tests and the conformance server.
 
   Request body. A body has either a Content-Length (that many bytes follow
   the head) or "Transfer-Encoding: chunked" (a series of chunks, each
@@ -126,10 +125,10 @@
   that drives this path on purpose calls NoResponseIsExpected first.
   Release builds contain none of these checks.
 
-  TConnParts and TConnObserver are declared here and not in bearings.server: the
-  dispatcher uses them and bearings.server uses the dispatcher, so declaring them
-  in bearings.server would make the unit references circular. bearings.server
-  re-exports both names. They do not depend on HTTP/1. }
+  TConnObserver is declared here and not in bearings.server: the dispatcher
+  uses it and bearings.server uses the dispatcher, so declaring it in
+  bearings.server would make the unit references circular. bearings.server
+  re-exports the name. It does not depend on HTTP/1. }
 unit bearings.http.exchange;
 
 {$mode objfpc}{$H+}
@@ -694,17 +693,6 @@ type
     procedure Give(Ex: TExchange);                  { recycle: lists cleared, capacity kept }
   end;
 
-  { What the dispatcher hands back in cmWithoutShutdown mode when the HTTP connection ends: the
-    transport and the bytes read but not parsed (the fields Transport and Rest). }
-  TConnParts = record
-    Transport: TTransport;           { owned by the receiver }
-    Rest: TBytesView;                { unread bytes; pinned, loop thread }
-    { The connection task's readiness source (fd, readiness bits). The task is freed after
-      the event batch: a receiver that keeps the socket open moves the source before OnParts
-      returns, with TUpgraded.CreateFrom(Loop, Transport, Rest, Src, True). }
-    Src: PIoSource;
-  end;
-
   { Hooks for tests and the conformance server. nil in production: zero cost. Loop thread. }
   TConnObserver = class
   public
@@ -717,7 +705,6 @@ type
     procedure OnStart(ConnId: QWord; Data: Pointer; Task: TLoopTask); virtual;
     procedure OnConnClose(ConnId: QWord; Data: Pointer; Outcome: TConnOutcome;
       const Detail: string); virtual;
-    procedure OnParts(ConnId: QWord; Data: Pointer; var Parts: TConnParts); virtual;   { default: close }
   end;
 
 { A block from the loop's pool (heap without a loop) holding a copy of P^; the block is owned
@@ -3324,8 +3311,8 @@ procedure TUpgradeSlot.Manual;
 var
   H: TUpgradeHandler;
 begin
-  { the connection mode does not hand upgrades over (cmPlain,
-    cmWithoutShutdown): the handler is told the upgrade failed }
+  { the connection mode does not hand upgrades over (cmPlain): the handler
+    is told the upgrade failed }
   State := usManual;
   H := Handler;
   Handler := nil;
@@ -3458,20 +3445,6 @@ procedure TConnObserver.OnStart(ConnId: QWord; Data: Pointer; Task: TLoopTask);
 begin end;
 procedure TConnObserver.OnConnClose(ConnId: QWord; Data: Pointer; Outcome: TConnOutcome;
   const Detail: string); begin end;
-procedure TConnObserver.OnParts(ConnId: QWord; Data: Pointer; var Parts: TConnParts);
-begin
-  { default: drop the parts (close(2), no shutdown) }
-  if Parts.Rest.Block <> nil then
-    Parts.Rest.Release;
-  Parts.Rest := Default(TBytesView);
-  if Parts.Transport <> nil then
-  begin
-    Parts.Transport.Close;
-    Parts.Transport.Free;
-    Parts.Transport := nil;
-  end;
-end;
-
 { BodyCopy: the bytes in a block of the loop's pool, given back by ReleaseBody }
 
 procedure ReleaseCopyBlock(Ctx: Pointer; Data: PByte);

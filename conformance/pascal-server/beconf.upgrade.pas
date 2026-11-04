@@ -81,7 +81,7 @@ type
 { SPEC 3.4 signal: sets the latch and wakes its waiters. }
 procedure SetLatch(const Name: RawByteString);
 function LatchIsSet(const Name: RawByteString): Boolean;
-{ Starts the upgrade task of Spec on U (with_upgrades delivery, without_shutdown parts). }
+{ Starts the upgrade task of Spec on U (the with_upgrades delivery). }
 procedure StartUpgrade(Conn: QWord; Spec: TUpgradeSpec; U: TUpgraded);
 { Queues Line on Loop's run queue. }
 procedure EmitLater(Loop: TLoop; const Line: RawByteString);

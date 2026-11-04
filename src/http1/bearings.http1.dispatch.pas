@@ -56,8 +56,7 @@
   until a timeout.
 
   Ownership. The dispatcher owns the transport (OwnsTransport, default True)
-  until it closes it or hands it on (an upgrade, or cmWithoutShutdown, which
-  hands the transport and the unread bytes to the observer). It holds one
+  until it closes it or hands it on (an upgrade). It holds one
   exchange (TExchange: the request head, the request body channel and the
   response) at a time, taken from the loop's TExchangePool (Loop.Exchanges;
   a private pool when the loop has none) before a head is parsed, because
@@ -95,8 +94,8 @@ uses
 
 type
   { How PollCatch ended a connection that finished without an error:
-    dsShutdown (the socket was shut down, or is handed on as parts) or
-    dsUpgrade (the connection switches to another protocol). }
+    dsShutdown (the socket was shut down) or dsUpgrade (the connection
+    switches to another protocol). }
   TDispatched = (dsShutdown, dsUpgrade);
 
   { The response body being written. obNone: no body is being written.
@@ -257,8 +256,8 @@ type
       disabled, and an idle connection is closed at once. }
     procedure GracefulShutdown;
     { The poll routines (see the unit header). Err is set when prErr / poErr is returned. }
-    function PollCatch(ShouldShutdown: Boolean; out D: TDispatched; var Err: THyperError): TPollResult;
-    function PollInner(ShouldShutdown: Boolean; out D: TDispatched; var Err: THyperError): TPollResult;
+    function PollCatch(out D: TDispatched; var Err: THyperError): TPollResult;
+    function PollInner(out D: TDispatched; var Err: THyperError): TPollResult;
     function PollLoop(var Err: THyperError): TPollResult;
     function PollRead(var Err: THyperError): TPollResult;
     function PollReadHead(var Err: THyperError): TPollResult;
@@ -611,9 +610,7 @@ begin
   StallBodyRead := False;
   {$endif}
   Err.Kind := hekNone;
-  { the socket is shut down at the end, except in cmWithoutShutdown, which
-    hands it to the observer instead }
-  R := PollCatch(Mode <> cmWithoutShutdown, D, Err);
+  R := PollCatch(D, Err);
   if R = prPending then
   begin
     {$ifdef WD_DEBUG}
@@ -628,13 +625,12 @@ begin
   Finish(R, D, Err);
 end;
 
-function TH1Dispatcher.PollCatch(ShouldShutdown: Boolean; out D: TDispatched;
-  var Err: THyperError): TPollResult;
+function TH1Dispatcher.PollCatch(out D: TDispatched; var Err: THyperError): TPollResult;
 begin
   { PollInner, plus: on an error, a request body still being received gets
     the error, so the service's body read fails instead of seeing a normal end }
   D := dsShutdown;
-  Result := PollInner(ShouldShutdown, D, Err);
+  Result := PollInner(D, Err);
   if Result <> prErr then
     Exit;
   if BodyTx then
@@ -645,8 +641,7 @@ begin
   end;
 end;
 
-function TH1Dispatcher.PollInner(ShouldShutdown: Boolean; out D: TDispatched;
-  var Err: THyperError): TPollResult;
+function TH1Dispatcher.PollInner(out D: TDispatched; var Err: THyperError): TPollResult;
 var
   Errno: cint;
 begin
@@ -684,27 +679,12 @@ begin
     D := dsUpgrade;
     Exit(prOk);
   end
-  else if ShouldShutdown then
+  else
     case Conn.PollShutdown(Errno) of
       ipPending: Exit(prPending);
       ipError:
         begin
           Err := NewShutdown(Errno);
-          Exit(prErr);
-        end;
-    end
-  else
-    { cmWithoutShutdown: the socket is handed back instead of shut down,
-      but what is still buffered is written first, as PollShutdown does:
-      the automatic error response of a bad request is buffered and the
-      error stored (TH1Conn.OnParseError), so the connection is done while
-      the socket may not have taken the response yet. hyper's poll_inner
-      returns the error at once here and drops it. }
-    case Conn.Io.PollFlush(Errno) of
-      ipPending: Exit(prPending);
-      ipError:
-        begin
-          Err := NewBodyWrite(Errno);       { as in PollFlush }
           Exit(prErr);
         end;
     end;
@@ -1372,15 +1352,12 @@ procedure TH1Dispatcher.Finish(R: TPollResult; D: TDispatched; var Err: THyperEr
 var
   T: TTransport;
   Rest: TBytesView;
-  Parts: TConnParts;
-  HaveParts: Boolean;
   U: TUpgraded;
   Delivery: TUpgradeDelivery;
   Slot: TUpgradeSlot;
   Detail: string;
 begin
   { The connection has finished (R = prOk) or failed (R = prErr). }
-  HaveParts := False;
   Delivery := nil;
   { 1. hand-off }
   if (R = prOk) and (D = dsUpgrade) and FPendingUpgrade.Active then
@@ -1419,13 +1396,6 @@ begin
       FPendingUpgrade.Slot := nil;
     end;
   end;
-  if (Mode = cmWithoutShutdown) and (R = prOk) and (Conn.Io.Io <> nil) then
-  begin
-    { cmWithoutShutdown: the transport and the unread bytes go to the observer }
-    Conn.Io.IntoInner(Parts.Transport, Parts.Rest);
-    Parts.Src := @Src;
-    HaveParts := True;
-  end;
   { 2. release everything (the hooks get the outcome from DropAll) }
   Outcome := OutcomeOf(R, Err);
   DropAll;
@@ -1441,19 +1411,6 @@ begin
   { 4. hand the connection on (the delivery task is queued; it runs after this Run returns) }
   if Delivery <> nil then
     Delivery.Wake;
-  if HaveParts then
-  begin
-    if Observer <> nil then
-      Observer.OnParts(ConnId, ObsData, Parts)
-    else
-    begin
-      if Parts.Rest.Block <> nil then
-        Parts.Rest.Release;
-      Parts.Transport.Close;
-      if OwnsTransport then
-        Parts.Transport.Free;
-    end;
-  end;
   { 5. the task is freed at the end of the loop iteration (see bearings.rt.loop) }
   Close;
 end;

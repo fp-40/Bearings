@@ -188,15 +188,14 @@ and `Aborted(U)` by `U.Abort` at the stop deadline, before the socket is
 closed (5.9). An upgraded connection keeps its connection-limit slot until
 the stream is closed or detached (`CloseProc`).
 
-## 6.8 Observer and parts
+## 6.8 Observer
 
-`TConnObserver` (`OnAccept`, `WrapTransport`, `OnStart`, `OnConnClose`,
-`OnParts`) and `TConnParts` are hooks for tests and the conformance server;
-nil in production costs nothing. They are declared in
-`bearings.http.exchange`, and `TConnOutcome` in `bearings.http.error`, because
-the dispatcher uses them and `bearings.server` uses the dispatcher: declaring
-them in `bearings.server` would make the unit references circular.
-`bearings.server` re-exports the names.
+`TConnObserver` (`OnAccept`, `WrapTransport`, `OnStart`, `OnConnClose`) is
+a hook for tests and the conformance server; nil in production costs
+nothing. It is declared in `bearings.http.exchange`, and `TConnOutcome` in
+`bearings.http.error`, because the dispatcher uses them and `bearings.server`
+uses the dispatcher: declaring them in `bearings.server` would make the unit
+references circular. `bearings.server` re-exports the names.
 
 ## 6.9 HTTP/2 fit
 

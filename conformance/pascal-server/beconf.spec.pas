@@ -806,7 +806,6 @@ begin
     begin
       if Str = 'plain' then C.Mode := cmPlain
       else if Str = 'with_upgrades' then C.Mode := cmWithUpgrades
-      else if Str = 'without_shutdown' then C.Mode := cmWithoutShutdown
       else SpecFail('conn_mode: unknown value "' + Str + '"');
     end
     else
