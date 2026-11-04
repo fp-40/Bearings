@@ -75,7 +75,7 @@ uses
 const
   INIT_BUFFER_SIZE = 8192;                         { first read size; also the minimum read size }
   MINIMUM_MAX_BUFFER_SIZE = INIT_BUFFER_SIZE;      { smallest allowed max_buf_size }
-  DEFAULT_MAX_BUFFER_SIZE = 8192 + 4096 * 100;     { default max_buf_size (417 792 bytes) }
+  DEFAULT_MAX_BUFFER_SIZE = 416 * 1024;            { default MaxBufSize (425 984 bytes) }
   MAX_BUF_LIST_BUFFERS = 16;                       { CanBuffer's bound on queued entries }
   { The queue ring: the 16 entries CanBuffer lets callers queue plus the
     heads BufferAfterQueue puts behind them. A power of two, so the ring

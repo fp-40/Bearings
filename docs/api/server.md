@@ -270,7 +270,7 @@ Field | Meaning
 `KeepAlive` (True) | serve more requests on the connection after the first one
 `MaxHeaders` (-1 = 100) | most header fields in a request head; more gives 431
 `MaxHeaderSize` (-1 = no own limit) | most bytes in a request head; more gives 431
-`MaxBufSize` (-1 = about 408 KiB) | largest read buffer; a request head must fit; minimum 8192
+`MaxBufSize` (-1 = 416 KiB) | largest read buffer; a request head must fit; minimum 8192
 `Timer` (False) | the connection may arm timers; every timeout needs it
 `HeaderReadTimeout: TTimeoutSetting` (tsDefault) | `tsDefault`: 30 s with a timer, none without; `tsDisabled`; `tsMs`: `HeaderReadTimeoutMs`
 `HeaderReadTimeoutMs` | used with `tsMs`
