@@ -42,7 +42,7 @@ unit bearings.http1.config;
 interface
 
 uses
-  bearings.http1.parser, bearings.http1.role, bearings.http1.conn;
+  bearings.http1.role, bearings.http1.conn;
 
 type
   { How the dispatcher ends the connection:
@@ -68,10 +68,6 @@ type
       True: they are written in title case ("Content-Type"), for old
       clients that compare names case-sensitively. }
     TitleCaseHeaders: Boolean;         { False }
-    { Accepted and ignored. Request header names are always kept as
-      received (THttpHeaders); response header names follow
-      TitleCaseHeaders. }
-    PreserveHeaderCase: Boolean;       { False }
     { The most header fields a request head may have; more gives
       431 Request Header Fields Too Large. -1: the default, 100. }
     MaxHeaders: Integer;
@@ -112,8 +108,6 @@ type
       A request in progress is never cut, and an idle connection past the
       age stays until its next request or the header read timeout. }
     MaxConnectionMs: Int64;            { 0 }
-    { Leniency switches of the head parser (bearings.http1.parser). }
-    Parser: TParserConfig;
     Mode: TH1ConnMode;
   end;
 
@@ -156,7 +150,6 @@ begin
   Result.KeepAlive := True;
   Result.HalfClose := False;
   Result.TitleCaseHeaders := False;
-  Result.PreserveHeaderCase := False;
   Result.MaxHeaders := -1;
   Result.MaxHeaderSize := -1;
   Result.MaxBufSize := -1;
@@ -170,7 +163,6 @@ begin
   Result.ProxyProtocol := False;
   Result.MaxRequests := 0;
   Result.MaxConnectionMs := 0;
-  Result.Parser := DefaultParserConfig;
   Result.Mode := cmPlain;
 end;
 
@@ -236,14 +228,12 @@ end;
 
 procedure ApplyH1Config(const C: TH1Config; var Conn: TH1Conn);
 begin
-  Conn.SetParserConfig(C.Parser);
   if not C.KeepAlive then
     Conn.DisableKeepAlive;
   if C.HalfClose then
     Conn.SetAllowHalfClose;
   if C.TitleCaseHeaders then
     Conn.SetTitleCaseHeaders;
-  { PreserveHeaderCase: ignored (see TH1Config) }
   if C.MaxHeaders >= 0 then
     Conn.SetMaxHeaders(C.MaxHeaders);
   if C.MaxHeaderSize >= 0 then

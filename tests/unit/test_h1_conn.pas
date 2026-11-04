@@ -1933,7 +1933,6 @@ begin
   C.PipelineFlush := True;
   C.MaxBufSize := 9000;
   C.AutoDateHeader := False;
-  C.Parser.AllowMultipleSpacesInRequestLineDelimiters := True;
   ApplyH1Config(C, FConn);
   AssertTrue('keep_alive(false): disabled', FConn.State.KeepAlive = kaDisabled);
   AssertTrue(FConn.State.AllowHalfClose);
@@ -1945,7 +1944,6 @@ begin
   AssertEquals(9000, Int64(FConn.Io.ReadBufStrategy.Max));
   AssertEquals(9000, Int64(FConn.Io.WriteBuf.MaxBufSize));
   AssertFalse(FConn.State.DateHeader);
-  AssertTrue(FConn.State.ParseCtx.ParserConfig.AllowMultipleSpacesInRequestLineDelimiters);
 end;
 
 procedure TTestH1Config.Apply_default_timeout_needs_timer;

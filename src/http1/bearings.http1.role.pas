@@ -105,9 +105,8 @@ type
     hmTrace, hmConnect, hmPatch, hmExtension);
 
   { Why a request head was rejected. ServerErrorStatus maps it to the
-    automatic response status. h1peStatus is for response status lines;
-    h1peVersionH2 is used by the connection when the client sent the
-    HTTP/2 connection preface. }
+    automatic response status. h1peVersionH2 is used by the connection
+    when the client sent the HTTP/2 connection preface. }
   TH1ParseError = (
     h1peNone,
     h1peMethod,
@@ -121,7 +120,6 @@ type
     h1peHeaderTransferEncodingUnexpected,  { Transfer-Encoding in HTTP/1.0 }
     h1peHeaderHost,                        { HTTP/1.1 without Host, or more than one Host line (not in hyper) }
     h1peTooLarge,
-    h1peStatus,
     h1peInternal,
     h1peProxyProtocol                      { the connection's PROXY protocol header is missing or invalid (bearings.rt.proxyproto) }
   );
@@ -132,7 +130,6 @@ type
 
   { The parse settings of a connection (set from TH1Config). }
   TH1ParseContext = record
-    ParserConfig: TParserConfig;   { leniency switches of bearings.http1.parser }
     MaxHeaders: Integer;           { < 0: DEFAULT_MAX_HEADERS }
     MaxHeaderSize: SizeInt;        { < 0: no limit of its own }
   end;
@@ -322,7 +319,6 @@ end;
 
 function DefaultParseContext: TH1ParseContext;
 begin
-  Result.ParserConfig := DefaultParserConfig;
   Result.MaxHeaders := -1;
   Result.MaxHeaderSize := -1;
 end;
@@ -473,7 +469,6 @@ function HttparseErrorToParse(E: THttpParseError): TH1ParseError; inline;
 begin
   case E of
     peHeaderName, peHeaderValue, peNewLine, peToken: Result := h1peHeaderToken;
-    peStatus: Result := h1peStatus;
     peTooManyHeaders: Result := h1peTooLarge;
     peVersion: Result := h1peVersion;
   else
@@ -512,7 +507,7 @@ begin
   Headers.Clear;
   Headers.SetExternalBase(Buf);
 
-  R := ParseRequest(Buf, Len, Req, Slots, MaxH, Ctx.ParserConfig);
+  R := ParseRequest(Buf, Len, Req, Slots, MaxH);
   case R.Status of
     psPartial:
       Exit(spsPartial);
@@ -736,7 +731,6 @@ begin
     h1peHeaderTransferEncodingUnexpected: Result := 'unexpected transfer-encoding parsed';
     h1peHeaderHost: Result := 'missing or duplicate host header';
     h1peTooLarge: Result := 'message head is too large';
-    h1peStatus: Result := 'invalid HTTP status-code parsed';
     h1peInternal: Result := 'internal error in the HTTP/1 parser, please report';
     h1peProxyProtocol: Result := 'invalid PROXY protocol header';
   end;

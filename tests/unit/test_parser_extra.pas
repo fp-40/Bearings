@@ -26,27 +26,15 @@ interface
 uses
   SysUtils, fpcunit, testregistry, bearings.http1.parser, test_parser_base;
 
-const
-  F_MULTI_SP = 1;       // AllowMultipleSpacesInRequestLineDelimiters
-  F_SP_FIRST = 2;       // AllowSpaceBeforeFirstHeaderName
-  F_IGNORE = 4;         // IgnoreInvalidHeadersInRequests
-  { Response-only options: they must not change request parsing. }
-  F_RESP_SP_NAME = 8;   // AllowSpacesAfterHeaderNameInResponses
-  F_RESP_IGNORE = 16;   // IgnoreInvalidHeadersInResponses
-  F_RESP_FOLD = 32;     // AllowObsoleteMultilineHeadersInResponses
-  F_RESP_MULTI_SP = 64; // AllowMultipleSpacesInResponseStatusDelimiters
-
 type
   TTestParserExtra = class(TParserTestCase)
   private
-    function FlagsConfig(Flags: Integer): TParserConfig;
     function ReqLine: string;
     function HdrsLine: string;
-    procedure ExpectReq(const Buf: RawByteString; Flags, Slots: Integer;
-      const Expected: string);
+    procedure ExpectReq(const Buf: RawByteString; Slots: Integer; const Expected: string);
     procedure ExpectHdrs(const Buf: RawByteString; Slots: Integer;
       const Expected: string);
-    procedure CheckEveryPrefix(const Head: RawByteString; Flags: Integer);
+    procedure CheckEveryPrefix(const Head: RawByteString);
   published
     procedure Extra_empty_input;
     procedure Extra_partial_at_every_byte_boundary;
@@ -62,9 +50,8 @@ type
     procedure Extra_request_target;
     procedure Extra_request_target_scan_boundaries;
     procedure Extra_request_target_utf8;
-    procedure Extra_multiple_spaces_config;
-    procedure Extra_response_options_do_not_affect_requests;
-    procedure Extra_ignore_invalid_headers;
+    procedure Extra_multiple_spaces;
+    procedure Extra_invalid_header_lines;
     procedure Extra_space_before_first_header;
     procedure Extra_header_limit_order;
     procedure Extra_header_limit_hyper_default;
@@ -82,7 +69,7 @@ implementation
 
 const
   ERR_NAMES: array[THttpParseError] of string = ('None', 'HeaderName',
-    'HeaderValue', 'NewLine', 'Status', 'Token', 'TooManyHeaders', 'Version');
+    'HeaderValue', 'NewLine', 'Token', 'TooManyHeaders', 'Version');
 
 function OptSlice(Has: Boolean; const S: TSlice): string;
 begin
@@ -90,18 +77,6 @@ begin
     Result := IntToStr(S.Off) + ',' + IntToStr(S.Len)
   else
     Result := '-';
-end;
-
-function TTestParserExtra.FlagsConfig(Flags: Integer): TParserConfig;
-begin
-  Result := DefaultParserConfig;
-  Result.AllowMultipleSpacesInRequestLineDelimiters := (Flags and F_MULTI_SP) <> 0;
-  Result.AllowSpaceBeforeFirstHeaderName := (Flags and F_SP_FIRST) <> 0;
-  Result.IgnoreInvalidHeadersInRequests := (Flags and F_IGNORE) <> 0;
-  Result.AllowSpacesAfterHeaderNameInResponses := (Flags and F_RESP_SP_NAME) <> 0;
-  Result.IgnoreInvalidHeadersInResponses := (Flags and F_RESP_IGNORE) <> 0;
-  Result.AllowObsoleteMultilineHeadersInResponses := (Flags and F_RESP_FOLD) <> 0;
-  Result.AllowMultipleSpacesInResponseStatusDelimiters := (Flags and F_RESP_MULTI_SP) <> 0;
 end;
 
 function TTestParserExtra.ReqLine: string;
@@ -146,11 +121,11 @@ begin
   end;
 end;
 
-procedure TTestParserExtra.ExpectReq(const Buf: RawByteString; Flags,
-  Slots: Integer; const Expected: string);
+procedure TTestParserExtra.ExpectReq(const Buf: RawByteString; Slots: Integer;
+  const Expected: string);
 begin
-  ParseReq(Buf, Slots, FlagsConfig(Flags));
-  AssertEquals(Format('request "%s" flags=%d slots=%d', [Printable(Buf), Flags, Slots]),
+  ParseReq(Buf, Slots);
+  AssertEquals(Format('request "%s" slots=%d', [Printable(Buf), Slots]),
     Expected, ReqLine);
   { Consumed is 0 unless Complete, Error is peNone unless Error. }
   if FRes.Status <> psComplete then
@@ -172,7 +147,7 @@ end;
   the same result.  On each Partial, the header slots reported so far
   equal the first slots of the final parse, and HasMethod / HasPath /
   HasVersion never go from True back to False as the prefix grows. }
-procedure TTestParserExtra.CheckEveryPrefix(const Head: RawByteString; Flags: Integer);
+procedure TTestParserExtra.CheckEveryPrefix(const Head: RawByteString);
 var
   Final: array[0..MAX_TEST_HEADERS - 1] of THeaderSlice;
   FinalReq: TParsedRequest;
@@ -180,7 +155,7 @@ var
   L, I: Integer;
   PrevM, PrevP, PrevV: Boolean;
 begin
-  ParseReq(Head, MAX_TEST_HEADERS, FlagsConfig(Flags));
+  ParseReq(Head, MAX_TEST_HEADERS);
   AssertTrue('full head is Complete: ' + Printable(Head) + ' got ' + ReqLine,
     FRes.Status = psComplete);
   AssertEquals('Consumed = head length', Length(Head), FRes.Consumed);
@@ -190,7 +165,7 @@ begin
   PrevM := False; PrevP := False; PrevV := False;
   for L := 0 to Length(Head) - 1 do
   begin
-    ParseReq(Copy(Head, 1, L), MAX_TEST_HEADERS, FlagsConfig(Flags));
+    ParseReq(Copy(Head, 1, L), MAX_TEST_HEADERS);
     AssertEquals(Format('prefix %d of "%s"', [L, Printable(Head)]),
       'Ok(Partial)', ResultStr(FRes));
     AssertTrue('NumHeaders on Partial <= final', FNumHeaders <= FinalReq.NumHeaders);
@@ -208,7 +183,7 @@ begin
     AssertTrue(Format('prefix %d: HasVersion monotonic', [L]), FReq.HasVersion or not PrevV);
     PrevM := FReq.HasMethod; PrevP := FReq.HasPath; PrevV := FReq.HasVersion;
   end;
-  ParseReq(Head + 'BODY'#13#10#13#10, MAX_TEST_HEADERS, FlagsConfig(Flags));
+  ParseReq(Head + 'BODY'#13#10#13#10, MAX_TEST_HEADERS);
   AssertEquals('head + body: same result as head alone', FinalLine, ReqLine);
 end;
 
@@ -226,10 +201,10 @@ begin
   R := ParseHeaders(nil, 0, nil, 0, N);
   AssertTrue('nil/0 parse_headers is Partial', R.Status = psPartial);
   AssertEquals('NumHeaders', 0, N);
-  ExpectReq('', 0, 4, 'P m=- p=- v=-');
-  ExpectReq(#13#10#13#10, 0, 4, 'P m=- p=- v=-');
-  ExpectReq(#10, 0, 4, 'P m=- p=- v=-');
-  ExpectReq(#13, 0, 4, 'P m=- p=- v=-');
+  ExpectReq('', 4, 'P m=- p=- v=-');
+  ExpectReq(#13#10#13#10, 4, 'P m=- p=- v=-');
+  ExpectReq(#10, 4, 'P m=- p=- v=-');
+  ExpectReq(#13, 4, 'P m=- p=- v=-');
   ExpectHdrs('', 4, 'P');
 end;
 
@@ -239,15 +214,12 @@ var
 const
   HDRS = 'A: b'#13#10'C:d'#10#13#10;
 begin
-  CheckEveryPrefix('GET /a?b HTTP/1.1'#13#10'Host: x'#13#10'Accept: */*'#13#10#13#10, 0);
-  CheckEveryPrefix(#13#10#10'POST /p HTTP/1.0'#10'A:b'#10'C: '#9#10#10, 0);
-  CheckEveryPrefix('GET  /  HTTP/1.1'#13#10#13#10, F_MULTI_SP);
-  CheckEveryPrefix('GET / HTTP/1.1'#13#10' Lead: x'#13#10#13#10, F_SP_FIRST);
-  CheckEveryPrefix('GET / HTTP/1.1'#13#10'Bad Name: v'#13#10': x'#13#10'Ok: 1'#13#10#13#10, F_IGNORE);
-  CheckEveryPrefix('M-SEARCH * HTTP/1.1'#13#10'X-V: '#$E3#$81#$B2#13#10#13#10, 0);
-  CheckEveryPrefix('GET /'#$C3#$A9' HTTP/1.1'#13#10'A:'#13#10'B:  '#9#13#10#13#10, 0);
-  CheckEveryPrefix('GETX /x HTTP/1.1'#13#10#13#10, 0);
-  CheckEveryPrefix('POST /x HTTP/1.1'#13#10#13#10, 0);
+  CheckEveryPrefix('GET /a?b HTTP/1.1'#13#10'Host: x'#13#10'Accept: */*'#13#10#13#10);
+  CheckEveryPrefix(#13#10#10'POST /p HTTP/1.0'#10'A:b'#10'C: '#9#10#10);
+  CheckEveryPrefix('M-SEARCH * HTTP/1.1'#13#10'X-V: '#$E3#$81#$B2#13#10#13#10);
+  CheckEveryPrefix('GET /'#$C3#$A9' HTTP/1.1'#13#10'A:'#13#10'B:  '#9#13#10#13#10);
+  CheckEveryPrefix('GETX /x HTTP/1.1'#13#10#13#10);
+  CheckEveryPrefix('POST /x HTTP/1.1'#13#10#13#10);
   { parse_headers (chunked trailers in hyper). }
   for L := 0 to Length(HDRS) - 1 do
   begin
@@ -259,85 +231,75 @@ end;
 
 procedure TTestParserExtra.Extra_leading_empty_lines;
 begin
-  ExpectReq(#13'GET / HTTP/1.1'#13#10#13#10, 0, 4, 'E NewLine m=- p=- v=-');
-  ExpectReq(#13#13, 0, 4, 'E NewLine m=- p=- v=-');
-  ExpectReq(#13#10#13, 0, 4, 'P m=- p=- v=-');
-  ExpectReq(#10#13#10#10'GET / HTTP/1.1'#10#10, 0, 4, 'C 20 m=4,3 p=8,1 v=1 h=0');
+  ExpectReq(#13'GET / HTTP/1.1'#13#10#13#10, 4, 'E NewLine m=- p=- v=-');
+  ExpectReq(#13#13, 4, 'E NewLine m=- p=- v=-');
+  ExpectReq(#13#10#13, 4, 'P m=- p=- v=-');
+  ExpectReq(#10#13#10#10'GET / HTTP/1.1'#10#10, 4, 'C 20 m=4,3 p=8,1 v=1 h=0');
   { Only CRLF / LF are skipped: no other whitespace before the method. }
-  ExpectReq(#13#10' GET / HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=- p=- v=-');
-  ExpectReq(#9'GET / HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=- p=- v=-');
-  ExpectReq(#13#10' GET / HTTP/1.1'#13#10#13#10, F_MULTI_SP, 4, 'E Token m=- p=- v=-');
+  ExpectReq(#13#10' GET / HTTP/1.1'#13#10#13#10, 4, 'E Token m=- p=- v=-');
+  ExpectReq(#9'GET / HTTP/1.1'#13#10#13#10, 4, 'E Token m=- p=- v=-');
 end;
 
 procedure TTestParserExtra.Extra_request_line_newline;
 begin
-  ExpectReq('GET / HTTP/1.1'#13'X', 0, 4, 'E NewLine m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13, 0, 4, 'P m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1', 0, 4, 'P m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1X'#13#10#13#10, 0, 4, 'E NewLine m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1 '#13#10#13#10, 0, 4, 'E NewLine m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1 '#13#10#13#10, F_MULTI_SP, 4, 'E NewLine m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.10'#13#10#13#10, 0, 4, 'E NewLine m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#10#10, 0, 4, 'C 16 m=0,3 p=4,1 v=1 h=0');
+  ExpectReq('GET / HTTP/1.1'#13'X', 4, 'E NewLine m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13, 4, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1', 4, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1X'#13#10#13#10, 4, 'E NewLine m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1 '#13#10#13#10, 4, 'E NewLine m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.10'#13#10#13#10, 4, 'E NewLine m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#10#10, 4, 'C 16 m=0,3 p=4,1 v=1 h=0');
   { CR or LF inside the request-target. }
-  ExpectReq('GET /a'#10'b HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET /a'#13'b HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET /'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /a'#10'b HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /a'#13'b HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
 end;
 
 procedure TTestParserExtra.Extra_end_of_head_cr_lf;
 begin
   { A lone CR where the empty line ending the head is expected. }
-  ExpectReq('GET / HTTP/1.1'#13#10#13'X', 0, 4, 'E NewLine m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10#13'X', F_IGNORE, 4, 'E NewLine m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10#13, 0, 4, 'P m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#10#13'X', 0, 4, 'E NewLine m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#10#13'X', F_IGNORE, 4, 'E NewLine m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#10#10, 0, 4, 'C 23 m=0,3 p=4,1 v=1 h=1 16,1:19,1');
+  ExpectReq('GET / HTTP/1.1'#13#10#13'X', 4, 'E NewLine m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10#13, 4, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#10#13'X', 4, 'E NewLine m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#10#10, 4, 'C 23 m=0,3 p=4,1 v=1 h=1 16,1:19,1');
   { Mixed CRLF and bare LF line endings. }
-  ExpectReq('GET / HTTP/1.1'#10'A: b'#13#10'C: d'#10#13#10, 0, 4,
+  ExpectReq('GET / HTTP/1.1'#10'A: b'#13#10'C: d'#10#13#10, 4,
     'C 28 m=0,3 p=4,1 v=1 h=2 15,1:18,1 21,1:24,1');
 end;
 
 procedure TTestParserExtra.Extra_header_line_cr_lf;
 begin
-  { CR not followed by LF ends in HeaderValue even with IgnoreInvalidHeaders. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13'X'#13#10#13#10, 0, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13'X'#13#10#13#10, F_IGNORE, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A:'#13'X'#13#10#13#10, 0, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A:'#13'X'#13#10#13#10, F_IGNORE, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#13#10#13#10, 0, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
+  { CR not followed by LF ends in HeaderValue. }
+  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13'X'#13#10#13#10, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A:'#13'X'#13#10#13#10, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#13#10#13#10, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
   { CR inside a header name. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A'#13'B: c'#13#10#13#10, 0, 4, 'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A'#13'B: c'#13#10#13#10, F_IGNORE, 4, 'E HeaderName m=0,3 p=4,1 v=1');
-  { A name followed by CRLF is a missing colon: skipped with IgnoreInvalidHeaders. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A'#13#10'B: c'#13#10#13#10, 0, 4, 'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A'#13#10'B: c'#13#10#13#10, F_IGNORE, 4,
-    'C 27 m=0,3 p=4,1 v=1 h=1 19,1:22,1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A'#13'B: c'#13#10#13#10, 4, 'E HeaderName m=0,3 p=4,1 v=1');
+  { A name followed by CRLF is a missing colon. }
+  ExpectReq('GET / HTTP/1.1'#13#10'A'#13#10'B: c'#13#10#13#10, 4, 'E HeaderName m=0,3 p=4,1 v=1');
   { Trailing SP / HTAB before a bare LF are trimmed from the value. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b '#9#10#10, 0, 4, 'C 24 m=0,3 p=4,1 v=1 h=1 16,1:19,1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: b '#9#10#10, 4, 'C 24 m=0,3 p=4,1 v=1 h=1 16,1:19,1');
   { Inner SP / HTAB are kept. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b '#9'c'#13#10#13#10, 0, 4, 'C 27 m=0,3 p=4,1 v=1 h=1 16,1:19,4');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: b '#9'c'#13#10#13#10, 4, 'C 27 m=0,3 p=4,1 v=1 h=1 16,1:19,4');
   { Each partial position inside a header line. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A', 0, 4, 'P m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A:', 0, 4, 'P m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: ', 0, 4, 'P m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A:'#13, 0, 4, 'P m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b', 0, 4, 'P m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13, 0, 4, 'P m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#10, 0, 4, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A', 4, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A:', 4, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: ', 4, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A:'#13, 4, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: b', 4, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13, 4, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#10, 4, 'P m=0,3 p=4,1 v=1');
   { obs-fold is never allowed in requests: the continuation line starts
     with SP, which is not a header name byte. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#10' c'#13#10#13#10, 0, 4, 'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#10' c'#13#10#13#10, F_RESP_FOLD, 4, 'E HeaderName m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#10' c'#13#10#13#10, 4, 'E HeaderName m=0,3 p=4,1 v=1');
 end;
 
 procedure TTestParserExtra.Extra_empty_header_value_offset;
 begin
   { An empty value has Len 0 and Off = the position of its CR or LF. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A:   '#13#10#13#10, 0, 4, 'C 25 m=0,3 p=4,1 v=1 h=1 16,1:21,0');
-  ExpectReq('GET / HTTP/1.1'#13#10'A:'#10#10, 0, 4, 'C 20 m=0,3 p=4,1 v=1 h=1 16,1:18,0');
-  ExpectReq('GET / HTTP/1.1'#13#10'A:'#9' '#9#13#10'B: x'#13#10#13#10, 0, 4,
+  ExpectReq('GET / HTTP/1.1'#13#10'A:   '#13#10#13#10, 4, 'C 25 m=0,3 p=4,1 v=1 h=1 16,1:21,0');
+  ExpectReq('GET / HTTP/1.1'#13#10'A:'#10#10, 4, 'C 20 m=0,3 p=4,1 v=1 h=1 16,1:18,0');
+  ExpectReq('GET / HTTP/1.1'#13#10'A:'#9' '#9#13#10'B: x'#13#10#13#10, 4,
     'C 31 m=0,3 p=4,1 v=1 h=2 16,1:21,0 23,1:26,1');
   CheckHeader(0, 'A', '');
   CheckHeader(1, 'B', 'x');
@@ -345,18 +307,18 @@ end;
 
 procedure TTestParserExtra.Extra_version_exact_match;
 begin
-  ExpectReq('GET / HTTP/1.0'#13#10#13#10, 0, 4, 'C 18 m=0,3 p=4,1 v=0 h=0');
-  ExpectReq('GET / HTTP/1.1'#13#10#13#10, 0, 4, 'C 18 m=0,3 p=4,1 v=1 h=0');
-  ExpectReq('GET / HTTP/1.2'#13#10#13#10, 0, 4, 'E Version m=0,3 p=4,1 v=-');
-  ExpectReq('GET / HTTP/1.9'#13#10#13#10, 0, 4, 'E Version m=0,3 p=4,1 v=-');
-  ExpectReq('GET / HTTP/2.0'#13#10#13#10, 0, 4, 'E Version m=0,3 p=4,1 v=-');
-  ExpectReq('GET / HTTP/0.9'#13#10#13#10, 0, 4, 'E Version m=0,3 p=4,1 v=-');
-  ExpectReq('GET / http/1.1'#13#10#13#10, 0, 4, 'E Version m=0,3 p=4,1 v=-');
-  ExpectReq('GET / HTTP/1,1'#13#10#13#10, 0, 4, 'E Version m=0,3 p=4,1 v=-');
-  ExpectReq('GET / HTTP/11'#13#10#13#10, 0, 4, 'E Version m=0,3 p=4,1 v=-');
+  ExpectReq('GET / HTTP/1.0'#13#10#13#10, 4, 'C 18 m=0,3 p=4,1 v=0 h=0');
+  ExpectReq('GET / HTTP/1.1'#13#10#13#10, 4, 'C 18 m=0,3 p=4,1 v=1 h=0');
+  ExpectReq('GET / HTTP/1.2'#13#10#13#10, 4, 'E Version m=0,3 p=4,1 v=-');
+  ExpectReq('GET / HTTP/1.9'#13#10#13#10, 4, 'E Version m=0,3 p=4,1 v=-');
+  ExpectReq('GET / HTTP/2.0'#13#10#13#10, 4, 'E Version m=0,3 p=4,1 v=-');
+  ExpectReq('GET / HTTP/0.9'#13#10#13#10, 4, 'E Version m=0,3 p=4,1 v=-');
+  ExpectReq('GET / http/1.1'#13#10#13#10, 4, 'E Version m=0,3 p=4,1 v=-');
+  ExpectReq('GET / HTTP/1,1'#13#10#13#10, 4, 'E Version m=0,3 p=4,1 v=-');
+  ExpectReq('GET / HTTP/11'#13#10#13#10, 4, 'E Version m=0,3 p=4,1 v=-');
   { Exactly 8 bytes available: compared as a whole. }
-  ExpectReq('GET / HTTP/1.x', 0, 4, 'E Version m=0,3 p=4,1 v=-');
-  ExpectReq('PRI * HTTP/2.0'#13#10#13#10'SM'#13#10#13#10, 0, 4, 'E Version m=0,3 p=4,1 v=-');
+  ExpectReq('GET / HTTP/1.x', 4, 'E Version m=0,3 p=4,1 v=-');
+  ExpectReq('PRI * HTTP/2.0'#13#10#13#10'SM'#13#10#13#10, 4, 'E Version m=0,3 p=4,1 v=-');
 end;
 
 procedure TTestParserExtra.Extra_version_partial_prefixes;
@@ -377,56 +339,56 @@ begin
     ParseReq('GET / ' + Copy(PREFIX, 1, I) + 'X');
     AssertEquals(Format('bad version byte at %d', [I]), 'E Version m=0,3 p=4,1 v=-', ReqLine);
   end;
-  ExpectReq('GET / HTTP/1', 0, 4, 'P m=0,3 p=4,1 v=-');
-  ExpectReq('GET / HTTX', 0, 4, 'E Version m=0,3 p=4,1 v=-');
-  ExpectReq('GET / h', 0, 4, 'E Version m=0,3 p=4,1 v=-');
+  ExpectReq('GET / HTTP/1', 4, 'P m=0,3 p=4,1 v=-');
+  ExpectReq('GET / HTTX', 4, 'E Version m=0,3 p=4,1 v=-');
+  ExpectReq('GET / h', 4, 'E Version m=0,3 p=4,1 v=-');
 end;
 
 procedure TTestParserExtra.Extra_method_token;
 begin
   { Every tchar class: the 15 symbols, digits and letters. }
-  ExpectReq('!#$%&''*+-.^_`|~09AZaz / HTTP/1.1'#13#10#13#10, 0, 4, 'C 36 m=0,21 p=22,1 v=1 h=0');
-  ExpectReq('get / HTTP/1.1'#13#10#13#10, 0, 4, 'C 18 m=0,3 p=4,1 v=1 h=0');
-  ExpectReq('G(T / HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=- p=- v=-');
-  ExpectReq(#$80'ET / HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=- p=- v=-');
-  ExpectReq('GET'#9'/ HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=- p=- v=-');
-  ExpectReq('GET'#0'/ HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=- p=- v=-');
-  ExpectReq('GET:/ HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=- p=- v=-');
+  ExpectReq('!#$%&''*+-.^_`|~09AZaz / HTTP/1.1'#13#10#13#10, 4, 'C 36 m=0,21 p=22,1 v=1 h=0');
+  ExpectReq('get / HTTP/1.1'#13#10#13#10, 4, 'C 18 m=0,3 p=4,1 v=1 h=0');
+  ExpectReq('G(T / HTTP/1.1'#13#10#13#10, 4, 'E Token m=- p=- v=-');
+  ExpectReq(#$80'ET / HTTP/1.1'#13#10#13#10, 4, 'E Token m=- p=- v=-');
+  ExpectReq('GET'#9'/ HTTP/1.1'#13#10#13#10, 4, 'E Token m=- p=- v=-');
+  ExpectReq('GET'#0'/ HTTP/1.1'#13#10#13#10, 4, 'E Token m=- p=- v=-');
+  ExpectReq('GET:/ HTTP/1.1'#13#10#13#10, 4, 'E Token m=- p=- v=-');
   { 'GE' is the method, 'T' the target, then '/ HTTP/1' is a bad version. }
-  ExpectReq('GE T / HTTP/1.1'#13#10#13#10, 0, 4, 'E Version m=0,2 p=3,1 v=-');
+  ExpectReq('GE T / HTTP/1.1'#13#10#13#10, 4, 'E Version m=0,2 p=3,1 v=-');
 end;
 
 procedure TTestParserExtra.Extra_method_fast_paths;
 begin
   { Bytes that start like GET / POST but are other tokens. }
-  ExpectReq('GETX / HTTP/1.1'#13#10#13#10, 0, 4, 'C 19 m=0,4 p=5,1 v=1 h=0');
-  ExpectReq('POSTX / HTTP/1.1'#13#10#13#10, 0, 4, 'C 20 m=0,5 p=6,1 v=1 h=0');
-  ExpectReq('PUT / HTTP/1.1'#13#10#13#10, 0, 4, 'C 18 m=0,3 p=4,1 v=1 h=0');
-  ExpectReq('GET/ HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=- p=- v=-');
-  ExpectReq('POST/ HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=- p=- v=-');
+  ExpectReq('GETX / HTTP/1.1'#13#10#13#10, 4, 'C 19 m=0,4 p=5,1 v=1 h=0');
+  ExpectReq('POSTX / HTTP/1.1'#13#10#13#10, 4, 'C 20 m=0,5 p=6,1 v=1 h=0');
+  ExpectReq('PUT / HTTP/1.1'#13#10#13#10, 4, 'C 18 m=0,3 p=4,1 v=1 h=0');
+  ExpectReq('GET/ HTTP/1.1'#13#10#13#10, 4, 'E Token m=- p=- v=-');
+  ExpectReq('POST/ HTTP/1.1'#13#10#13#10, 4, 'E Token m=- p=- v=-');
   { Partial at each length around the 4- and 5-byte fast-path checks. }
-  ExpectReq('P', 0, 4, 'P m=- p=- v=-');
-  ExpectReq('PO', 0, 4, 'P m=- p=- v=-');
-  ExpectReq('POS', 0, 4, 'P m=- p=- v=-');
-  ExpectReq('POST', 0, 4, 'P m=- p=- v=-');
-  ExpectReq('POST ', 0, 4, 'P m=0,4 p=- v=-');
-  ExpectReq('GET ', 0, 4, 'P m=0,3 p=- v=-');
-  ExpectReq('GETX', 0, 4, 'P m=- p=- v=-');
-  ExpectReq('GETX ', 0, 4, 'P m=0,4 p=- v=-');
+  ExpectReq('P', 4, 'P m=- p=- v=-');
+  ExpectReq('PO', 4, 'P m=- p=- v=-');
+  ExpectReq('POS', 4, 'P m=- p=- v=-');
+  ExpectReq('POST', 4, 'P m=- p=- v=-');
+  ExpectReq('POST ', 4, 'P m=0,4 p=- v=-');
+  ExpectReq('GET ', 4, 'P m=0,3 p=- v=-');
+  ExpectReq('GETX', 4, 'P m=- p=- v=-');
+  ExpectReq('GETX ', 4, 'P m=0,4 p=- v=-');
 end;
 
 procedure TTestParserExtra.Extra_request_target;
 begin
-  ExpectReq('GET * HTTP/1.1'#13#10#13#10, 0, 4, 'C 18 m=0,3 p=4,1 v=1 h=0');
-  ExpectReq('GET http://a.b:80/c?d#e HTTP/1.1'#13#10#13#10, 0, 4, 'C 36 m=0,3 p=4,19 v=1 h=0');
+  ExpectReq('GET * HTTP/1.1'#13#10#13#10, 4, 'C 18 m=0,3 p=4,1 v=1 h=0');
+  ExpectReq('GET http://a.b:80/c?d#e HTTP/1.1'#13#10#13#10, 4, 'C 36 m=0,3 p=4,19 v=1 h=0');
   { URI_MAP accepts all of 0x21..0x7E, including bytes that RFC 3986 does not. }
-  ExpectReq('GET /"{}|\^`<>[] HTTP/1.1'#13#10#13#10, 0, 4, 'C 29 m=0,3 p=4,12 v=1 h=0');
-  ExpectReq('GET /a'#9'b HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET /a'#0'b HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET /a'#$7F'b HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET /a'#$1F'b HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /"{}|\^`<>[] HTTP/1.1'#13#10#13#10, 4, 'C 29 m=0,3 p=4,12 v=1 h=0');
+  ExpectReq('GET /a'#9'b HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /a'#0'b HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /a'#$7F'b HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /a'#$1F'b HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
   { A target that runs to the end of the buffer is Partial. }
-  ExpectReq('GET /abc', 0, 4, 'P m=0,3 p=- v=-');
+  ExpectReq('GET /abc', 4, 'P m=0,3 p=- v=-');
 end;
 
 procedure TTestParserExtra.Extra_request_target_scan_boundaries;
@@ -464,100 +426,53 @@ end;
 
 procedure TTestParserExtra.Extra_request_target_utf8;
 begin
-  ExpectReq('GET /'#$C3#$A9' HTTP/1.1'#13#10#13#10, 0, 4, 'C 20 m=0,3 p=4,3 v=1 h=0');
-  ExpectReq('GET /a'#$E2#$82#$AC'b'#$F0#$9F#$98#$80'c HTTP/1.1'#13#10#13#10, 0, 4,
+  ExpectReq('GET /'#$C3#$A9' HTTP/1.1'#13#10#13#10, 4, 'C 20 m=0,3 p=4,3 v=1 h=0');
+  ExpectReq('GET /a'#$E2#$82#$AC'b'#$F0#$9F#$98#$80'c HTTP/1.1'#13#10#13#10, 4,
     'C 28 m=0,3 p=4,11 v=1 h=0');
-  ExpectReq('GET /'#$F4#$8F#$BF#$BF' HTTP/1.1'#13#10#13#10, 0, 4, 'C 22 m=0,3 p=4,5 v=1 h=0');
+  ExpectReq('GET /'#$F4#$8F#$BF#$BF' HTTP/1.1'#13#10#13#10, 4, 'C 22 m=0,3 p=4,5 v=1 h=0');
   { UTF-8 is checked only once the delimiting SP has arrived. }
-  ExpectReq('GET /'#$FF, 0, 4, 'P m=0,3 p=- v=-');
-  ExpectReq('GET /'#$FF' ', 0, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET /'#$C3, 0, 4, 'P m=0,3 p=- v=-');
-  ExpectReq('GET /'#$C3' ', 0, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET /'#$C3'a HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET /'#$C0#$80' HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET /'#$ED#$A0#$80' HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET /'#$F4#$90#$80#$80' HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /'#$FF, 4, 'P m=0,3 p=- v=-');
+  ExpectReq('GET /'#$FF' ', 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /'#$C3, 4, 'P m=0,3 p=- v=-');
+  ExpectReq('GET /'#$C3' ', 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /'#$C3'a HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /'#$C0#$80' HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /'#$ED#$A0#$80' HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /'#$F4#$90#$80#$80' HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
   { Header values are not UTF-8 checked. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A: '#$FF#$C0#13#10#13#10, 0, 4, 'C 25 m=0,3 p=4,1 v=1 h=1 16,1:19,2');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: '#$FF#$C0#13#10#13#10, 4, 'C 25 m=0,3 p=4,1 v=1 h=1 16,1:19,2');
 end;
 
-procedure TTestParserExtra.Extra_multiple_spaces_config;
+procedure TTestParserExtra.Extra_multiple_spaces;
 begin
-  ExpectReq('GET  /  HTTP/1.1'#13#10#13#10, F_MULTI_SP, 4, 'C 20 m=0,3 p=5,1 v=1 h=0');
-  ExpectReq('POST   /x   HTTP/1.0'#13#10#13#10, F_MULTI_SP, 4, 'C 24 m=0,4 p=7,2 v=0 h=0');
-  ExpectReq('GET  ', F_MULTI_SP, 4, 'P m=0,3 p=- v=-');
-  ExpectReq('GET  /  ', F_MULTI_SP, 4, 'P m=0,3 p=5,1 v=-');
-  { Only SP is skipped, not HTAB. }
-  ExpectReq('GET '#9'/ HTTP/1.1'#13#10#13#10, F_MULTI_SP, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET /'#9'HTTP/1.1'#13#10#13#10, F_MULTI_SP, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET / '#9'HTTP/1.1'#13#10#13#10, F_MULTI_SP, 4, 'E Version m=0,3 p=4,1 v=-');
-  { The same inputs without the option. }
-  ExpectReq('GET  /  HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET /  HTTP/1.1'#13#10#13#10, 0, 4, 'E Version m=0,3 p=4,1 v=-');
+  { One SP between the request line parts, never more (RFC 9112 section 3). }
+  ExpectReq('GET  /  HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /  HTTP/1.1'#13#10#13#10, 4, 'E Version m=0,3 p=4,1 v=-');
+  ExpectReq('GET '#9'/ HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET /'#9'HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
 end;
 
-procedure TTestParserExtra.Extra_response_options_do_not_affect_requests;
+procedure TTestParserExtra.Extra_invalid_header_lines;
 begin
-  ExpectReq('GET / HTTP/1.1'#13#10'Host : x'#13#10#13#10, F_RESP_SP_NAME, 4, 'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'Host : x'#13#10#13#10, F_RESP_IGNORE, 4, 'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'Host : x'#13#10#13#10, F_RESP_SP_NAME or F_RESP_IGNORE, 4,
-    'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#1#13#10#13#10, F_RESP_IGNORE, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
-  ExpectReq('GET  / HTTP/1.1'#13#10#13#10, F_RESP_MULTI_SP, 4, 'E Token m=0,3 p=- v=-');
-  { The request option still works when response options are also set. }
-  ExpectReq('GET / HTTP/1.1'#13#10'Host : x'#13#10#13#10, F_IGNORE or F_RESP_SP_NAME, 4,
-    'C 28 m=0,3 p=4,1 v=1 h=0');
-end;
-
-procedure TTestParserExtra.Extra_ignore_invalid_headers;
-begin
-  { NUL or a lone CR in a skipped line is still an error. }
-  ExpectReq('GET / HTTP/1.1'#13#10'Bad Name'#0'x'#13#10#13#10, F_IGNORE, 4, 'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'Bad Name'#13'x'#13#10#13#10, F_IGNORE, 4, 'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#0'c'#13#10#13#10, F_IGNORE, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A:'#0#13#10#13#10, F_IGNORE, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
-  { A skipped line that runs to the end of the buffer is Partial. }
-  ExpectReq('GET / HTTP/1.1'#13#10'Bad Name', F_IGNORE, 4, 'P m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'Bad Name'#13, F_IGNORE, 4, 'P m=0,3 p=4,1 v=1');
-  { Skipped lines: bad value byte, bad value byte right after the colon,
-    empty name, bad name byte, LF-only line ends. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#1'c'#13#10'D: e'#13#10#13#10, F_IGNORE, 4,
-    'C 32 m=0,3 p=4,1 v=1 h=1 24,1:27,1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A:'#1#13#10'D: e'#13#10#13#10, F_IGNORE, 4,
-    'C 29 m=0,3 p=4,1 v=1 h=1 21,1:24,1');
-  ExpectReq('GET / HTTP/1.1'#13#10':'#13#10'B: c'#13#10#13#10, F_IGNORE, 4,
-    'C 27 m=0,3 p=4,1 v=1 h=1 19,1:22,1');
-  ExpectReq('GET / HTTP/1.1'#10'X Y'#10'B: c'#10#10, F_IGNORE, 4, 'C 25 m=0,3 p=4,1 v=1 h=1 19,1:22,1');
-  ExpectReq('GET / HTTP/1.1'#13#10'X Y'#13#10#13#10, F_IGNORE, 4, 'C 23 m=0,3 p=4,1 v=1 h=0');
+  { A bad byte in a header line is an error: nothing is skipped. }
+  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#1'c'#13#10'D: e'#13#10#13#10, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10':'#13#10'B: c'#13#10#13#10, 4, 'E HeaderName m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#10'X Y'#10'B: c'#10#10, 4, 'E HeaderName m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'Bad Name'#0'x'#13#10#13#10, 4, 'E HeaderName m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A:'#0#13#10#13#10, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'Host : x'#13#10#13#10, 4, 'E HeaderName m=0,3 p=4,1 v=1');
   { A line starting with ':' has an empty name, even if a second ':' follows. }
-  ExpectReq('GET / HTTP/1.1'#13#10'::x'#13#10#13#10, 0, 4, 'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'::x'#13#10#13#10, F_IGNORE, 4, 'C 23 m=0,3 p=4,1 v=1 h=0');
+  ExpectReq('GET / HTTP/1.1'#13#10'::x'#13#10#13#10, 4, 'E HeaderName m=0,3 p=4,1 v=1');
   ExpectHdrs(':a:b'#13#10#13#10, 4, 'E HeaderName');
-  { Without the option the same inputs are errors. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#1'c'#13#10'D: e'#13#10#13#10, 0, 4, 'E HeaderValue m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10':'#13#10'B: c'#13#10#13#10, 0, 4, 'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#10'X Y'#10'B: c'#10#10, 0, 4, 'E HeaderName m=0,3 p=4,1 v=1');
 end;
 
 procedure TTestParserExtra.Extra_space_before_first_header;
 begin
-  ExpectReq('GET / HTTP/1.1'#13#10'  '#9'A: b'#13#10#13#10, F_SP_FIRST, 4,
-    'C 27 m=0,3 p=4,1 v=1 h=1 19,1:22,1');
-  { Only before the first header. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#10' C: d'#13#10#13#10, F_SP_FIRST, 4,
-    'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: b'#13#10' C: d'#13#10#13#10, F_SP_FIRST or F_IGNORE, 4,
-    'C 31 m=0,3 p=4,1 v=1 h=1 16,1:19,1');
-  { Whitespace, then the empty line: no headers. }
-  ExpectReq('GET / HTTP/1.1'#13#10'   '#13#10, F_SP_FIRST, 4, 'C 21 m=0,3 p=4,1 v=1 h=0');
-  ExpectReq('GET / HTTP/1.1'#13#10'  ', F_SP_FIRST, 4, 'P m=0,3 p=4,1 v=1');
-  { A skipped invalid line does not count as the first header. }
-  ExpectReq('GET / HTTP/1.1'#13#10':x'#13#10' A: b'#13#10#13#10, F_SP_FIRST or F_IGNORE, 4,
-    'C 29 m=0,3 p=4,1 v=1 h=1 21,1:24,1');
-  ExpectReq('GET / HTTP/1.1'#13#10':x'#13#10' A: b'#13#10#13#10, F_SP_FIRST, 4,
-    'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10' A: b'#13#10#13#10, 0, 4, 'E HeaderName m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10' A: b'#13#10#13#10, F_IGNORE, 4, 'C 25 m=0,3 p=4,1 v=1 h=0');
+  { Whitespace before a header name is an error, before the first one too
+    (RFC 9112 section 5.2: no obs-fold in requests). }
+  ExpectReq('GET / HTTP/1.1'#13#10' A: b'#13#10#13#10, 4, 'E HeaderName m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'  '#9'A: b'#13#10#13#10, 4, 'E HeaderName m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'   '#13#10, 4, 'E HeaderName m=0,3 p=4,1 v=1');
 end;
 
 procedure TTestParserExtra.Extra_header_limit_order;
@@ -565,21 +480,16 @@ begin
   { The slot is taken only after the whole line has been parsed, so a
     bad byte in an extra line is reported before TooManyHeaders, and an
     incomplete extra line is Partial. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13#10'B: b'#1#13#10#13#10, 0, 1, 'E HeaderValue m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13#10'B: b'#13#10'C'#1, 0, 1, 'E TooManyHeaders m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13#10'B: b', 0, 1, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13#10'B: b'#1#13#10#13#10, 1, 'E HeaderValue m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13#10'B: b'#13#10'C'#1, 1, 'E TooManyHeaders m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13#10'B: b', 1, 'P m=0,3 p=4,1 v=1');
   AssertEquals('NumHeaders on Partial', 1, FNumHeaders);
-  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13#10'B: b'#13#10#13#10, 0, 1, 'E TooManyHeaders m=0,3 p=4,1 v=1');
-  { Skipped lines do not take a slot. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13#10'X Y'#13#10#13#10, F_IGNORE, 1,
-    'C 29 m=0,3 p=4,1 v=1 h=1 16,1:19,1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13#10'B: b'#13#10#13#10, F_IGNORE, 1,
-    'E TooManyHeaders m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13#10'B: b'#13#10#13#10, 1, 'E TooManyHeaders m=0,3 p=4,1 v=1');
   { Zero slots. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A', 0, 0, 'P m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13, 0, 0, 'P m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13#10, 0, 0, 'E TooManyHeaders m=0,3 p=4,1 v=1');
-  ExpectReq('GET / HTTP/1.1'#13#10'A:'#13#10, 0, 0, 'E TooManyHeaders m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A', 0, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13, 0, 'P m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A: a'#13#10, 0, 'E TooManyHeaders m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A:'#13#10, 0, 'E TooManyHeaders m=0,3 p=4,1 v=1');
   ExpectHdrs('A: b'#13#10#13#10, 0, 'E TooManyHeaders');
 end;
 
@@ -703,12 +613,10 @@ var
   Hdrs: array[0..3] of THeaderSlice;
   N: Integer;
   R: TParseResult;
-  HC: THeaderParserConfig;
 begin
-  HC := Default(THeaderParserConfig);
   Buf := 'xxxxxA: b'#13#10#13#10'rest';
   Pos := 5;
-  R := ParseHeaderBlock(@Buf[1], Length(Buf), Pos, @Hdrs[0], 4, N, HC);
+  R := ParseHeaderBlock(@Buf[1], Length(Buf), Pos, @Hdrs[0], 4, N);
   AssertTrue('Complete', R.Status = psComplete);
   AssertEquals('Consumed counts from the start Pos', 8, R.Consumed);
   AssertEquals('Pos after the empty line', 13, Pos);
@@ -716,7 +624,7 @@ begin
   AssertEquals('name offset is absolute', 5, Hdrs[0].Name.Off);
   AssertEquals('value offset is absolute', 8, Hdrs[0].Value.Off);
   Pos := Length(Buf);
-  R := ParseHeaderBlock(@Buf[1], Length(Buf), Pos, @Hdrs[0], 4, N, HC);
+  R := ParseHeaderBlock(@Buf[1], Length(Buf), Pos, @Hdrs[0], 4, N);
   AssertTrue('Pos = Len: Partial', R.Status = psPartial);
 end;
 
@@ -738,11 +646,11 @@ end;
 procedure TTestParserExtra.Extra_hyper_token_error_mapping;
 begin
   { hyper role.rs: Token with method None -> Parse::Method, else Parse::Uri. }
-  ExpectReq(' / HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=- p=- v=-');
-  ExpectReq('GET '#$7F' HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
-  ExpectReq('GET  / HTTP/1.1'#13#10#13#10, 0, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq(' / HTTP/1.1'#13#10#13#10, 4, 'E Token m=- p=- v=-');
+  ExpectReq('GET '#$7F' HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
+  ExpectReq('GET  / HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
   { Header errors come after a complete request line. }
-  ExpectReq('GET / HTTP/1.1'#13#10'A'#1': b'#13#10#13#10, 0, 4, 'E HeaderName m=0,3 p=4,1 v=1');
+  ExpectReq('GET / HTTP/1.1'#13#10'A'#1': b'#13#10#13#10, 4, 'E HeaderName m=0,3 p=4,1 v=1');
 end;
 
 procedure TTestParserExtra.Extra_scanners_stop_at_len;

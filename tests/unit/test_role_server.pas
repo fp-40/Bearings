@@ -23,7 +23,6 @@ type
     { role.rs, server side }
     procedure Test_parse_request;
     procedure Test_parse_request_errors;
-    procedure Test_parse_allow_request_with_multiple_spaces_in_request_line;
     procedure Test_parse_reject_request_with_multiple_spaces_in_request_line;
     procedure Test_parse_preserve_header_case_in_request;
     procedure Test_decoder_request;
@@ -146,30 +145,6 @@ end;
 const
   REQUEST_WITH_MULTIPLE_SPACES_IN_REQUEST_LINE: RawByteString =
     'GET  /echo  HTTP/1.1'#13#10'Host: hyper.rs'#13#10#13#10;
-
-procedure TTestRoleServer.Test_parse_allow_request_with_multiple_spaces_in_request_line;
-var
-  Ctx: TH1ParseContext;
-  H: THttpHeaders;
-  Msg: TParsedRequestHead;
-  Raw: RawByteString;
-begin
-  Raw := REQUEST_WITH_MULTIPLE_SPACES_IN_REQUEST_LINE;
-  Ctx := DefaultParseContext;
-  Ctx.ParserConfig.AllowMultipleSpacesInRequestLineDelimiters := True;
-  H := THttpHeaders.Create;
-  try
-    AssertTrue(ParseStr(Raw, Ctx, H, Msg) = spsComplete);
-    AssertEquals(Length(Raw), Msg.HeadLen);
-    AssertTrue(Msg.Method = hmGet);
-    AssertEquals('/echo', SliceStr(Raw, Msg.Target));
-    AssertTrue(Msg.Version = hv11);
-    AssertEquals(1, H.Count);
-    AssertEquals('hyper.rs', H.GetValue('Host'));
-  finally
-    H.Free;
-  end;
-end;
 
 procedure TTestRoleServer.Test_parse_reject_request_with_multiple_spaces_in_request_line;
 var

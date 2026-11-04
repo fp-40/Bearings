@@ -270,7 +270,6 @@ Field | Meaning
 `KeepAlive` (True) | serve more requests on the connection after the first one
 `HalfClose` (False) | when the client closes its sending side, still finish the response in progress
 `TitleCaseHeaders` (False) | write response header names as `Content-Type` instead of `content-type`
-`PreserveHeaderCase` (False) | accepted and ignored (request names are always kept as received)
 `MaxHeaders` (-1 = 100) | most header fields in a request head; more gives 431
 `MaxHeaderSize` (-1 = no own limit) | most bytes in a request head; more gives 431
 `MaxBufSize` (-1 = about 408 KiB) | largest read buffer; a request head must fit; minimum 8192
@@ -284,7 +283,6 @@ Field | Meaning
 `ProxyProtocol` (False) | every connection starts with a PROXY protocol header, v1 or v2 (`bearings.rt.proxyproto`), from the proxy or load balancer in front: the address it carries becomes the peer (`TExchange.PeerAddr`, the access log's `client`); a connection without a valid header is closed without a response (outcome `parse`), one closed before any byte is a normal end. Only for listeners that only the proxy can reach: the header is trusted
 `MaxRequests` (0 = no limit) | most requests one connection serves; the last allowed response carries `Connection: close` (nginx `keepalive_requests`)
 `MaxConnectionMs` (0 = no limit) | once a connection is this old, its next response carries `Connection: close` and closes it; a request in progress is never cut, and an idle connection past the age stays until its next request or the header read timeout (nginx `keepalive_time`)
-`Parser: TParserConfig` | leniency switches of the head parser (`bearings.http1.parser`)
 `Mode: TH1ConnMode` (cmPlain) | what happens after a `101` response and at the end of the connection (section 10)
 
 Presets: `ConformanceH1Config` is the base (no timer, so no timeouts;

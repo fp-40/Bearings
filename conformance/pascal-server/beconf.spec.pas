@@ -768,10 +768,9 @@ begin
   else
     M := V;
   try
-    CheckKeys(M, ['keep_alive', 'half_close', 'title_case_headers', 'preserve_header_case',
+    CheckKeys(M, ['keep_alive', 'half_close', 'title_case_headers',
       'max_headers', 'max_header_size', 'max_buf_size', 'timer', 'header_read_timeout_ms',
-      'writev', 'pipeline_flush', 'auto_date_header', 'ignore_invalid_headers',
-      'allow_multiple_spaces_in_request_line_delimiters', 'conn_mode',
+      'writev', 'pipeline_flush', 'auto_date_header', 'conn_mode',
       'graceful_shutdown_on_accept'], 'config: ');
     C := ConformanceH1Config;
     { header_read_timeout_ms: absent = default, null = disabled, else an integer }
@@ -814,7 +813,6 @@ begin
     C.KeepAlive := B;
     C.HalfClose := OptBoolD(M, 'half_close', False);
     C.TitleCaseHeaders := OptBoolD(M, 'title_case_headers', False);
-    C.PreserveHeaderCase := OptBoolD(M, 'preserve_header_case', False);
     if OptU64(M, 'max_headers', N) then
     begin
       if N > QWord(High(Integer)) then
@@ -834,11 +832,6 @@ begin
     OptBool(M, 'writev', False, Present);
     C.PipelineFlush := OptBoolD(M, 'pipeline_flush', False);
     C.AutoDateHeader := OptBoolD(M, 'auto_date_header', True);
-    C.Parser.IgnoreInvalidHeadersInRequests := OptBoolD(M, 'ignore_invalid_headers',
-      C.Parser.IgnoreInvalidHeadersInRequests);
-    C.Parser.AllowMultipleSpacesInRequestLineDelimiters :=
-      OptBoolD(M, 'allow_multiple_spaces_in_request_line_delimiters',
-      C.Parser.AllowMultipleSpacesInRequestLineDelimiters);
     S.GracefulShutdownOnAccept := OptBoolD(M, 'graceful_shutdown_on_accept', False);
     S.Cfg := C;
   finally

@@ -26,10 +26,8 @@ type
     function BufPtr: PByte;
     function SliceStr(const S: TSlice): RawByteString;
     function ResultStr(const R: TParseResult): string;
-    { Request::parse / ParserConfig::parse_request with NumSlots header slots. }
-    procedure ParseReq(const Buf: RawByteString; NumSlots: Integer;
-      const Config: TParserConfig); overload;
-    procedure ParseReq(const Buf: RawByteString; NumSlots: Integer = NUM_OF_HEADERS); overload;
+    { ParseRequest with NumSlots header slots. }
+    procedure ParseReq(const Buf: RawByteString; NumSlots: Integer = NUM_OF_HEADERS);
     { httparse::parse_headers }
     procedure ParseHdrs(const Buf: RawByteString; NumSlots: Integer);
     procedure CheckComplete(Expected: SizeInt);
@@ -98,19 +96,13 @@ begin
   end;
 end;
 
-procedure TParserTestCase.ParseReq(const Buf: RawByteString; NumSlots: Integer;
-  const Config: TParserConfig);
+procedure TParserTestCase.ParseReq(const Buf: RawByteString; NumSlots: Integer);
 begin
   AssertTrue('test slot count', NumSlots <= MAX_TEST_HEADERS);
   FBuf := Buf;
   FillChar(FHeaders, SizeOf(FHeaders), $FF);
-  FRes := ParseRequest(BufPtr, Length(FBuf), FReq, @FHeaders[0], NumSlots, Config);
+  FRes := ParseRequest(BufPtr, Length(FBuf), FReq, @FHeaders[0], NumSlots);
   FNumHeaders := FReq.NumHeaders;
-end;
-
-procedure TParserTestCase.ParseReq(const Buf: RawByteString; NumSlots: Integer);
-begin
-  ParseReq(Buf, NumSlots, DefaultParserConfig);
 end;
 
 procedure TParserTestCase.ParseHdrs(const Buf: RawByteString; NumSlots: Integer);

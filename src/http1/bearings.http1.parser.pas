@@ -25,8 +25,7 @@
   accepts bytes other parsers reject (spaces in unusual places, odd line
   endings, control bytes) lets an attacker craft input that the two read
   differently ("request smuggling"). So every byte is checked against the
-  RFC 9110/9112 grammar, and the lenient options of TParserConfig are all
-  off by default.
+  RFC 9110/9112 grammar, and there is no option that relaxes it.
 
   Zero allocation: the parser creates no strings. The method, the target
   and each header name and value are returned as (Off, Len) slices of the
@@ -67,7 +66,6 @@ type
     peHeaderName,     // Invalid byte in header name.
     peHeaderValue,    // Invalid byte in header value.
     peNewLine,        // Invalid byte in new line.
-    peStatus,         // Invalid byte in a response status line (response side; never returned here).
     peToken,          // Invalid byte where token is required.
     peTooManyHeaders, // Parsed more headers than provided buffer can contain.
     peVersion         // Invalid byte in HTTP version.
@@ -114,34 +112,6 @@ type
         lines parsed so far (those slots are filled too). }
   end;
 
-  { Options that relax the parser. All default to False, the strict
-    behaviour (see DefaultParserConfig). Only
-    AllowMultipleSpacesInRequestLineDelimiters,
-    AllowSpaceBeforeFirstHeaderName and IgnoreInvalidHeadersInRequests
-    affect request parsing. The *InResponses fields are for parsing
-    responses, which this unit does not do; they are kept so that one
-    config value can describe both directions. }
-  TParserConfig = record
-    AllowSpacesAfterHeaderNameInResponses: Boolean;
-    AllowObsoleteMultilineHeadersInResponses: Boolean;
-    AllowMultipleSpacesInRequestLineDelimiters: Boolean;
-    AllowMultipleSpacesInResponseStatusDelimiters: Boolean;
-    AllowSpaceBeforeFirstHeaderName: Boolean;
-    IgnoreInvalidHeadersInResponses: Boolean;
-    IgnoreInvalidHeadersInRequests: Boolean;
-  end;
-
-  { The options seen by the header block parser, derived from
-    TParserConfig after the request line has been parsed. }
-  THeaderParserConfig = record
-    AllowSpacesAfterHeaderName: Boolean;
-    AllowObsoleteMultilineHeaders: Boolean;
-    AllowSpaceBeforeFirstHeaderName: Boolean;
-    IgnoreInvalidHeaders: Boolean;
-  end;
-
-function DefaultParserConfig: TParserConfig; inline;
-
 { Parses a request head from the start of the buffer.
   Buf, Len: the bytes received so far (Buf may be nil when Len = 0).
   Headers: caller-owned array of MaxHeaders slots (may be nil when
@@ -152,13 +122,10 @@ function DefaultParserConfig: TParserConfig; inline;
   body byte), psPartial when more bytes are needed, or psError with the
   error kind. }
 function ParseRequest(Buf: PByte; Len: SizeInt; out Req: TParsedRequest;
-  Headers: PHeaderSlice; MaxHeaders: Integer;
-  const Config: TParserConfig): TParseResult; overload;
-function ParseRequest(Buf: PByte; Len: SizeInt; out Req: TParsedRequest;
-  Headers: PHeaderSlice; MaxHeaders: Integer): TParseResult; overload;
+  Headers: PHeaderSlice; MaxHeaders: Integer): TParseResult;
 
-{ Parses a header block alone (header lines up to an empty line) with the
-  strict default options. NumHeaders is set as in
+{ Parses a header block alone (header lines up to an empty line).
+  NumHeaders is set as in
   TParsedRequest.NumHeaders. The server does not call it (chunked trailers
   have their own parser in bearings.http1.decode); the tests do. }
 function ParseHeaders(Buf: PByte; Len: SizeInt; Headers: PHeaderSlice;
@@ -169,8 +136,7 @@ function ParseHeaders(Buf: PByte; Len: SizeInt; Headers: PHeaderSlice;
   Consumed is the number of bytes parsed by this call (not counting the
   initial Pos). }
 function ParseHeaderBlock(Buf: PByte; Len: SizeInt; var Pos: SizeInt;
-  Headers: PHeaderSlice; MaxHeaders: Integer; out NumHeaders: Integer;
-  const HConfig: THeaderParserConfig): TParseResult;
+  Headers: PHeaderSlice; MaxHeaders: Integer; out NumHeaders: Integer): TParseResult;
 
 { A short English description of an error kind, e.g. 'invalid header name'. }
 function ParseErrorDescription(E: THttpParseError): string;
@@ -233,11 +199,6 @@ const
   STEP_OK = 0;
   STEP_PARTIAL = 1;
   STEP_ERROR = 2;
-
-function DefaultParserConfig: TParserConfig;
-begin
-  Result := Default(TParserConfig);
-end;
 
 function IsTokenChar(B: Byte): Boolean;
 begin
@@ -400,20 +361,6 @@ begin
     else
       Exit(STEP_OK);
     end;
-  end;
-end;
-
-{ Skips a run of spaces; only used with
-  AllowMultipleSpacesInRequestLineDelimiters. }
-function SkipSpaces(Buf: PByte; Len: SizeInt; var Pos: SizeInt): Integer; inline;
-begin
-  while True do
-  begin
-    if Pos >= Len then
-      Exit(STEP_PARTIAL);
-    if Buf[Pos] <> SP then
-      Exit(STEP_OK);
-    Inc(Pos);
   end;
 end;
 
@@ -581,61 +528,20 @@ end;
 
 { ---- header block ---- }
 
-{ Handles an invalid byte B in a header line (B is already consumed).
-  Without Ignore (the default) it is an error of kind E. With
-  IgnoreInvalidHeaders the rest of the line is skipped and the header
-  dropped; a NUL, or a CR not followed by LF, is still an error of kind E.
-  Returns STEP_OK when the line was skipped and parsing must resume at
-  Pos. }
-function SkipInvalidLine(Buf: PByte; Len: SizeInt; var Pos: SizeInt;
-  B: Byte; Ignore: Boolean; E: THttpParseError;
-  out Err: THttpParseError): Integer;
-begin
-  Err := E;
-  if not Ignore then
-    Exit(STEP_ERROR);
-  while True do
-  begin
-    if B = CR then
-    begin
-      if Pos >= Len then
-        Exit(STEP_PARTIAL);
-      B := Buf[Pos];
-      Inc(Pos);
-      if B <> LF then
-        Exit(STEP_ERROR);
-      Break;
-    end;
-    if B = LF then
-      Break;
-    if B = 0 then
-      Exit(STEP_ERROR);
-    if Pos >= Len then
-      Exit(STEP_PARTIAL);
-    B := Buf[Pos];
-    Inc(Pos);
-  end;
-  Err := peNone;
-  Result := STEP_OK;
-end;
-
 { States (labels): NextHeader reads the first byte of a line (an empty
   line ends the head); WhitespaceAfterColon skips the optional whitespace
   before the value; ValueLines scans the value up to the line end;
-  ValueDone stores the header in the next slot. "obs-fold" (a line
-  starting with SP or HTAB that continues the previous value, obsolete
-  since RFC 7230) is accepted only with AllowObsoleteMultilineHeaders,
-  which requests never use. }
+  ValueDone stores the header in the next slot. A line that starts with SP
+  or HTAB ("obs-fold", obsolete since RFC 7230) is an error, as RFC 9112
+  section 5.2 requires of a server. }
 function ParseHeaderBlock(Buf: PByte; Len: SizeInt; var Pos: SizeInt;
-  Headers: PHeaderSlice; MaxHeaders: Integer; out NumHeaders: Integer;
-  const HConfig: THeaderParserConfig): TParseResult;
+  Headers: PHeaderSlice; MaxHeaders: Integer; out NumHeaders: Integer): TParseResult;
 label
   NextHeader, WhitespaceAfterColon, ValueLines, ValueDone;
 var
   Start, NameStart, NameLen, ValStart, ValEnd, TermPos: SizeInt;
   B: Byte;
-  Skip, Step: Integer;
-  Err: THttpParseError;
+  Skip: Integer;
   H: PHeaderSlice;
 begin
   NumHeaders := 0;
@@ -658,22 +564,8 @@ NextHeader:
   end;
   if B = LF then
     Exit(MakeComplete(Pos - Start));
-
   if not TokenTable[B] then
-  begin
-    if HConfig.AllowSpaceBeforeFirstHeaderName and (NumHeaders = 0) and
-       ((B = SP) or (B = HTAB)) then
-    begin
-      while (Pos < Len) and ((Buf[Pos] = SP) or (Buf[Pos] = HTAB)) do
-        Inc(Pos);
-      goto NextHeader;
-    end;
-    Step := SkipInvalidLine(Buf, Len, Pos, B, HConfig.IgnoreInvalidHeaders,
-      peHeaderName, Err);
-    if Step = STEP_OK then goto NextHeader;
-    if Step = STEP_PARTIAL then Exit(MakePartial);
-    Exit(MakeError(Err));
-  end;
+    Exit(MakeError(peHeaderName));
 
   { Header name: a tchar run up to ':'. A space or tab before the colon is
     an error (RFC 9112 section 5.1 requires servers to reject it, because
@@ -685,23 +577,8 @@ NextHeader:
   NameLen := Pos - NameStart;
   B := Buf[Pos];
   Inc(Pos);
-  if B = Ord(':') then
-    goto WhitespaceAfterColon;
-  if HConfig.AllowSpacesAfterHeaderName then
-    while (B = SP) or (B = HTAB) do
-    begin
-      if Pos >= Len then
-        Exit(MakePartial);
-      B := Buf[Pos];
-      Inc(Pos);
-      if B = Ord(':') then
-        goto WhitespaceAfterColon;
-    end;
-  Step := SkipInvalidLine(Buf, Len, Pos, B, HConfig.IgnoreInvalidHeaders,
-    peHeaderName, Err);
-  if Step = STEP_OK then goto NextHeader;
-  if Step = STEP_PARTIAL then Exit(MakePartial);
-  Exit(MakeError(Err));
+  if B <> Ord(':') then
+    Exit(MakeError(peHeaderName));
 
   { Skip optional whitespace between the colon and the value. }
 WhitespaceAfterColon:
@@ -727,20 +604,7 @@ WhitespaceAfterColon:
     Inc(Pos);
   end
   else if B <> LF then
-  begin
-    Step := SkipInvalidLine(Buf, Len, Pos, B, HConfig.IgnoreInvalidHeaders,
-      peHeaderValue, Err);
-    if Step = STEP_OK then goto NextHeader;
-    if Step = STEP_PARTIAL then Exit(MakePartial);
-    Exit(MakeError(Err));
-  end;
-  if HConfig.AllowObsoleteMultilineHeaders then
-  begin
-    if Pos >= Len then
-      Exit(MakePartial);
-    if (Buf[Pos] = SP) or (Buf[Pos] = HTAB) then
-      goto WhitespaceAfterColon;
-  end;
+    Exit(MakeError(peHeaderValue));
   { The empty slice points at the line terminator. }
   ValStart := TermPos;
   ValEnd := TermPos;
@@ -765,24 +629,10 @@ ValueLines:
   else if B = LF then
     Skip := 1
   else
-  begin
-    Step := SkipInvalidLine(Buf, Len, Pos, B, HConfig.IgnoreInvalidHeaders,
-      peHeaderValue, Err);
-    if Step = STEP_OK then goto NextHeader;
-    if Step = STEP_PARTIAL then Exit(MakePartial);
-    Exit(MakeError(Err));
-  end;
-  if HConfig.AllowObsoleteMultilineHeaders then
-  begin
-    if Pos >= Len then
-      Exit(MakePartial);
-    if (Buf[Pos] = SP) or (Buf[Pos] = HTAB) then
-      goto ValueLines;
-  end;
+    Exit(MakeError(peHeaderValue));
   ValEnd := Pos - Skip;
-  { Trim trailing whitespace (SP, HTAB, and the CR/LF of folded lines when
-    AllowObsoleteMultilineHeaders is on). }
-  while (ValEnd > ValStart) and (Buf[ValEnd - 1] in [SP, HTAB, CR, LF]) do
+  { Trim trailing SP and HTAB. }
+  while (ValEnd > ValStart) and (Buf[ValEnd - 1] in [SP, HTAB]) do
     Dec(ValEnd);
 
 ValueDone:
@@ -798,13 +648,11 @@ ValueDone:
 end;
 
 function ParseRequest(Buf: PByte; Len: SizeInt; out Req: TParsedRequest;
-  Headers: PHeaderSlice; MaxHeaders: Integer;
-  const Config: TParserConfig): TParseResult;
+  Headers: PHeaderSlice; MaxHeaders: Integer): TParseResult;
 var
   Pos: SizeInt;
   Err: THttpParseError;
   Step: Integer;
-  HConfig: THeaderParserConfig;
 begin
   Req.HasMethod := False;
   Req.HasPath := False;
@@ -826,18 +674,10 @@ begin
     if Step = STEP_PARTIAL then Exit(MakePartial) else Exit(MakeError(Err));
   Req.HasMethod := True;
 
-  if Config.AllowMultipleSpacesInRequestLineDelimiters then
-    if SkipSpaces(Buf, Len, Pos) = STEP_PARTIAL then
-      Exit(MakePartial);
-
   Step := ParseUri(Buf, Len, Pos, Req.Path, Err);
   if Step <> STEP_OK then
     if Step = STEP_PARTIAL then Exit(MakePartial) else Exit(MakeError(Err));
   Req.HasPath := True;
-
-  if Config.AllowMultipleSpacesInRequestLineDelimiters then
-    if SkipSpaces(Buf, Len, Pos) = STEP_PARTIAL then
-      Exit(MakePartial);
 
   Step := ParseVersion(Buf, Len, Pos, Req.Version, Err);
   if Step <> STEP_OK then
@@ -848,33 +688,18 @@ begin
   if Step <> STEP_OK then
     if Step = STEP_PARTIAL then Exit(MakePartial) else Exit(MakeError(Err));
 
-  HConfig.AllowSpacesAfterHeaderName := False;
-  HConfig.AllowObsoleteMultilineHeaders := False;
-  HConfig.AllowSpaceBeforeFirstHeaderName := Config.AllowSpaceBeforeFirstHeaderName;
-  HConfig.IgnoreInvalidHeaders := Config.IgnoreInvalidHeadersInRequests;
-  Result := ParseHeaderBlock(Buf, Len, Pos, Headers, MaxHeaders,
-    Req.NumHeaders, HConfig);
+  Result := ParseHeaderBlock(Buf, Len, Pos, Headers, MaxHeaders, Req.NumHeaders);
   if Result.Status = psComplete then
     Result.Consumed := Pos;
-end;
-
-function ParseRequest(Buf: PByte; Len: SizeInt; out Req: TParsedRequest;
-  Headers: PHeaderSlice; MaxHeaders: Integer): TParseResult;
-begin
-  Result := ParseRequest(Buf, Len, Req, Headers, MaxHeaders,
-    DefaultParserConfig);
 end;
 
 function ParseHeaders(Buf: PByte; Len: SizeInt; Headers: PHeaderSlice;
   MaxHeaders: Integer; out NumHeaders: Integer): TParseResult;
 var
   Pos: SizeInt;
-  HConfig: THeaderParserConfig;
 begin
   Pos := 0;
-  HConfig := Default(THeaderParserConfig);
-  Result := ParseHeaderBlock(Buf, Len, Pos, Headers, MaxHeaders, NumHeaders,
-    HConfig);
+  Result := ParseHeaderBlock(Buf, Len, Pos, Headers, MaxHeaders, NumHeaders);
 end;
 
 function ParseErrorDescription(E: THttpParseError): string;
@@ -883,7 +708,6 @@ begin
     peHeaderName: Result := 'invalid header name';
     peHeaderValue: Result := 'invalid header value';
     peNewLine: Result := 'invalid new line';
-    peStatus: Result := 'invalid response status';
     peToken: Result := 'invalid token';
     peTooManyHeaders: Result := 'too many headers';
     peVersion: Result := 'invalid HTTP version';

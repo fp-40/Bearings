@@ -3,8 +3,9 @@
   --guard-end places each case so that it ends exactly at a PROT_NONE page,
   --guard-start so that it starts right after one: any read outside
   [Buf, Buf+Len) then crashes with SIGSEGV.
-  Reads the corpus written by test_parser_corpus.py and prints one result
-  line for every case and parser configuration. test_parser_golden.sh
+  Reads the corpus written by test_parser_corpus.py and prints two result
+  lines for every case: with 4 header slots (configuration 0) and with 1
+  (configuration 1). test_parser_golden.sh
   compares the lines with tests/golden/parser_expected.txt.xz. Those
   values were httparse 1.10.1's results for the same corpus when they
   were frozen (2026-11-04); they are now maintained here. }
@@ -17,7 +18,7 @@ uses
 
 const
   ERR_NAMES: array[THttpParseError] of string = ('None', 'HeaderName',
-    'HeaderValue', 'NewLine', 'Status', 'Token', 'TooManyHeaders', 'Version');
+    'HeaderValue', 'NewLine', 'Token', 'TooManyHeaders', 'Version');
 
 var
   Data: TBytesStream;
@@ -44,22 +45,16 @@ end;
 
 procedure RunCase(CaseNo: Integer; Buf: PByte; Len: SizeInt);
 var
-  Cfg, Flags, Slots, N: Integer;
-  C: TParserConfig;
+  Cfg, Slots, N: Integer;
   Req: TParsedRequest;
   Hdrs: array[0..3] of THeaderSlice;
   R: TParseResult;
   Line, V: string;
 begin
-  for Cfg := 0 to 8 do
+  for Cfg := 0 to 1 do
   begin
-    C := DefaultParserConfig;
-    if Cfg = 8 then Flags := 0 else Flags := Cfg;
-    C.AllowMultipleSpacesInRequestLineDelimiters := (Flags and 1) <> 0;
-    C.AllowSpaceBeforeFirstHeaderName := (Flags and 2) <> 0;
-    C.IgnoreInvalidHeadersInRequests := (Flags and 4) <> 0;
-    if Cfg = 8 then Slots := 1 else Slots := 4;
-    R := ParseRequest(Buf, Len, Req, @Hdrs[0], Slots, C);
+    if Cfg = 1 then Slots := 1 else Slots := 4;
+    R := ParseRequest(Buf, Len, Req, @Hdrs[0], Slots);
     if Req.HasVersion then V := IntToStr(Req.Version) else V := '-';
     Line := 'm=' + SliceOpt(Req.HasMethod, Req.Method) + ' p=' +
       SliceOpt(Req.HasPath, Req.Path) + ' v=' + V;

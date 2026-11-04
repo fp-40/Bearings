@@ -119,7 +119,6 @@ begin
     { errors without an automatic response }
     AssertEquals(0, ServerErrorStatus(h1peNone));
     AssertEquals(0, ServerErrorStatus(h1peInternal));
-    AssertEquals(0, ServerErrorStatus(h1peStatus));
     AssertEquals(0, ServerErrorStatus(h1peVersionH2));
     AssertEquals('invalid URI', H1ParseErrorDescription(h1peUri));
   finally

@@ -227,7 +227,7 @@ type
     procedure ReleaseIdleScratch; inline;
     { setters used by ApplyH1Config (bearings.http1.config) }
     procedure SetFlushPipeline(Enabled: Boolean);
-    procedure SetMaxBufSize(Max: SizeInt);  procedure SetParserConfig(const C: TParserConfig);
+    procedure SetMaxBufSize(Max: SizeInt);
     procedure SetTitleCaseHeaders;  procedure SetMaxHeaders(N: Integer);
     procedure SetMaxHeaderSize(N: SizeInt);  procedure SetHeaderReadTimeout(Ms: Int64);
     procedure SetAllowHalfClose;  procedure DisableDateHeader;
@@ -600,11 +600,6 @@ end;
 procedure TH1Conn.SetMaxBufSize(Max: SizeInt);
 begin
   Io.SetMaxBufSize(Max);
-end;
-
-procedure TH1Conn.SetParserConfig(const C: TParserConfig);
-begin
-  State.ParseCtx.ParserConfig := C;
 end;
 
 procedure TH1Conn.SetTitleCaseHeaders;

@@ -3,7 +3,7 @@
   (request smuggling).
 
   Reads the cases (one per line: "P <max headers> <max header size>
-  <parser flags> <request hex>" or "U <target hex>") and prints one result
+  <request hex>" or "U <target hex>") and prints one result
   line per case. test_role_golden.sh compares the lines with
   tests/golden/role_expected.txt.xz. The cases and the values were frozen on
   2026-11-04 from hyper v1.12.0's Server::parse and http::Uri, with the
@@ -114,7 +114,6 @@ begin
     h1peHeaderTransferEncodingUnexpected: Result := 'Header(TransferEncodingUnexpected)';
     h1peHeaderHost: Result := 'Header(Host)';
     h1peTooLarge: Result := 'TooLarge';
-    h1peStatus: Result := 'Status';
     h1peInternal: Result := 'Internal';
     h1peProxyProtocol: Result := 'ProxyProtocol';
   else
@@ -139,7 +138,7 @@ var
   Buf, P: PByte;
   Msg: TParsedRequestHead;
   St: TServerParseStatus;
-  Flags, Scheme, Auth, Query, Ver, DecS, Hs: RawByteString;
+  Scheme, Auth, Query, Ver, DecS, Hs: RawByteString;
   L: SizeInt;
   Idx: array of SizeInt;
   I, J, T: SizeInt;
@@ -148,11 +147,7 @@ begin
   Ctx := DefaultParseContext;
   Ctx.MaxHeaders := StrToInt(Fields[1]);
   Ctx.MaxHeaderSize := StrToInt(Fields[2]);
-  Flags := Fields[3];
-  Ctx.ParserConfig.AllowMultipleSpacesInRequestLineDelimiters := Flags[1] = '1';
-  Ctx.ParserConfig.AllowSpaceBeforeFirstHeaderName := Flags[2] = '1';
-  Ctx.ParserConfig.IgnoreInvalidHeadersInRequests := Flags[3] = '1';
-  Req := Unhex(Fields[4]);
+  Req := Unhex(Fields[3]);
   Buf := PlaceBuffer(Req);
   { hyper's Server::parse is only called with a non-empty buffer }
   if Length(Req) = 0 then

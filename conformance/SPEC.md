@@ -212,7 +212,6 @@ Unknown fields are errors. Every `config` field is optional. Defaults are hyper 
 | `keep_alive` | bool | `true` | `keep_alive(v)` | `false`: every connection is closed after the first response (HTTP/1.1 responses get `connection: close`) |
 | `half_close` | bool | `false` | `half_close(v)` | `false`: while a request is in progress (handler running or response pending), a read of EOF from the client aborts the connection (handler dropped, outcome `incomplete`, no response). `true`: the server does not poll for EOF while busy and still sends the response after the client shut down its write side |
 | `title_case_headers` | bool | `false` | `title_case_headers(v)` | write response header names in Title-Case (`Content-Length`) instead of lowercase |
-| `preserve_header_case` | bool | `false` | `preserve_header_case(v)` | record request header name case. With hyper's public API this has no visible effect on the wire for these handlers (the case map is private). Accept and ignore is a valid implementation as long as wire behavior is unchanged |
 | `max_headers` | int | 100 | `max_headers(n)` | more than `n` request header fields: 431 response, outcome `parse_too_large`. Also the limit on trailer field count |
 | `max_header_size` | int | none | `max_header_size(n)` | request head (request line + header fields) larger than `n` bytes: 431, outcome `parse_too_large`. Applies to an incomplete head once the buffered head reaches `n` bytes, and to a complete head longer than `n`. Also limits trailer bytes |
 | `max_buf_size` | int ≥ 8192 | 8192 + 4096·100 = 417792 | `max_buf_size(n)` | maximum read buffer. An incomplete head that fills `n` bytes: 431, outcome `parse_too_large`. Values below 8192 are a config error (hyper panics) |
@@ -221,8 +220,6 @@ Unknown fields are errors. Every `config` field is optional. Defaults are hyper 
 | `writev` | bool | auto | `writev(v)` | write strategy (vectored vs flattened). No wire-visible effect is required |
 | `pipeline_flush` | bool | `false` | `pipeline_flush(v)` | when pipelined requests are already buffered, aggregate the responses and flush them together (pipeline_enabled expects both responses in one read) |
 | `auto_date_header` | bool | `true` | `auto_date_header(v)` | `false`: do not add a `date` header |
-| `ignore_invalid_headers` | bool | `false` | `ignore_invalid_headers(v)` | silently skip malformed request header lines instead of answering 400 |
-| `allow_multiple_spaces_in_request_line_delimiters` | bool | `false` | same name | accept several spaces between request-line elements |
 | `conn_mode` | `"plain"` \| `"with_upgrades"` | `"plain"` | section 6.1 | how the connection is driven |
 | `graceful_shutdown_on_accept` | bool | `false` | `graceful_shutdown()` before the first poll | start graceful shutdown on every connection right after accept (section 6.2) |
 
