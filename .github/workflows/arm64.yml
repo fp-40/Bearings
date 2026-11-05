@@ -1,0 +1,77 @@
+name: arm64
+
+# The tests on ARM64 hardware (docs/design/arm64.md): the runner
+# ubuntu-24.04-arm is an ARM64 machine, so the memory ordering is the real
+# one, which qemu on x86_64 cannot give.
+#
+# Not run on a push or a pull request: by hand from the Actions tab
+# (several runs are worth more than one: a missing barrier shows up only
+# now and then), and by upload-to-pypi.yml before it builds the wheels.
+
+on:
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: "Seeds of the worker stress (each runs twice: to the end, and with the server destroyed under load)"
+        default: "50"
+  workflow_call:
+
+jobs:
+  pascal:
+    name: pascal (ARM64 hardware)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Free Pascal 3.2.2 for ARM64, and uv: pytest runs in the python/
+      # project environment
+      - uses: ./.github/actions/setup
+
+      # TARGET=aarch64 leaves out the tests that are x86_64-only (valgrind,
+      # the split fuzz, the expected-value tests, the hot-path check,
+      # conformance); FPC=fpc and an empty RUN: the compiler and the
+      # binaries are native here, not the cross compiler and qemu
+      - name: "Unit suites, and their heaptrc runs"
+        run: TARGET=aarch64 FPC=fpc RUN= make test-pascal
+
+      # the lock-free code between the loops and the workers, under load;
+      # DRD_RUNS=0: drd runs one thread at a time, which shows nothing
+      # about the memory ordering
+      - name: "Worker stress"
+        env:
+          SEEDS: ${{ inputs.seeds || '50' }}
+        run: DRD_RUNS=0 tools/s7-stress.sh
+
+      - name: "Upload the test logs"
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: arm64-test-logs
+          # the logs, not the binaries
+          path: |
+            build/unit-aarch64/**/*.log
+            build/unit-aarch64/**/*.out
+            build/unit-aarch64/**/*.txt
+            build/unit-aarch64/**/*.heap
+            build/s7-stress/*.log
+            build/s7-stress/*.out
+            build/s7-stress/*.err
+
+  python:
+    name: python (ARM64 hardware)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup
+
+      # compiles libbearings.so for ARM64 and runs pybearings on it
+      - name: "Install dependencies"
+        run: cd python && uv sync --group dev --python 3.14t
+
+      - name: "Test"
+        run: cd python && make test

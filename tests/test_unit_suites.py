@@ -96,9 +96,11 @@ def test_suite_heaptrc(suite, subtests, fpc_suite):
     )
     heap = out / f"{suite}.heap"
     heap.unlink(missing_ok=True)
-    r = run_fpcunit(
-        binary, out / f"{suite}.out", suite=fpc_suite, env={"HEAPTRC": f"log={heap}"}
-    )
+    env = {"HEAPTRC": f"log={heap}"}
+    if RUN:
+        # as in test_suite: the tests that start the binary again need the runner
+        env["BEARINGS_RUNNER"] = " ".join(RUN)
+    r = run_fpcunit(binary, out / f"{suite}.out", suite=fpc_suite, env=env)
     report_fpcunit(subtests, r, f"{suite} (heaptrc)")
     unfreed = heaptrc_unfreed(heap)
     assert unfreed == 0, f"{suite} (heaptrc): unfreed blocks: {unfreed} (see {heap})"

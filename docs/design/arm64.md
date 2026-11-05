@@ -40,6 +40,16 @@ they are counters checked after a join, but they have not been reviewed).
 The first run on an ARM64 machine should be `TARGET=aarch64` with `RUN=`
 empty and `FPC=fpc` on that machine, then `tools/s7-stress.sh`.
 
+The `arm64` workflow (`.github/workflows/arm64.yml`) does that on GitHub's
+ARM64 runner (`ubuntu-24.04-arm`): the unit suites with their heaptrc runs,
+the worker stress without its drd part (`DRD_RUNS=0`: drd runs one thread
+at a time, which shows nothing about the memory ordering) and the
+pybearings tests. It does not run on a push: it is started by hand from
+the Actions tab, and `upload-to-pypi.yml` calls it before it builds the
+wheels. It has not run yet. One passing run is not the verification: a
+missing barrier fails only now and then, so the status above changes after
+several passing runs of the stress, not after the first.
+
 ## Cross-building on x86_64
 
 On Ubuntu or Debian, install `binutils-aarch64-linux-gnu`,

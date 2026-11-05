@@ -9,7 +9,8 @@
 # valgrind --tool=drd with tools/drd.supp: 0 errors and "STRESS PASSED".
 # Usage: tools/s7-stress.sh
 # Env: OUT_DIR (default build/s7-stress); SEEDS (native seeds, default 10);
-#      CLIENTS / CONNS (native, default 24 / 150); DRD_RUNS (default 3);
+#      CLIENTS / CONNS (native, default 24 / 150); DRD_RUNS (default 3;
+#      0 = the native runs only: no drd build, and valgrind is not needed);
 #      DRD_CLIENTS / DRD_CONNS (default 12 / 20); VALGRIND (default
 #      build/tools/bin/valgrind); STOP_EARLY_MS (also run each native seed
 #      once more with the server destroyed while traffic runs, default 300;
@@ -54,6 +55,10 @@ while [ "$I" -le "${SEEDS:-10}" ]; do
   done
   I=$((I + 1))
 done
+if [ "${DRD_RUNS:-3}" -eq 0 ]; then
+  [ "$FAIL" -eq 0 ] && echo "s7-stress: passed (native runs only)" || echo "s7-stress: FAILED"
+  exit $FAIL
+fi
 # shellcheck disable=SC2086
 if ! fpc -Mobjfpc -Sh -O2 -gl -Cr -Co -Ct -Sa -dWD_DRD $FU -FU"$OUT/drd/u" -FE"$OUT/drd" \
     "$ROOT/tests/unit/stress_workers.pas" > "$OUT/drd/build.log" 2>&1; then

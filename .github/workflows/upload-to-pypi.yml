@@ -11,8 +11,12 @@ jobs:
   validate:
     uses: ./.github/workflows/validate.yml
 
+  # the tests on ARM64 hardware: no ARM64 wheel goes out without them
+  arm64:
+    uses: ./.github/workflows/arm64.yml
+
   build:
-    needs: validate
+    needs: [validate, arm64]
     name: build ${{ matrix.runner }}
     strategy:
       matrix:

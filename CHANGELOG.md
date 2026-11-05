@@ -25,6 +25,7 @@ Two request smuggling fixes, found by checking Bearings against the CVEs of the 
 
 Development:
 
+- **A workflow runs the tests on ARM64 hardware** (`.github/workflows/arm64.yml`, on GitHub's `ubuntu-24.04-arm` runner): the unit suites with their heaptrc runs, the worker stress and the pybearings tests. It is started by hand from the Actions tab and called by `upload-to-pypi.yml` before the wheels are built, not on a push. Until now ARM64 had only run under qemu on x86_64, which cannot show an error in the memory ordering. `tools/s7-stress.sh` takes `DRD_RUNS=0` for the native runs only (no drd build, no valgrind).
 - Comments that pointed at files that no longer exist point at what replaced them: `docs/design.md` (now the files of `docs/design/`), `tests/unit/run_all.sh` (now `tests/*.py`), the README's former ARM64 section (now `docs/design/arm64.md`) and the removed reference server in the worker probe's description.
 - `conformance/MANIFEST.md` is gone. It recorded how the cases were ported and checked on 2026-10-07 with the Rust runner against hyper's reference server, both removed. What still applies moved: the pending case's reason is in its `pending` field, and the four cases that pass against the dumb server are listed, with the reason for each, in `conformance/dumb-server/dumbserver.py`.
 - The unit tests and the conformance cases send `Host` in their HTTP/1.1 requests. Tests that counted header lines, or compared head lengths, count the `Host` line.
