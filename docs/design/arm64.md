@@ -29,16 +29,18 @@ analysis would need. On x86_64 the wrappers add no barrier.
 
 ## Status
 
-Not verified on hardware. The ARM64 build has been exercised only under
-`qemu-aarch64` on an x86_64 host, which runs the ARM64 instructions on a
-strongly ordered CPU and so cannot show a missing barrier (section 11).
-What that run checks: the system call stubs (`test_rt_sys` compares each
+Experimental: one run on ARM64 hardware has passed (the table below), and
+the memory ordering argument above counts as verified only after several.
+On the development machine the ARM64 build runs under `qemu-aarch64` on an
+x86_64 host, which runs the ARM64 instructions on a strongly ordered CPU
+and so cannot show a missing barrier (section 11).
+What the qemu run checks: the system call stubs (`test_rt_sys` compares each
 one with the FPC RTL), the record layouts, and every unit suite with its
 heaptrc run. What it does not check: the memory ordering argument above,
 and the test programs' own direct `Interlocked*` calls (relaxed on ARM64;
 they are counters checked after a join, but they have not been reviewed).
-The first run on an ARM64 machine should be `TARGET=aarch64` with `RUN=`
-empty and `FPC=fpc` on that machine, then `tools/s7-stress.sh`.
+A run on an ARM64 machine is `TARGET=aarch64` with `RUN=` empty and
+`FPC=fpc` on that machine, then `tools/s7-stress.sh`.
 
 The `arm64` workflow (`.github/workflows/arm64.yml`) does that on GitHub's
 ARM64 runner (`ubuntu-24.04-arm`): the unit suites with their heaptrc runs,
@@ -46,9 +48,16 @@ the worker stress without its drd part (`DRD_RUNS=0`: drd runs one thread
 at a time, which shows nothing about the memory ordering) and the
 pybearings tests. It does not run on a push: it is started by hand from
 the Actions tab, and `upload-to-pypi.yml` calls it before it builds the
-wheels. It has not run yet. One passing run is not the verification: a
-missing barrier fails only now and then, so the status above changes after
-several passing runs of the stress, not after the first.
+wheels. One passing run is not the verification: a missing barrier fails
+only now and then, so the status above changes after several passing runs
+of the stress, not after the first.
+
+Runs so far:
+
+| date | commit | result |
+|---|---|---|
+| 2026-11-05 | `72a765f` | failed: heaptrc reported 2 unfreed blocks in `test_ws_echo`. Not an ARM64 defect: a server stop between the hand-off of an upgraded socket and its delivery left a `TWebSocket` behind on any CPU (CHANGELOG, 0.5.0); the runner's timing showed it. The stress step did not run |
+| 2026-11-05 | `add5fc2` | passed: the unit suites and their heaptrc runs (1525 test methods), the worker stress (50 seeds, each to the end and with the server destroyed under load: 100 runs), the pybearings tests |
 
 ## Cross-building on x86_64
 
