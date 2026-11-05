@@ -218,13 +218,11 @@ begin
     AssertTrue(ServerParseHeaders(Guarded(''), 0, 7, DefaultParseContext, H, Msg) = spsPartial);
     AssertTrue(Msg.Error = h1peNone);
     AssertEquals(0, Msg.HeadLen);
-    { Server::parse is never called with an empty buffer by hyper; the port
-      answers Partial without reading }
+    { ServerParse answers Partial for an empty buffer without reading }
     AssertTrue(ServerParse(Guarded(''), 0, DefaultParseContext, H, Msg) = spsPartial);
     AssertFalse(IsCompleteFast(nil, 0, 0));
     AssertFalse(IsCompleteFast(Guarded(''), 0, 3));
-    { prev_len > len never happens in hyper (it would panic on the slice);
-      the port clamps and must not read }
+    { a previous length past the end is clamped and must not read }
     AssertFalse(IsCompleteFast(Guarded(#13#10#13#10), 4, 10));
   finally
     H.Free;
@@ -239,9 +237,9 @@ var
   N, HeadLen: SizeInt;
   St: TServerParseStatus;
 begin
-  { httparse returns Partial for every strict prefix of a valid head, and
-    Complete(head length) once the blank line is in; body bytes are not
-    consumed. hyper's answer for every prefix below is PARTIAL / OK len. }
+  { Every strict prefix of a valid head is Partial, and the head is
+    Complete (with its length) once the blank line is in; body bytes are
+    not consumed. }
   H := THttpHeaders.Create;
   try
     for R in Requests do
@@ -272,9 +270,9 @@ var
   N, HeadLen: SizeInt;
   St: TServerParseStatus;
 begin
-  { hyper's read loop calls parse_headers(buf, Some(previous len)) after
-    each read; one byte per read here. is_complete_fast must not skip the
-    read that completes the head. }
+  { The connection parses again after each read, with the previous
+    length; one byte per read here. IsCompleteFast must not skip the read
+    that completes the head. }
   H := THttpHeaders.Create;
   try
     for R in Requests do
@@ -339,7 +337,7 @@ var
   B: PByte;
   Model: Boolean;
 begin
-  { role.rs is_complete_fast(bytes, prev_len): true iff "\r\n\r\n", "\n\n"
+  { IsCompleteFast(bytes, prev_len): true iff "\r\n\r\n", "\n\n"
     or "\n\r\n" starts at an index >= prev_len.saturating_sub(3).
     Every string over (CR, LF, 'a') up to 9 bytes, every prev_len <= len. }
   Total := 1;
@@ -415,7 +413,7 @@ begin
   end;
 end;
 
-{ RFC 9112 section 3.2 (not in hyper): an HTTP/1.1 request needs exactly
+{ RFC 9112 section 3.2: an HTTP/1.1 request needs exactly
   one Host line; a request of any version may not have two. }
 procedure TTestRoleVerify.Extra_host_required_once;
 var
@@ -735,7 +733,7 @@ begin
     C(-1, 101, False);
     C(0, 0, True);
     C(0, 1, False);
-    { > DEFAULT_MAX_HEADERS: slots on the heap, as hyper's spilled SmallVec }
+    { > DEFAULT_MAX_HEADERS: the slots go to the heap (ServerParseHeapSlots) }
     C(101, 101, True);
     C(101, 102, False);
     C(150, 150, True);
@@ -754,7 +752,7 @@ var
 begin
   H := THttpHeaders.Create;
   try
-    { request-target: MAX_URI_LEN = 65534 (role.rs), checked before http::Uri }
+    { request-target: MAX_URI_LEN = 65534, checked before the URI parse }
     S := 'GET /' + StringOfChar('a', 65533) + ' HTTP/1.1'#13#10'Host: x'#13#10#13#10;
     CheckParse(Self, S, Ok(Length(S), 0), H);
     CheckParse(Self, 'GET /' + StringOfChar('a', 65534) + ' HTTP/1.1'#13#10#13#10, Err(h1peUriTooLong), H);
@@ -797,8 +795,8 @@ var
   Body: RawByteString;
   Pos0: SizeInt;
 begin
-  { decode.rs read_size: checked_mul(16) / checked_add -> InvalidData
-    "chunk size overflows 64 bits". 16 hex digits fit in a u64, 17 do not. }
+  { the chunk size is accumulated with overflow checks: InvalidData
+    "chunk size overflows 64 bits". 16 hex digits fit in 64 bits, 17 do not. }
   InitDecoderFor(D, DECODED_LENGTH_CHUNKED);
   S := '10000000000000000'#13#10;
   AssertTrue(D.Decode(Guarded(S), Length(S), False, R) = dsError);
@@ -853,7 +851,7 @@ type
   end;
 
 const
-  { http 1.5.0 src/status.rs status_codes! (canonical_reason) }
+  { the reason phrases of the IANA status code registry }
   HTTP_REASONS: array[0..61] of TReasonEntry = (
     (Code: 100; Reason: 'Continue'), (Code: 101; Reason: 'Switching Protocols'),
     (Code: 102; Reason: 'Processing'), (Code: 103; Reason: 'Early Hints'),
@@ -1028,7 +1026,7 @@ begin
     AssertEquals(QWord(0), Enc.Remaining);
     {$IFOPT C+}
     { Known, a value that parses and differs from the body: an assertion
-      with -Sa (hyper's debug_assert) }
+      with -Sa }
     H.Clear;
     H.Add('content-length', '9');
     Raised := False;

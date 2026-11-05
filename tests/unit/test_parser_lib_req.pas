@@ -1,5 +1,7 @@
-{ The req! tests of httparse v1.10.1 src/lib.rs, ported by a generator
-  (test_parser_gen.py, removed on 2026-11-04). Maintained by hand now. }
+{ Whole-request cases of bearings.http1.parser: each parses one request
+  and checks every field. First written as ports of the request tests of
+  httparse v1.10.1 src/lib.rs, by a generator removed on 2026-11-04;
+  maintained by hand now. }
 unit test_parser_lib_req;
 
 {$mode objfpc}{$H+}
@@ -10,7 +12,7 @@ uses
   fpcunit, testregistry, bearings.http1.parser, test_parser_base;
 
 type
-  TTestHttparseLibReq = class(TParserTestCase)
+  TTestParserRequests = class(TParserTestCase)
   published
     procedure Test_request_simple;
     procedure Test_request_simple_with_query_params;
@@ -44,7 +46,7 @@ type
 
 implementation
 
-procedure TTestHttparseLibReq.Test_request_simple;
+procedure TTestParserRequests.Test_request_simple;
 begin
   ParseReq('GET / HTTP/1.1'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -54,7 +56,7 @@ begin
   CheckHeaderCount(0);
 end;
 
-procedure TTestHttparseLibReq.Test_request_simple_with_query_params;
+procedure TTestParserRequests.Test_request_simple_with_query_params;
 begin
   ParseReq('GET /thing?data=a HTTP/1.1'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -64,7 +66,7 @@ begin
   CheckHeaderCount(0);
 end;
 
-procedure TTestHttparseLibReq.Test_request_simple_with_whatwg_query_params;
+procedure TTestParserRequests.Test_request_simple_with_whatwg_query_params;
 begin
   ParseReq('GET /thing?data=a^ HTTP/1.1'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -74,7 +76,7 @@ begin
   CheckHeaderCount(0);
 end;
 
-procedure TTestHttparseLibReq.Test_request_headers;
+procedure TTestParserRequests.Test_request_headers;
 begin
   ParseReq('GET / HTTP/1.1'#$0D#$0A'Host: foo.com'#$0D#$0A'Cookie: '#$0D#$0A#$0D +
     #$0A);
@@ -89,7 +91,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseLibReq.Test_request_headers_optional_whitespace;
+procedure TTestParserRequests.Test_request_headers_optional_whitespace;
 begin
   ParseReq('GET / HTTP/1.1'#$0D#$0A'Host: '#$09'foo.com'#$09' '#$0D#$0A'Cookie: ' +
     #$09' '#$0D#$0A#$0D#$0A);
@@ -104,7 +106,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseLibReq.Test_request_header_value_htab_short;
+procedure TTestParserRequests.Test_request_header_value_htab_short;
 begin
   ParseReq('GET / HTTP/1.1'#$0D#$0A'User-Agent: some'#$09'agent'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -116,7 +118,7 @@ begin
     'some'#$09'agent');
 end;
 
-procedure TTestHttparseLibReq.Test_request_header_value_htab_med;
+procedure TTestParserRequests.Test_request_header_value_htab_med;
 begin
   ParseReq('GET / HTTP/1.1'#$0D#$0A'User-Agent: 1234567890some'#$09'agent'#$0D#$0A +
     #$0D#$0A);
@@ -129,7 +131,7 @@ begin
     '1234567890some'#$09'agent');
 end;
 
-procedure TTestHttparseLibReq.Test_request_header_value_htab_long;
+procedure TTestParserRequests.Test_request_header_value_htab_long;
 begin
   ParseReq('GET / HTTP/1.1'#$0D#$0A'User-Agent: 1234567890some'#$09 +
     '1234567890agent1234567890'#$0D#$0A#$0D#$0A);
@@ -142,7 +144,7 @@ begin
     '1234567890some'#$09'1234567890agent1234567890');
 end;
 
-procedure TTestHttparseLibReq.Test_request_header_no_space_after_colon;
+procedure TTestParserRequests.Test_request_header_no_space_after_colon;
 begin
   ParseReq('GET / HTTP/1.1'#$0D#$0A +
     'User-Agent:omg-no-space1234567890some1234567890agent12345678' + '90' +
@@ -156,7 +158,7 @@ begin
     'omg-no-space1234567890some1234567890agent1234567890');
 end;
 
-procedure TTestHttparseLibReq.Test_request_headers_max;
+procedure TTestParserRequests.Test_request_headers_max;
 begin
   ParseReq('GET / HTTP/1.1'#$0D#$0A'A: A'#$0D#$0A'B: B'#$0D#$0A'C: C'#$0D#$0A'D: D' +
     #$0D#$0A#$0D#$0A);
@@ -164,7 +166,7 @@ begin
   CheckHeaderCount(NUM_OF_HEADERS);
 end;
 
-procedure TTestHttparseLibReq.Test_request_multibyte;
+procedure TTestParserRequests.Test_request_multibyte;
 begin
   ParseReq('GET / HTTP/1.1'#$0D#$0A'Host: foo.com'#$0D#$0A'User-Agent: '#$E3#$81 +
     #$B2#$E3'/1.0'#$0D#$0A#$0D#$0A);
@@ -179,61 +181,61 @@ begin
     #$E3#$81#$B2#$E3'/1.0');
 end;
 
-procedure TTestHttparseLibReq.Test_request_one_byte_method;
+procedure TTestParserRequests.Test_request_one_byte_method;
 begin
   ParseReq('G');
   CheckPartial;
 end;
 
-procedure TTestHttparseLibReq.Test_request_partial_method;
+procedure TTestParserRequests.Test_request_partial_method;
 begin
   ParseReq('GE');
   CheckPartial;
 end;
 
-procedure TTestHttparseLibReq.Test_request_method_no_delimiter;
+procedure TTestParserRequests.Test_request_method_no_delimiter;
 begin
   ParseReq('GET');
   CheckPartial;
 end;
 
-procedure TTestHttparseLibReq.Test_request_method_only;
+procedure TTestParserRequests.Test_request_method_only;
 begin
   ParseReq('GET ');
   CheckPartial;
 end;
 
-procedure TTestHttparseLibReq.Test_request_partial;
+procedure TTestParserRequests.Test_request_partial;
 begin
   ParseReq('GET / HTTP/1.1'#$0D#$0A#$0D);
   CheckPartial;
 end;
 
-procedure TTestHttparseLibReq.Test_request_partial_version;
+procedure TTestParserRequests.Test_request_partial_version;
 begin
   ParseReq('GET / HTTP/1.');
   CheckPartial;
 end;
 
-procedure TTestHttparseLibReq.Test_request_method_path_no_delimiter;
+procedure TTestParserRequests.Test_request_method_path_no_delimiter;
 begin
   ParseReq('GET /');
   CheckPartial;
 end;
 
-procedure TTestHttparseLibReq.Test_request_method_path_only;
+procedure TTestParserRequests.Test_request_method_path_only;
 begin
   ParseReq('GET / ');
   CheckPartial;
 end;
 
-procedure TTestHttparseLibReq.Test_request_newlines;
+procedure TTestParserRequests.Test_request_newlines;
 begin
   ParseReq('GET / HTTP/1.1'#$0A'Host: foo.bar'#$0A#$0A);
   CheckComplete(Length(FBuf));
 end;
 
-procedure TTestHttparseLibReq.Test_request_empty_lines_prefix;
+procedure TTestParserRequests.Test_request_empty_lines_prefix;
 begin
   ParseReq(#$0D#$0A#$0D#$0A'GET / HTTP/1.1'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -243,7 +245,7 @@ begin
   CheckHeaderCount(0);
 end;
 
-procedure TTestHttparseLibReq.Test_request_empty_lines_prefix_lf_only;
+procedure TTestParserRequests.Test_request_empty_lines_prefix_lf_only;
 begin
   ParseReq(#$0A#$0A'GET / HTTP/1.1'#$0A#$0A);
   CheckComplete(Length(FBuf));
@@ -253,7 +255,7 @@ begin
   CheckHeaderCount(0);
 end;
 
-procedure TTestHttparseLibReq.Test_request_path_backslash;
+procedure TTestParserRequests.Test_request_path_backslash;
 begin
   ParseReq(#$0A#$0A'GET /\?wayne\=5 HTTP/1.1'#$0A#$0A);
   CheckComplete(Length(FBuf));
@@ -263,36 +265,36 @@ begin
   CheckHeaderCount(0);
 end;
 
-procedure TTestHttparseLibReq.Test_request_with_invalid_token_delimiter;
+procedure TTestParserRequests.Test_request_with_invalid_token_delimiter;
 begin
   ParseReq('GET'#$0A'/ HTTP/1.1'#$0D#$0A'Host: foo.bar'#$0D#$0A#$0D#$0A);
   CheckError(peToken);
 end;
 
-procedure TTestHttparseLibReq.Test_request_with_invalid_but_short_version;
+procedure TTestParserRequests.Test_request_with_invalid_but_short_version;
 begin
   ParseReq('GET / HTTP/1!');
   CheckError(peVersion);
 end;
 
-procedure TTestHttparseLibReq.Test_request_with_empty_method;
+procedure TTestParserRequests.Test_request_with_empty_method;
 begin
   ParseReq(' / HTTP/1.1'#$0D#$0A#$0D#$0A);
   CheckError(peToken);
 end;
 
-procedure TTestHttparseLibReq.Test_request_with_empty_path;
+procedure TTestParserRequests.Test_request_with_empty_path;
 begin
   ParseReq('GET  HTTP/1.1'#$0D#$0A#$0D#$0A);
   CheckError(peToken);
 end;
 
-procedure TTestHttparseLibReq.Test_request_with_empty_method_and_path;
+procedure TTestParserRequests.Test_request_with_empty_method_and_path;
 begin
   ParseReq('  HTTP/1.1'#$0D#$0A#$0D#$0A);
   CheckError(peToken);
 end;
 
 initialization
-  RegisterTest(TTestHttparseLibReq);
+  RegisterTest(TTestParserRequests);
 end.

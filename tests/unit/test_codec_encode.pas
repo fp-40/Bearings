@@ -25,7 +25,7 @@ type
     procedure Test_chunked_with_no_trailer_header;
     procedure Test_chunked_with_invalid_trailers;
     procedure Test_chunked_trailers_case_insensitive_matching;
-    { extra (not hyper) }
+    { extra }
     procedure Test_wd_iovec_and_advance;
     procedure Test_wd_encode_and_end;
     procedure Test_wd_trailer_header_value_parsing;
@@ -238,7 +238,7 @@ var
   H: THttpHeaders;
   Dst: TBytes;
 begin
-  // hyper's assertion: declared lowercase, sent lowercase
+  // declared lowercase, sent lowercase
   Encoder := TEncoder.Chunked;
   Encoder.IntoChunkedWithTrailingFields(['chunky-trailer']);
   H := THttpHeaders.Create;

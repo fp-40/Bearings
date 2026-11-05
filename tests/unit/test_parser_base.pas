@@ -1,7 +1,6 @@
 { Shared fixture for the parser tests (test_parser_*.pas): a request with
   NUM_OF_HEADERS = 4 header slots, parsed from a byte string, then checked
-  field by field (the shape of httparse's req! macro, which the ported
-  tests were written for). }
+  field by field. }
 unit test_parser_base;
 
 {$mode objfpc}{$H+}
@@ -28,7 +27,7 @@ type
     function ResultStr(const R: TParseResult): string;
     { ParseRequest with NumSlots header slots. }
     procedure ParseReq(const Buf: RawByteString; NumSlots: Integer = NUM_OF_HEADERS);
-    { httparse::parse_headers }
+    { ParseHeaders: a header block on its own. }
     procedure ParseHdrs(const Buf: RawByteString; NumSlots: Integer);
     procedure CheckComplete(Expected: SizeInt);
     procedure CheckPartial;

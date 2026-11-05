@@ -803,7 +803,7 @@ begin
     AssertTrue('taken: still alive after the request is dropped', Slot.RxAlive);
     Slot.Manual;
     AssertEquals('upgrade requested on a cmPlain connection', H.Failed);
-    { a oneshot (S6-5, hyper Pending::manual consumes the sender): a later
+    { a oneshot (S6-5: Manual consumes the sender): a later
       Cancel reaches nobody }
     H.Failed := '';
     Slot.Cancel;

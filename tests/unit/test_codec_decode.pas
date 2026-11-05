@@ -38,14 +38,14 @@ type
     procedure Test_trailer_max_headers_allows_exact_limit;
     procedure Test_trailer_max_header_size_huge_trailer;
     procedure Test_trailer_max_header_size_many_small_trailers;
-    { extra (not hyper) }
+    { extra }
     procedure Test_wd_chunked_byte_at_a_time_with_trailers;
     procedure Test_wd_data_slice_is_zero_copy;
     procedure Test_wd_error_is_sticky;
   end;
 
-{ hyper decode_fut over a &[u8] / Bytes reader: every byte is available and
-  EOF follows. Decodes once, returns the data copy, removes consumed bytes. }
+{ A decode over a whole buffer: every byte is available and EOF follows.
+  Decodes once, returns the data copy, removes consumed bytes. }
 function DecodeFut(var D: TDecoder; var Buf: RawByteString; Trailers: THttpHeaders;
   out Data: RawByteString; out R: TDecodeResult): TDecodeStatus;
 
@@ -89,8 +89,8 @@ var
   St: TDecodeStatus;
 begin
   D.InitChunked;
-  { hyper's read() steps until the state is Body or EndCr. Our decoder stops
-    there with dsNeedMore because no body byte follows the size line. }
+  { The decoder reads the size line and stops with dsNeedMore because no
+    body byte follows it. }
   St := D.Decode(PByte(Pointer(S)), Length(S), False, R);
   AssertTrue(Format('read_size failed for %s: status %d error %s',
     [S, Ord(St), DecodeErrorMessage(R.Error)]), St = dsNeedMore);
@@ -273,7 +273,7 @@ begin
   AssertEquals(0, Length(Data));
 end;
 
-{ hyper read_async: the mock transport delivers Content[..BlockAt], then is
+{ ReadAsync: the mock transport delivers Content[..BlockAt], then is
   Pending, then delivers Content[BlockAt..], then EOF (BlockAt = 0: Pending
   first, then everything). The caller keeps unconsumed bytes buffered. }
 function TTestDecoder.ReadAsync(const ADecoder: TDecoder; const Content: RawByteString;

@@ -1,5 +1,7 @@
-{ The req! tests of httparse v1.10.1 tests/uri.rs, ported by a generator
-  (test_parser_gen.py, removed on 2026-11-04). Maintained by hand now. }
+{ Request-target tests of bearings.http1.parser: one request line per
+  test, each byte class of the target at each position. First written as
+  ports of the tests of httparse v1.10.1 tests/uri.rs, by a generator
+  removed on 2026-11-04; maintained by hand now. }
 unit test_parser_uri;
 
 {$mode objfpc}{$H+}
@@ -10,7 +12,7 @@ uses
   fpcunit, testregistry, bearings.http1.parser, test_parser_base;
 
 type
-  TTestHttparseUri = class(TParserTestCase)
+  TTestParserUri = class(TParserTestCase)
   published
     procedure Test_urltest_001;
     procedure Test_urltest_002;
@@ -279,7 +281,7 @@ type
 
 implementation
 
-procedure TTestHttparseUri.Test_urltest_001;
+procedure TTestParserUri.Test_urltest_001;
 begin
   ParseReq('GET /bar;par?b HTTP/1.1'#$0D#$0A'Host: foo'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -291,7 +293,7 @@ begin
     'foo');
 end;
 
-procedure TTestHttparseUri.Test_urltest_002;
+procedure TTestParserUri.Test_urltest_002;
 begin
   ParseReq('GET /x HTTP/1.1'#$0D#$0A'Host: test'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -303,7 +305,7 @@ begin
     'test');
 end;
 
-procedure TTestHttparseUri.Test_urltest_003;
+procedure TTestParserUri.Test_urltest_003;
 begin
   ParseReq('GET /x HTTP/1.1'#$0D#$0A'Host: test'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -315,7 +317,7 @@ begin
     'test');
 end;
 
-procedure TTestHttparseUri.Test_urltest_004;
+procedure TTestParserUri.Test_urltest_004;
 begin
   ParseReq('GET /foo/foo.com HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -327,7 +329,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_005;
+procedure TTestParserUri.Test_urltest_005;
 begin
   ParseReq('GET /foo/:foo.com HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -339,7 +341,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_006;
+procedure TTestParserUri.Test_urltest_006;
 begin
   ParseReq('GET /foo/foo.com HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -351,13 +353,13 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_007;
+procedure TTestParserUri.Test_urltest_007;
 begin
   ParseReq('GET  foo.com HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckError(peToken);
 end;
 
-procedure TTestHttparseUri.Test_urltest_008;
+procedure TTestParserUri.Test_urltest_008;
 begin
   ParseReq('GET /%20b%20?%20d%20 HTTP/1.1'#$0D#$0A'Host: f'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -369,13 +371,13 @@ begin
     'f');
 end;
 
-procedure TTestHttparseUri.Test_urltest_009;
+procedure TTestParserUri.Test_urltest_009;
 begin
   ParseReq('GET x x HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckError(peVersion);
 end;
 
-procedure TTestHttparseUri.Test_urltest_010;
+procedure TTestParserUri.Test_urltest_010;
 begin
   ParseReq('GET /c HTTP/1.1'#$0D#$0A'Host: f'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -387,7 +389,7 @@ begin
     'f');
 end;
 
-procedure TTestHttparseUri.Test_urltest_011;
+procedure TTestParserUri.Test_urltest_011;
 begin
   ParseReq('GET /c HTTP/1.1'#$0D#$0A'Host: f'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -399,7 +401,7 @@ begin
     'f');
 end;
 
-procedure TTestHttparseUri.Test_urltest_012;
+procedure TTestParserUri.Test_urltest_012;
 begin
   ParseReq('GET /c HTTP/1.1'#$0D#$0A'Host: f'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -411,7 +413,7 @@ begin
     'f');
 end;
 
-procedure TTestHttparseUri.Test_urltest_013;
+procedure TTestParserUri.Test_urltest_013;
 begin
   ParseReq('GET /c HTTP/1.1'#$0D#$0A'Host: f'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -423,7 +425,7 @@ begin
     'f');
 end;
 
-procedure TTestHttparseUri.Test_urltest_014;
+procedure TTestParserUri.Test_urltest_014;
 begin
   ParseReq('GET /c HTTP/1.1'#$0D#$0A'Host: f'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -435,7 +437,7 @@ begin
     'f');
 end;
 
-procedure TTestHttparseUri.Test_urltest_015;
+procedure TTestParserUri.Test_urltest_015;
 begin
   ParseReq('GET /foo/bar HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -447,7 +449,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_016;
+procedure TTestParserUri.Test_urltest_016;
 begin
   ParseReq('GET /foo/bar HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -459,7 +461,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_017;
+procedure TTestParserUri.Test_urltest_017;
 begin
   ParseReq('GET /foo/:foo.com/ HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -471,7 +473,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_018;
+procedure TTestParserUri.Test_urltest_018;
 begin
   ParseReq('GET /foo/:foo.com/ HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -483,7 +485,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_019;
+procedure TTestParserUri.Test_urltest_019;
 begin
   ParseReq('GET /foo/: HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -495,7 +497,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_020;
+procedure TTestParserUri.Test_urltest_020;
 begin
   ParseReq('GET /foo/:a HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -507,7 +509,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_021;
+procedure TTestParserUri.Test_urltest_021;
 begin
   ParseReq('GET /foo/:/ HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -519,7 +521,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_022;
+procedure TTestParserUri.Test_urltest_022;
 begin
   ParseReq('GET /foo/:/ HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -531,7 +533,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_023;
+procedure TTestParserUri.Test_urltest_023;
 begin
   ParseReq('GET /foo/: HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -543,7 +545,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_024;
+procedure TTestParserUri.Test_urltest_024;
 begin
   ParseReq('GET /foo/bar HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -555,7 +557,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_025;
+procedure TTestParserUri.Test_urltest_025;
 begin
   ParseReq('GET /foo/bar HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -567,7 +569,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_026;
+procedure TTestParserUri.Test_urltest_026;
 begin
   ParseReq('GET /foo/bar HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -579,7 +581,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_027;
+procedure TTestParserUri.Test_urltest_027;
 begin
   ParseReq('GET /foo/bar HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -591,7 +593,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_028;
+procedure TTestParserUri.Test_urltest_028;
 begin
   ParseReq('GET /foo/bar HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -603,7 +605,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_029;
+procedure TTestParserUri.Test_urltest_029;
 begin
   ParseReq('GET /foo/:23 HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -615,7 +617,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_030;
+procedure TTestParserUri.Test_urltest_030;
 begin
   ParseReq('GET /:23 HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -627,7 +629,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_031;
+procedure TTestParserUri.Test_urltest_031;
 begin
   ParseReq('GET /foo/:: HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -639,7 +641,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_032;
+procedure TTestParserUri.Test_urltest_032;
 begin
   ParseReq('GET /foo/::23 HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -651,7 +653,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_033;
+procedure TTestParserUri.Test_urltest_033;
 begin
   ParseReq('GET /d HTTP/1.1'#$0D#$0A'Host: c'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -663,7 +665,7 @@ begin
     'c');
 end;
 
-procedure TTestHttparseUri.Test_urltest_034;
+procedure TTestParserUri.Test_urltest_034;
 begin
   ParseReq('GET /foo/:@c:29 HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -675,7 +677,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_035;
+procedure TTestParserUri.Test_urltest_035;
 begin
   ParseReq('GET //@ HTTP/1.1'#$0D#$0A'Host: foo.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -687,7 +689,7 @@ begin
     'foo.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_036;
+procedure TTestParserUri.Test_urltest_036;
 begin
   ParseReq('GET /b:c/d@foo.com/ HTTP/1.1'#$0D#$0A'Host: a'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -699,7 +701,7 @@ begin
     'a');
 end;
 
-procedure TTestHttparseUri.Test_urltest_037;
+procedure TTestParserUri.Test_urltest_037;
 begin
   ParseReq('GET /bar.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -711,7 +713,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_038;
+procedure TTestParserUri.Test_urltest_038;
 begin
   ParseReq('GET /////// HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -723,7 +725,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_039;
+procedure TTestParserUri.Test_urltest_039;
 begin
   ParseReq('GET ///////bar.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -735,7 +737,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_040;
+procedure TTestParserUri.Test_urltest_040;
 begin
   ParseReq('GET //:///// HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -747,7 +749,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_041;
+procedure TTestParserUri.Test_urltest_041;
 begin
   ParseReq('GET /foo HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -759,7 +761,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_042;
+procedure TTestParserUri.Test_urltest_042;
 begin
   ParseReq('GET /bar HTTP/1.1'#$0D#$0A'Host: foo'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -771,7 +773,7 @@ begin
     'foo');
 end;
 
-procedure TTestHttparseUri.Test_urltest_043;
+procedure TTestParserUri.Test_urltest_043;
 begin
   ParseReq('GET /path;a??e HTTP/1.1'#$0D#$0A'Host: foo'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -783,7 +785,7 @@ begin
     'foo');
 end;
 
-procedure TTestHttparseUri.Test_urltest_044;
+procedure TTestParserUri.Test_urltest_044;
 begin
   ParseReq('GET /abcd?efgh?ijkl HTTP/1.1'#$0D#$0A'Host: foo'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -795,7 +797,7 @@ begin
     'foo');
 end;
 
-procedure TTestHttparseUri.Test_urltest_045;
+procedure TTestParserUri.Test_urltest_045;
 begin
   ParseReq('GET /abcd HTTP/1.1'#$0D#$0A'Host: foo'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -807,7 +809,7 @@ begin
     'foo');
 end;
 
-procedure TTestHttparseUri.Test_urltest_046;
+procedure TTestParserUri.Test_urltest_046;
 begin
   ParseReq('GET /foo/[61:24:74]:98 HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D +
     #$0A);
@@ -820,7 +822,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_047;
+procedure TTestParserUri.Test_urltest_047;
 begin
   ParseReq('GET /foo/[61:27]/:foo HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D +
     #$0A);
@@ -833,7 +835,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_048;
+procedure TTestParserUri.Test_urltest_048;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -845,7 +847,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_049;
+procedure TTestParserUri.Test_urltest_049;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -857,7 +859,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_050;
+procedure TTestParserUri.Test_urltest_050;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -869,7 +871,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_051;
+procedure TTestParserUri.Test_urltest_051;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -881,7 +883,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_052;
+procedure TTestParserUri.Test_urltest_052;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -893,7 +895,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_053;
+procedure TTestParserUri.Test_urltest_053;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -905,7 +907,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_054;
+procedure TTestParserUri.Test_urltest_054;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -917,7 +919,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_055;
+procedure TTestParserUri.Test_urltest_055;
 begin
   ParseReq('GET /foo/example.com/ HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D +
     #$0A);
@@ -930,7 +932,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_056;
+procedure TTestParserUri.Test_urltest_056;
 begin
   ParseReq('GET example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -942,7 +944,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_057;
+procedure TTestParserUri.Test_urltest_057;
 begin
   ParseReq('GET example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -954,7 +956,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_058;
+procedure TTestParserUri.Test_urltest_058;
 begin
   ParseReq('GET example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -966,7 +968,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_059;
+procedure TTestParserUri.Test_urltest_059;
 begin
   ParseReq('GET example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -978,7 +980,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_060;
+procedure TTestParserUri.Test_urltest_060;
 begin
   ParseReq('GET example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -990,7 +992,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_061;
+procedure TTestParserUri.Test_urltest_061;
 begin
   ParseReq('GET /a/b/c HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1002,7 +1004,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_062;
+procedure TTestParserUri.Test_urltest_062;
 begin
   ParseReq('GET /a/%20/c HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1014,7 +1016,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_063;
+procedure TTestParserUri.Test_urltest_063;
 begin
   ParseReq('GET /a%2fc HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1026,7 +1028,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_064;
+procedure TTestParserUri.Test_urltest_064;
 begin
   ParseReq('GET /a/%2f/c HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1038,7 +1040,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_065;
+procedure TTestParserUri.Test_urltest_065;
 begin
   ParseReq('GET /foo/bar HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1050,7 +1052,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_066;
+procedure TTestParserUri.Test_urltest_066;
 begin
   ParseReq('GET text/html,test HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1062,7 +1064,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_067;
+procedure TTestParserUri.Test_urltest_067;
 begin
   ParseReq('GET 1234567890 HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1074,7 +1076,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_068;
+procedure TTestParserUri.Test_urltest_068;
 begin
   ParseReq('GET /c:/foo/bar.html HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1086,7 +1088,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_069;
+procedure TTestParserUri.Test_urltest_069;
 begin
   ParseReq('GET /c:////foo/bar.html HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1098,7 +1100,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_070;
+procedure TTestParserUri.Test_urltest_070;
 begin
   ParseReq('GET /C:/foo/bar HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1110,7 +1112,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_071;
+procedure TTestParserUri.Test_urltest_071;
 begin
   ParseReq('GET /C:/foo/bar HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1122,7 +1124,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_072;
+procedure TTestParserUri.Test_urltest_072;
 begin
   ParseReq('GET /C:/foo/bar HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1134,7 +1136,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_073;
+procedure TTestParserUri.Test_urltest_073;
 begin
   ParseReq('GET /file HTTP/1.1'#$0D#$0A'Host: server'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1146,7 +1148,7 @@ begin
     'server');
 end;
 
-procedure TTestHttparseUri.Test_urltest_074;
+procedure TTestParserUri.Test_urltest_074;
 begin
   ParseReq('GET /file HTTP/1.1'#$0D#$0A'Host: server'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1158,7 +1160,7 @@ begin
     'server');
 end;
 
-procedure TTestHttparseUri.Test_urltest_075;
+procedure TTestParserUri.Test_urltest_075;
 begin
   ParseReq('GET /file HTTP/1.1'#$0D#$0A'Host: server'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1170,7 +1172,7 @@ begin
     'server');
 end;
 
-procedure TTestHttparseUri.Test_urltest_076;
+procedure TTestParserUri.Test_urltest_076;
 begin
   ParseReq('GET /foo/bar.txt HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1182,7 +1184,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_077;
+procedure TTestParserUri.Test_urltest_077;
 begin
   ParseReq('GET /home/me HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1194,7 +1196,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_078;
+procedure TTestParserUri.Test_urltest_078;
 begin
   ParseReq('GET /test HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1206,7 +1208,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_079;
+procedure TTestParserUri.Test_urltest_079;
 begin
   ParseReq('GET /test HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1218,7 +1220,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_080;
+procedure TTestParserUri.Test_urltest_080;
 begin
   ParseReq('GET /tmp/mock/test HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1230,7 +1232,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_081;
+procedure TTestParserUri.Test_urltest_081;
 begin
   ParseReq('GET /tmp/mock/test HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1242,7 +1244,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_082;
+procedure TTestParserUri.Test_urltest_082;
 begin
   ParseReq('GET /foo HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1254,7 +1256,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_083;
+procedure TTestParserUri.Test_urltest_083;
 begin
   ParseReq('GET /.foo HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1266,7 +1268,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_084;
+procedure TTestParserUri.Test_urltest_084;
 begin
   ParseReq('GET /foo/ HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1278,7 +1280,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_085;
+procedure TTestParserUri.Test_urltest_085;
 begin
   ParseReq('GET /foo/ HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1290,7 +1292,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_086;
+procedure TTestParserUri.Test_urltest_086;
 begin
   ParseReq('GET /foo/ HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1302,7 +1304,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_087;
+procedure TTestParserUri.Test_urltest_087;
 begin
   ParseReq('GET /foo/ HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1314,7 +1316,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_088;
+procedure TTestParserUri.Test_urltest_088;
 begin
   ParseReq('GET /foo/..bar HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1326,7 +1328,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_089;
+procedure TTestParserUri.Test_urltest_089;
 begin
   ParseReq('GET /foo/ton HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1338,7 +1340,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_090;
+procedure TTestParserUri.Test_urltest_090;
 begin
   ParseReq('GET /a HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1350,7 +1352,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_091;
+procedure TTestParserUri.Test_urltest_091;
 begin
   ParseReq('GET /ton HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1362,7 +1364,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_092;
+procedure TTestParserUri.Test_urltest_092;
 begin
   ParseReq('GET /foo/ HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1374,7 +1376,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_093;
+procedure TTestParserUri.Test_urltest_093;
 begin
   ParseReq('GET /foo/%2e%2 HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1386,7 +1388,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_094;
+procedure TTestParserUri.Test_urltest_094;
 begin
   ParseReq('GET /%2e.bar HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1398,7 +1400,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_095;
+procedure TTestParserUri.Test_urltest_095;
 begin
   ParseReq('GET // HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1410,7 +1412,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_096;
+procedure TTestParserUri.Test_urltest_096;
 begin
   ParseReq('GET /foo/ HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1422,7 +1424,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_097;
+procedure TTestParserUri.Test_urltest_097;
 begin
   ParseReq('GET /foo/bar/ HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1434,7 +1436,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_098;
+procedure TTestParserUri.Test_urltest_098;
 begin
   ParseReq('GET /foo HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1446,7 +1448,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_099;
+procedure TTestParserUri.Test_urltest_099;
 begin
   ParseReq('GET /%20foo HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1458,7 +1460,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_100;
+procedure TTestParserUri.Test_urltest_100;
 begin
   ParseReq('GET /foo% HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1470,7 +1472,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_101;
+procedure TTestParserUri.Test_urltest_101;
 begin
   ParseReq('GET /foo%2 HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1482,7 +1484,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_102;
+procedure TTestParserUri.Test_urltest_102;
 begin
   ParseReq('GET /foo%2zbar HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1494,7 +1496,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_103;
+procedure TTestParserUri.Test_urltest_103;
 begin
   ParseReq('GET /foo%2%C3%82%C2%A9zbar HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A +
     #$0D#$0A);
@@ -1507,7 +1509,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_104;
+procedure TTestParserUri.Test_urltest_104;
 begin
   ParseReq('GET /foo%41%7a HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1519,7 +1521,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_105;
+procedure TTestParserUri.Test_urltest_105;
 begin
   ParseReq('GET /foo%C2%91%91 HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1531,7 +1533,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_106;
+procedure TTestParserUri.Test_urltest_106;
 begin
   ParseReq('GET /foo%00%51 HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1543,7 +1545,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_107;
+procedure TTestParserUri.Test_urltest_107;
 begin
   ParseReq('GET /(%28:%3A%29) HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1555,7 +1557,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_108;
+procedure TTestParserUri.Test_urltest_108;
 begin
   ParseReq('GET /%3A%3a%3C%3c HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1567,7 +1569,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_109;
+procedure TTestParserUri.Test_urltest_109;
 begin
   ParseReq('GET /foobar HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1579,7 +1581,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_110;
+procedure TTestParserUri.Test_urltest_110;
 begin
   ParseReq('GET //foo//bar HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1591,7 +1593,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_111;
+procedure TTestParserUri.Test_urltest_111;
 begin
   ParseReq('GET /%7Ffp3%3Eju%3Dduvgw%3Dd HTTP/1.1'#$0D#$0A'Host: example.com'#$0D +
     #$0A#$0D#$0A);
@@ -1604,7 +1606,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_112;
+procedure TTestParserUri.Test_urltest_112;
 begin
   ParseReq('GET /@asdf%40 HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1616,7 +1618,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_113;
+procedure TTestParserUri.Test_urltest_113;
 begin
   ParseReq('GET /%E4%BD%A0%E5%A5%BD%E4%BD%A0%E5%A5%BD HTTP/1.1'#$0D#$0A +
     'Host: example.com'#$0D#$0A#$0D#$0A);
@@ -1629,7 +1631,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_114;
+procedure TTestParserUri.Test_urltest_114;
 begin
   ParseReq('GET /%E2%80%A5/foo HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1641,7 +1643,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_115;
+procedure TTestParserUri.Test_urltest_115;
 begin
   ParseReq('GET /%EF%BB%BF/foo HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1653,7 +1655,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_116;
+procedure TTestParserUri.Test_urltest_116;
 begin
   ParseReq('GET /%E2%80%AE/foo/%E2%80%AD/bar HTTP/1.1'#$0D#$0A'Host: example.com' +
     #$0D#$0A#$0D#$0A);
@@ -1666,7 +1668,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_117;
+procedure TTestParserUri.Test_urltest_117;
 begin
   ParseReq('GET /foo?bar=baz HTTP/1.1'#$0D#$0A'Host: www.google.com'#$0D#$0A#$0D +
     #$0A);
@@ -1679,7 +1681,7 @@ begin
     'www.google.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_118;
+procedure TTestParserUri.Test_urltest_118;
 begin
   ParseReq('GET /foo?bar=baz HTTP/1.1'#$0D#$0A'Host: www.google.com'#$0D#$0A#$0D +
     #$0A);
@@ -1692,7 +1694,7 @@ begin
     'www.google.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_119;
+procedure TTestParserUri.Test_urltest_119;
 begin
   ParseReq('GET test HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1704,7 +1706,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_120;
+procedure TTestParserUri.Test_urltest_120;
 begin
   ParseReq('GET /foo%2Ehtml HTTP/1.1'#$0D#$0A'Host: www'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1716,7 +1718,7 @@ begin
     'www');
 end;
 
-procedure TTestHttparseUri.Test_urltest_121;
+procedure TTestParserUri.Test_urltest_121;
 begin
   ParseReq('GET /foo/html HTTP/1.1'#$0D#$0A'Host: www'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1728,7 +1730,7 @@ begin
     'www');
 end;
 
-procedure TTestHttparseUri.Test_urltest_122;
+procedure TTestParserUri.Test_urltest_122;
 begin
   ParseReq('GET /foo HTTP/1.1'#$0D#$0A'Host: www.google.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1740,7 +1742,7 @@ begin
     'www.google.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_123;
+procedure TTestParserUri.Test_urltest_123;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1752,7 +1754,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_124;
+procedure TTestParserUri.Test_urltest_124;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1764,7 +1766,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_125;
+procedure TTestParserUri.Test_urltest_125;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1776,7 +1778,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_126;
+procedure TTestParserUri.Test_urltest_126;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1788,7 +1790,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_127;
+procedure TTestParserUri.Test_urltest_127;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1800,7 +1802,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_128;
+procedure TTestParserUri.Test_urltest_128;
 begin
   ParseReq('GET /example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1812,7 +1814,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_129;
+procedure TTestParserUri.Test_urltest_129;
 begin
   ParseReq('GET example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1824,7 +1826,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_130;
+procedure TTestParserUri.Test_urltest_130;
 begin
   ParseReq('GET example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1836,7 +1838,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_131;
+procedure TTestParserUri.Test_urltest_131;
 begin
   ParseReq('GET example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1848,7 +1850,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_132;
+procedure TTestParserUri.Test_urltest_132;
 begin
   ParseReq('GET example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1860,7 +1862,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_133;
+procedure TTestParserUri.Test_urltest_133;
 begin
   ParseReq('GET example.com/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1872,7 +1874,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_134;
+procedure TTestParserUri.Test_urltest_134;
 begin
   ParseReq('GET /test.txt HTTP/1.1'#$0D#$0A'Host: www.example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1884,7 +1886,7 @@ begin
     'www.example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_135;
+procedure TTestParserUri.Test_urltest_135;
 begin
   ParseReq('GET /test.txt HTTP/1.1'#$0D#$0A'Host: www.example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1896,7 +1898,7 @@ begin
     'www.example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_136;
+procedure TTestParserUri.Test_urltest_136;
 begin
   ParseReq('GET /test.txt HTTP/1.1'#$0D#$0A'Host: www.example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1908,7 +1910,7 @@ begin
     'www.example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_137;
+procedure TTestParserUri.Test_urltest_137;
 begin
   ParseReq('GET /test.txt HTTP/1.1'#$0D#$0A'Host: www.example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1920,7 +1922,7 @@ begin
     'www.example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_138;
+procedure TTestParserUri.Test_urltest_138;
 begin
   ParseReq('GET /aaa/test.txt HTTP/1.1'#$0D#$0A'Host: www.example.com'#$0D#$0A#$0D +
     #$0A);
@@ -1933,7 +1935,7 @@ begin
     'www.example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_139;
+procedure TTestParserUri.Test_urltest_139;
 begin
   ParseReq('GET /test.txt HTTP/1.1'#$0D#$0A'Host: www.example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1945,7 +1947,7 @@ begin
     'www.example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_140;
+procedure TTestParserUri.Test_urltest_140;
 begin
   ParseReq('GET /%E4%B8%AD/test.txt HTTP/1.1'#$0D#$0A'Host: www.example.com'#$0D +
     #$0A#$0D#$0A);
@@ -1958,7 +1960,7 @@ begin
     'www.example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_141;
+procedure TTestParserUri.Test_urltest_141;
 begin
   ParseReq('GET /... HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1970,7 +1972,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_142;
+procedure TTestParserUri.Test_urltest_142;
 begin
   ParseReq('GET /a HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1982,7 +1984,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_143;
+procedure TTestParserUri.Test_urltest_143;
 begin
   ParseReq('GET /%EF%BF%BD?%EF%BF%BD HTTP/1.1'#$0D#$0A'Host: x'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -1994,7 +1996,7 @@ begin
     'x');
 end;
 
-procedure TTestHttparseUri.Test_urltest_144;
+procedure TTestParserUri.Test_urltest_144;
 begin
   ParseReq('GET /bar HTTP/1.1'#$0D#$0A'Host: example.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2006,7 +2008,7 @@ begin
     'example.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_145;
+procedure TTestParserUri.Test_urltest_145;
 begin
   ParseReq('GET test HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2018,7 +2020,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_146;
+procedure TTestParserUri.Test_urltest_146;
 begin
   ParseReq('GET x@x.com HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2030,7 +2032,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_147;
+procedure TTestParserUri.Test_urltest_147;
 begin
   ParseReq('GET , HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2042,7 +2044,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_148;
+procedure TTestParserUri.Test_urltest_148;
 begin
   ParseReq('GET blank HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2054,7 +2056,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_149;
+procedure TTestParserUri.Test_urltest_149;
 begin
   ParseReq('GET test?test HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2066,7 +2068,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_150;
+procedure TTestParserUri.Test_urltest_150;
 begin
   ParseReq('GET /%60%7B%7D?`{} HTTP/1.1'#$0D#$0A'Host: h'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2078,7 +2080,7 @@ begin
     'h');
 end;
 
-procedure TTestHttparseUri.Test_urltest_151;
+procedure TTestParserUri.Test_urltest_151;
 begin
   ParseReq('GET /?%27 HTTP/1.1'#$0D#$0A'Host: host'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2090,7 +2092,7 @@ begin
     'host');
 end;
 
-procedure TTestHttparseUri.Test_urltest_152;
+procedure TTestParserUri.Test_urltest_152;
 begin
   ParseReq('GET /?'' HTTP/1.1'#$0D#$0A'Host: host'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2102,7 +2104,7 @@ begin
     'host');
 end;
 
-procedure TTestHttparseUri.Test_urltest_153;
+procedure TTestParserUri.Test_urltest_153;
 begin
   ParseReq('GET /some/path HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2114,7 +2116,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_154;
+procedure TTestParserUri.Test_urltest_154;
 begin
   ParseReq('GET /smth HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2126,7 +2128,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_155;
+procedure TTestParserUri.Test_urltest_155;
 begin
   ParseReq('GET /some/path HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2138,7 +2140,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_156;
+procedure TTestParserUri.Test_urltest_156;
 begin
   ParseReq('GET /pa/i HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2150,7 +2152,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_157;
+procedure TTestParserUri.Test_urltest_157;
 begin
   ParseReq('GET /i HTTP/1.1'#$0D#$0A'Host: ho'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2162,7 +2164,7 @@ begin
     'ho');
 end;
 
-procedure TTestHttparseUri.Test_urltest_158;
+procedure TTestParserUri.Test_urltest_158;
 begin
   ParseReq('GET /pa/i HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2174,7 +2176,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_159;
+procedure TTestParserUri.Test_urltest_159;
 begin
   ParseReq('GET /i HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2186,7 +2188,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_160;
+procedure TTestParserUri.Test_urltest_160;
 begin
   ParseReq('GET /i HTTP/1.1'#$0D#$0A'Host: ho'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2198,7 +2200,7 @@ begin
     'ho');
 end;
 
-procedure TTestHttparseUri.Test_urltest_161;
+procedure TTestParserUri.Test_urltest_161;
 begin
   ParseReq('GET /i HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2210,7 +2212,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_162;
+procedure TTestParserUri.Test_urltest_162;
 begin
   ParseReq('GET /i HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2222,7 +2224,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_163;
+procedure TTestParserUri.Test_urltest_163;
 begin
   ParseReq('GET /i HTTP/1.1'#$0D#$0A'Host: ho'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2234,7 +2236,7 @@ begin
     'ho');
 end;
 
-procedure TTestHttparseUri.Test_urltest_164;
+procedure TTestParserUri.Test_urltest_164;
 begin
   ParseReq('GET /i HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2246,7 +2248,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_165;
+procedure TTestParserUri.Test_urltest_165;
 begin
   ParseReq('GET /pa/pa?i HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2258,7 +2260,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_166;
+procedure TTestParserUri.Test_urltest_166;
 begin
   ParseReq('GET /pa?i HTTP/1.1'#$0D#$0A'Host: ho'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2270,7 +2272,7 @@ begin
     'ho');
 end;
 
-procedure TTestHttparseUri.Test_urltest_167;
+procedure TTestParserUri.Test_urltest_167;
 begin
   ParseReq('GET /pa/pa?i HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2282,7 +2284,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_168;
+procedure TTestParserUri.Test_urltest_168;
 begin
   ParseReq('GET sd HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2294,7 +2296,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_169;
+procedure TTestParserUri.Test_urltest_169;
 begin
   ParseReq('GET sd/sd HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2306,7 +2308,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_170;
+procedure TTestParserUri.Test_urltest_170;
 begin
   ParseReq('GET /pa/pa HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2318,7 +2320,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_171;
+procedure TTestParserUri.Test_urltest_171;
 begin
   ParseReq('GET /pa HTTP/1.1'#$0D#$0A'Host: ho'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2330,7 +2332,7 @@ begin
     'ho');
 end;
 
-procedure TTestHttparseUri.Test_urltest_172;
+procedure TTestParserUri.Test_urltest_172;
 begin
   ParseReq('GET /pa/pa HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2342,7 +2344,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_173;
+procedure TTestParserUri.Test_urltest_173;
 begin
   ParseReq('GET /x HTTP/1.1'#$0D#$0A'Host: %C3%B1'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2354,7 +2356,7 @@ begin
     '%C3%B1');
 end;
 
-procedure TTestHttparseUri.Test_urltest_174;
+procedure TTestParserUri.Test_urltest_174;
 begin
   ParseReq('GET \.\./ HTTP/1.1'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2364,7 +2366,7 @@ begin
   CheckHeaderCount(0);
 end;
 
-procedure TTestHttparseUri.Test_urltest_175;
+procedure TTestParserUri.Test_urltest_175;
 begin
   ParseReq('GET :a@example.net HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2376,7 +2378,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_176;
+procedure TTestParserUri.Test_urltest_176;
 begin
   ParseReq('GET %NBD HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2388,7 +2390,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_177;
+procedure TTestParserUri.Test_urltest_177;
 begin
   ParseReq('GET %1G HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2400,7 +2402,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_178;
+procedure TTestParserUri.Test_urltest_178;
 begin
   ParseReq('GET /relative_import.html HTTP/1.1'#$0D#$0A'Host: 127.0.0.1'#$0D#$0A +
     #$0D#$0A);
@@ -2413,7 +2415,7 @@ begin
     '127.0.0.1');
 end;
 
-procedure TTestHttparseUri.Test_urltest_179;
+procedure TTestParserUri.Test_urltest_179;
 begin
   ParseReq('GET /?foo=%7B%22abc%22 HTTP/1.1'#$0D#$0A'Host: facebook.com'#$0D#$0A +
     #$0D#$0A);
@@ -2426,7 +2428,7 @@ begin
     'facebook.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_180;
+procedure TTestParserUri.Test_urltest_180;
 begin
   ParseReq('GET /jqueryui@1.2.3 HTTP/1.1'#$0D#$0A'Host: localhost'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2438,7 +2440,7 @@ begin
     'localhost');
 end;
 
-procedure TTestHttparseUri.Test_urltest_181;
+procedure TTestParserUri.Test_urltest_181;
 begin
   ParseReq('GET /path?query HTTP/1.1'#$0D#$0A'Host: host'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2450,7 +2452,7 @@ begin
     'host');
 end;
 
-procedure TTestHttparseUri.Test_urltest_182;
+procedure TTestParserUri.Test_urltest_182;
 begin
   ParseReq('GET /foo/bar?a=b&c=d HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D +
     #$0A);
@@ -2463,7 +2465,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_183;
+procedure TTestParserUri.Test_urltest_183;
 begin
   ParseReq('GET /foo/bar??a=b&c=d HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D +
     #$0A);
@@ -2476,7 +2478,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_184;
+procedure TTestParserUri.Test_urltest_184;
 begin
   ParseReq('GET /foo/bar HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2488,7 +2490,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_185;
+procedure TTestParserUri.Test_urltest_185;
 begin
   ParseReq('GET /baz?qux HTTP/1.1'#$0D#$0A'Host: foo.bar'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2500,7 +2502,7 @@ begin
     'foo.bar');
 end;
 
-procedure TTestHttparseUri.Test_urltest_186;
+procedure TTestParserUri.Test_urltest_186;
 begin
   ParseReq('GET /baz?qux HTTP/1.1'#$0D#$0A'Host: foo.bar'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2512,7 +2514,7 @@ begin
     'foo.bar');
 end;
 
-procedure TTestHttparseUri.Test_urltest_187;
+procedure TTestParserUri.Test_urltest_187;
 begin
   ParseReq('GET /baz?qux HTTP/1.1'#$0D#$0A'Host: foo.bar'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2524,7 +2526,7 @@ begin
     'foo.bar');
 end;
 
-procedure TTestHttparseUri.Test_urltest_188;
+procedure TTestParserUri.Test_urltest_188;
 begin
   ParseReq('GET /baz?qux HTTP/1.1'#$0D#$0A'Host: foo.bar'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2536,7 +2538,7 @@ begin
     'foo.bar');
 end;
 
-procedure TTestHttparseUri.Test_urltest_189;
+procedure TTestParserUri.Test_urltest_189;
 begin
   ParseReq('GET /baz?qux HTTP/1.1'#$0D#$0A'Host: foo.bar'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2548,7 +2550,7 @@ begin
     'foo.bar');
 end;
 
-procedure TTestHttparseUri.Test_urltest_190;
+procedure TTestParserUri.Test_urltest_190;
 begin
   ParseReq('GET /C%3A/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2560,7 +2562,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_191;
+procedure TTestParserUri.Test_urltest_191;
 begin
   ParseReq('GET /C%7C/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2572,7 +2574,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_192;
+procedure TTestParserUri.Test_urltest_192;
 begin
   ParseReq('GET /C:/Users/Domenic/Dropbox/GitHub/tmpvar/jsdom/test/level' +
     '2/html/files/pix/submit.gif HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
@@ -2586,7 +2588,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_193;
+procedure TTestParserUri.Test_urltest_193;
 begin
   ParseReq('GET /C:/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2598,7 +2600,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_194;
+procedure TTestParserUri.Test_urltest_194;
 begin
   ParseReq('GET /C:/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2610,7 +2612,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_195;
+procedure TTestParserUri.Test_urltest_195;
 begin
   ParseReq('GET /d: HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2622,7 +2624,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_196;
+procedure TTestParserUri.Test_urltest_196;
 begin
   ParseReq('GET /d:/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2634,7 +2636,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_197;
+procedure TTestParserUri.Test_urltest_197;
 begin
   ParseReq('GET /test?test HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2646,7 +2648,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_198;
+procedure TTestParserUri.Test_urltest_198;
 begin
   ParseReq('GET /test?test HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2658,7 +2660,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_199;
+procedure TTestParserUri.Test_urltest_199;
 begin
   ParseReq('GET /test?x HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2670,7 +2672,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_200;
+procedure TTestParserUri.Test_urltest_200;
 begin
   ParseReq('GET /test?x HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2682,7 +2684,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_201;
+procedure TTestParserUri.Test_urltest_201;
 begin
   ParseReq('GET /test?test HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2694,7 +2696,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_202;
+procedure TTestParserUri.Test_urltest_202;
 begin
   ParseReq('GET /test?test HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2706,7 +2708,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_203;
+procedure TTestParserUri.Test_urltest_203;
 begin
   ParseReq('GET /?fox HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2718,7 +2720,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_204;
+procedure TTestParserUri.Test_urltest_204;
 begin
   ParseReq('GET /localhost//cat HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2730,7 +2732,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_205;
+procedure TTestParserUri.Test_urltest_205;
 begin
   ParseReq('GET /localhost//cat HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2742,7 +2744,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_206;
+procedure TTestParserUri.Test_urltest_206;
 begin
   ParseReq('GET /mouse HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2754,7 +2756,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_207;
+procedure TTestParserUri.Test_urltest_207;
 begin
   ParseReq('GET /pig HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2766,7 +2768,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_208;
+procedure TTestParserUri.Test_urltest_208;
 begin
   ParseReq('GET /pig HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2778,7 +2780,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_209;
+procedure TTestParserUri.Test_urltest_209;
 begin
   ParseReq('GET /pig HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2790,7 +2792,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_210;
+procedure TTestParserUri.Test_urltest_210;
 begin
   ParseReq('GET /localhost//pig HTTP/1.1'#$0D#$0A'Host: lion'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2802,7 +2804,7 @@ begin
     'lion');
 end;
 
-procedure TTestHttparseUri.Test_urltest_211;
+procedure TTestParserUri.Test_urltest_211;
 begin
   ParseReq('GET /rooibos HTTP/1.1'#$0D#$0A'Host: tea'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2814,7 +2816,7 @@ begin
     'tea');
 end;
 
-procedure TTestHttparseUri.Test_urltest_212;
+procedure TTestParserUri.Test_urltest_212;
 begin
   ParseReq('GET /?chai HTTP/1.1'#$0D#$0A'Host: tea'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2826,7 +2828,7 @@ begin
     'tea');
 end;
 
-procedure TTestHttparseUri.Test_urltest_213;
+procedure TTestParserUri.Test_urltest_213;
 begin
   ParseReq('GET /C: HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2838,7 +2840,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_214;
+procedure TTestParserUri.Test_urltest_214;
 begin
   ParseReq('GET /C: HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2850,7 +2852,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_215;
+procedure TTestParserUri.Test_urltest_215;
 begin
   ParseReq('GET /C: HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2862,7 +2864,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_216;
+procedure TTestParserUri.Test_urltest_216;
 begin
   ParseReq('GET /C:/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2874,7 +2876,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_217;
+procedure TTestParserUri.Test_urltest_217;
 begin
   ParseReq('GET /C:/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2886,7 +2888,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_218;
+procedure TTestParserUri.Test_urltest_218;
 begin
   ParseReq('GET /C:/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2898,7 +2900,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_219;
+procedure TTestParserUri.Test_urltest_219;
 begin
   ParseReq('GET /dir/C HTTP/1.1'#$0D#$0A'Host: host'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2910,7 +2912,7 @@ begin
     'host');
 end;
 
-procedure TTestHttparseUri.Test_urltest_220;
+procedure TTestParserUri.Test_urltest_220;
 begin
   ParseReq('GET /dir/C|a HTTP/1.1'#$0D#$0A'Host: host'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2922,7 +2924,7 @@ begin
     'host');
 end;
 
-procedure TTestHttparseUri.Test_urltest_221;
+procedure TTestParserUri.Test_urltest_221;
 begin
   ParseReq('GET /c:/foo/bar HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2934,7 +2936,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_222;
+procedure TTestParserUri.Test_urltest_222;
 begin
   ParseReq('GET /c:/foo/bar HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2946,7 +2948,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_223;
+procedure TTestParserUri.Test_urltest_223;
 begin
   ParseReq('GET /c:/foo/bar HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2958,7 +2960,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_224;
+procedure TTestParserUri.Test_urltest_224;
 begin
   ParseReq('GET /c:/foo/bar HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2970,7 +2972,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_225;
+procedure TTestParserUri.Test_urltest_225;
 begin
   ParseReq('GET /C:/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2982,7 +2984,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_226;
+procedure TTestParserUri.Test_urltest_226;
 begin
   ParseReq('GET /C:/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -2994,7 +2996,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_227;
+procedure TTestParserUri.Test_urltest_227;
 begin
   ParseReq('GET /C:/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3006,7 +3008,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_228;
+procedure TTestParserUri.Test_urltest_228;
 begin
   ParseReq('GET /C:/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3018,7 +3020,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_229;
+procedure TTestParserUri.Test_urltest_229;
 begin
   ParseReq('GET /C:/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3030,7 +3032,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_230;
+procedure TTestParserUri.Test_urltest_230;
 begin
   ParseReq('GET /?q=v HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3042,7 +3044,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_231;
+procedure TTestParserUri.Test_urltest_231;
 begin
   ParseReq('GET ?x HTTP/1.1'#$0D#$0A'Host: %C3%B1'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3054,7 +3056,7 @@ begin
     '%C3%B1');
 end;
 
-procedure TTestHttparseUri.Test_urltest_232;
+procedure TTestParserUri.Test_urltest_232;
 begin
   ParseReq('GET ?x HTTP/1.1'#$0D#$0A'Host: %C3%B1'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3066,7 +3068,7 @@ begin
     '%C3%B1');
 end;
 
-procedure TTestHttparseUri.Test_urltest_233;
+procedure TTestParserUri.Test_urltest_233;
 begin
   ParseReq('GET // HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3078,7 +3080,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_234;
+procedure TTestParserUri.Test_urltest_234;
 begin
   ParseReq('GET //x/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3090,7 +3092,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_235;
+procedure TTestParserUri.Test_urltest_235;
 begin
   ParseReq('GET /someconfig;mode=netascii HTTP/1.1'#$0D#$0A'Host: foobar.com'#$0D +
     #$0A#$0D#$0A);
@@ -3103,7 +3105,7 @@ begin
     'foobar.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_236;
+procedure TTestParserUri.Test_urltest_236;
 begin
   ParseReq('GET /Index.ut2 HTTP/1.1'#$0D#$0A'Host: 10.10.10.10'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3115,7 +3117,7 @@ begin
     '10.10.10.10');
 end;
 
-procedure TTestHttparseUri.Test_urltest_237;
+procedure TTestParserUri.Test_urltest_237;
 begin
   ParseReq('GET /0?baz=bam&qux=baz HTTP/1.1'#$0D#$0A'Host: somehost'#$0D#$0A#$0D +
     #$0A);
@@ -3128,7 +3130,7 @@ begin
     'somehost');
 end;
 
-procedure TTestHttparseUri.Test_urltest_238;
+procedure TTestParserUri.Test_urltest_238;
 begin
   ParseReq('GET /sup HTTP/1.1'#$0D#$0A'Host: host'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3140,7 +3142,7 @@ begin
     'host');
 end;
 
-procedure TTestHttparseUri.Test_urltest_239;
+procedure TTestParserUri.Test_urltest_239;
 begin
   ParseReq('GET /foo/bar.git HTTP/1.1'#$0D#$0A'Host: github.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3152,7 +3154,7 @@ begin
     'github.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_240;
+procedure TTestParserUri.Test_urltest_240;
 begin
   ParseReq('GET /channel?passwd HTTP/1.1'#$0D#$0A'Host: myserver.com'#$0D#$0A#$0D +
     #$0A);
@@ -3165,7 +3167,7 @@ begin
     'myserver.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_241;
+procedure TTestParserUri.Test_urltest_241;
 begin
   ParseReq('GET /foo.bar.org?type=TXT HTTP/1.1'#$0D#$0A'Host: fw.example.org'#$0D +
     #$0A#$0D#$0A);
@@ -3178,7 +3180,7 @@ begin
     'fw.example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_242;
+procedure TTestParserUri.Test_urltest_242;
 begin
   ParseReq('GET /ou=People,o=JNDITutorial HTTP/1.1'#$0D#$0A'Host: localhost'#$0D +
     #$0A#$0D#$0A);
@@ -3191,7 +3193,7 @@ begin
     'localhost');
 end;
 
-procedure TTestHttparseUri.Test_urltest_243;
+procedure TTestParserUri.Test_urltest_243;
 begin
   ParseReq('GET /foo/bar HTTP/1.1'#$0D#$0A'Host: github.com'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3203,7 +3205,7 @@ begin
     'github.com');
 end;
 
-procedure TTestHttparseUri.Test_urltest_244;
+procedure TTestParserUri.Test_urltest_244;
 begin
   ParseReq('GET ietf:rfc:2648 HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3215,7 +3217,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_245;
+procedure TTestParserUri.Test_urltest_245;
 begin
   ParseReq('GET joe@example.org,2001:foo/bar HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D +
     #$0A);
@@ -3228,7 +3230,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_246;
+procedure TTestParserUri.Test_urltest_246;
 begin
   ParseReq('GET /path HTTP/1.1'#$0D#$0A'Host: H%4fSt'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3240,7 +3242,7 @@ begin
     'H%4fSt');
 end;
 
-procedure TTestHttparseUri.Test_urltest_247;
+procedure TTestParserUri.Test_urltest_247;
 begin
   ParseReq('GET https://example.com:443/ HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3252,7 +3254,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_248;
+procedure TTestParserUri.Test_urltest_248;
 begin
   ParseReq('GET d3958f5c-0777-0845-9dcf-2cb28783acaf HTTP/1.1'#$0D#$0A'Host: '#$0D +
     #$0A#$0D#$0A);
@@ -3265,7 +3267,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_249;
+procedure TTestParserUri.Test_urltest_249;
 begin
   ParseReq('GET /test?%22 HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3277,7 +3279,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_250;
+procedure TTestParserUri.Test_urltest_250;
 begin
   ParseReq('GET /test HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3289,7 +3291,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_251;
+procedure TTestParserUri.Test_urltest_251;
 begin
   ParseReq('GET /test?%3C HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3301,7 +3303,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_252;
+procedure TTestParserUri.Test_urltest_252;
 begin
   ParseReq('GET /test?%3E HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3313,7 +3315,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_253;
+procedure TTestParserUri.Test_urltest_253;
 begin
   ParseReq('GET /test?%E2%8C%A3 HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D +
     #$0A);
@@ -3326,7 +3328,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_254;
+procedure TTestParserUri.Test_urltest_254;
 begin
   ParseReq('GET /test?%23%23 HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3338,7 +3340,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_255;
+procedure TTestParserUri.Test_urltest_255;
 begin
   ParseReq('GET /test?%GH HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3350,7 +3352,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_256;
+procedure TTestParserUri.Test_urltest_256;
 begin
   ParseReq('GET /test?a HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3362,7 +3364,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_257;
+procedure TTestParserUri.Test_urltest_257;
 begin
   ParseReq('GET /test?a HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3374,7 +3376,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_258;
+procedure TTestParserUri.Test_urltest_258;
 begin
   ParseReq('GET /test-a-colon-slash.html HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3386,7 +3388,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_259;
+procedure TTestParserUri.Test_urltest_259;
 begin
   ParseReq('GET /test-a-colon-slash-slash.html HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A +
     #$0D#$0A);
@@ -3399,7 +3401,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_260;
+procedure TTestParserUri.Test_urltest_260;
 begin
   ParseReq('GET /test-a-colon-slash-b.html HTTP/1.1'#$0D#$0A'Host: '#$0D#$0A#$0D +
     #$0A);
@@ -3412,7 +3414,7 @@ begin
     '');
 end;
 
-procedure TTestHttparseUri.Test_urltest_261;
+procedure TTestParserUri.Test_urltest_261;
 begin
   ParseReq('GET /test-a-colon-slash-slash-b.html HTTP/1.1'#$0D#$0A'Host: b'#$0D#$0A +
     #$0D#$0A);
@@ -3425,7 +3427,7 @@ begin
     'b');
 end;
 
-procedure TTestHttparseUri.Test_urltest_262;
+procedure TTestParserUri.Test_urltest_262;
 begin
   ParseReq('GET /test?a HTTP/1.1'#$0D#$0A'Host: example.org'#$0D#$0A#$0D#$0A);
   CheckComplete(Length(FBuf));
@@ -3437,7 +3439,7 @@ begin
     'example.org');
 end;
 
-procedure TTestHttparseUri.Test_urltest_nvidia;
+procedure TTestParserUri.Test_urltest_nvidia;
 begin
   ParseReq('GET /nvidia_web_services/controller.gfeclientcontent.php/com' +
     '.nvidia.services.GFEClientContent.getShieldReady/{"gcV":"2.2' +
@@ -3457,5 +3459,5 @@ begin
 end;
 
 initialization
-  RegisterTest(TTestHttparseUri);
+  RegisterTest(TTestParserUri);
 end.

@@ -2886,7 +2886,7 @@ var
 begin
   { a cancel closes the receiver for the handler, so the chunk the
     connection sent and nobody took is unpinned when the sender goes
-    (chan.rs: the item is dropped with the last of Sender and Receiver);
+    (the item is dropped with the last of sender and receiver);
     the head stays pinned for the handler (S7-2). Mutant
     v2-cancel-shared-no-close: the item stays pinned until the recycle }
   FH := TRecHandler.Create(hmWaitThenRespond);
@@ -3113,8 +3113,8 @@ begin
     took it (the cancel loses the CAS) while the worker is parked in a body
     read. S7 fix round 5 (deviation S7-31; the fourth S7 verifiers: the same
     event gave EClientGone here and EBodyError after the completion): the
-    cancel that lost leaves the request with its holders, as hyper's
-    spawned task keeps its Incoming; the dispatcher's SenderDropGuard
+    cancel that lost leaves the request with its holders; the
+    dispatcher's SenderDropGuard
     (DropAll, done by hand here) ends the body with the incomplete-message
     error, which unparks the worker, and its read raises EBodyError, as
     after the completion. It never reports the end of a body that did not
@@ -3152,7 +3152,7 @@ procedure TTestOffload.Connection_gone_after_answer_while_parked;
 begin
   { the call completed (the worker answered) and the worker reads the body;
     then the connection ends (DropAll after the completion: no cancel, the
-    sender goes with hyper's incomplete error). The parked read wakes and
+    sender goes with the incomplete-message error). The parked read wakes and
     raises a body error: not the end of the body (decision 15) }
   FH := TRecHandler.Create(hmRespondThenRead);
   try
@@ -3189,8 +3189,8 @@ var
 begin
   { decision 15: a handler that answers and returns without reading the
     body or releasing the request: the request goes with its last holder.
-    S7 fix round 5 (deviation S7-32): the call in flight is a holder too
-    (hyper: the service future owns req until it completes), so the
+    S7 fix round 5 (deviation S7-32): the call in flight is a holder too,
+    so the
     worker's Release leaves the request to the call, and the completion,
     the last holder now, drops it: the dispatcher's next poll_ready sees the
     receiver closed (drain or close), and the head and the untaken chunk
@@ -3565,9 +3565,9 @@ begin
   { the fourth S7 verifiers (X_cancel_lost_with_complete_body): the whole
     body arrived (the sender closed after the last chunk) and the worker
     answered without reading it; the connection then ends before the
-    dispatcher polled the answer (the cancel loses the CAS). hyper's
-    Incoming still yields the chunk; S7 fix round 5 (S7-31): so does this
-    read (the cancel that lost does not close the receiver), and the end
+    dispatcher polled the answer (the cancel loses the CAS). S7 fix round
+    5 (S7-31): the read still yields the chunk (the cancel that lost does
+    not close the receiver), and the end
     the body really had follows }
   FH := TRecHandler.Create(hmRespondWaitRead);
   FH.Gate := RTLEventCreate;
@@ -3649,8 +3649,8 @@ begin
     The holder count went 1 -> 0 at the helper's release, which dropped the
     request (head unpinned and poisoned) while the call was still in
     flight; the worker then read a released head. S7 fix round 5 (S7-32):
-    the call in flight is a holder (hyper: the future owns req until it
-    completes), so the request lives until the completion (mutant
+    the call in flight is a holder, so the request lives until the
+    completion (mutant
     r5-share-no-call-holder) }
   FH := TRecHandler.Create(hmReadPath);
   FEx := NewEx('GET /keep/path HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
@@ -4138,8 +4138,7 @@ begin
     the transport's reference left and ended the stream: the client got a
     complete chunked body without the worker's frames, whose writes got
     wrCanceled. S7 fix round 7 (deviation S7-43): the call in flight is a
-    producer of the stream as it is a holder of the request (hyper: the
-    future drops its sender when it completes) }
+    producer of the stream as it is a holder of the request }
   FH := TRecHandler.Create(hmWriteNoBegin);
   FH.StreamFrames := 2;
   FH.FrameLen := 16;
@@ -4178,8 +4177,8 @@ begin
     an unshared call that began a stream, wrote and completed without Finish
     left the response open forever (nobody may write to an unshared exchange
     after its completion, 3.2.3 rule 2). S7 fix round 7 (deviation S7-44):
-    the completion ends it, as hyper drops the future's sender and as the
-    last producer of a shared exchange does }
+    the completion ends it, as the last producer of a shared exchange
+    does }
   FEx := NewEx('GET /inline HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   AssertTrue('BeginStream', FEx.BeginStream(1024));
   AssertTrue('a frame', FEx.WriteString('hello') = wrOk);
@@ -4786,7 +4785,7 @@ begin
   { the fourth S7 verifiers (mutant my6: the dispatcher's SenderDropGuard
     without its SendError): the worker answered (the call completed) and
     reads the body, 3 of 10 bytes arrived; the server is destroyed, which
-    aborts the connection (DropAll). The body sender goes with hyper's
+    aborts the connection (DropAll). The body sender goes with the
     incomplete-message error, so the read raises EBodyError and does not
     report the end (decision 15) }
   Cfg := BenchmarkServerConfig;
@@ -5008,8 +5007,8 @@ end;
 
 
 type
-  { S7 fix round 6: hyper's examples/echo.rs (Response::new(req.into_body()))
-    on the loop thread: the response source reads the request body after the
+  { S7 fix round 6: an echo on the loop thread (the response body is the
+    request body): the response source reads the request body after the
     call completed (the contract verifier's C_inline_echo_*) }
   TEchoReadSource = class(TBodySource)
   public

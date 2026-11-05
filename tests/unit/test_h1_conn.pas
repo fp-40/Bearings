@@ -157,7 +157,7 @@ type
   protected
     procedure InitConn; override;
   published
-    procedure Hyper_defaults;
+    procedure Conformance_defaults;
     procedure Production_defaults;
     procedure Validate;
     procedure Apply_order_and_effects;
@@ -296,11 +296,10 @@ begin
   SetString(Result, PAnsiChar(P), Len);
 end;
 
-{ ================= conn.rs tests ================= }
+{ ================= reading and writing ================= }
 
 procedure TTestConnReadWrite.Conn_reads_request_head;
 begin
-  { conn.rs:1342-1355 }
   FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue('ready some', ReadHead = poSome);
@@ -311,7 +310,7 @@ end;
 
 procedure TTestConnReadWrite.Conn_reads_partial_request_head;
 begin
-  { conn.rs:1357-1367: handle.read("GET / HTTP") then pending, then the rest }
+  { "GET / HTTP" then pending, then the rest }
   FMock.Read('GET / HTTP').ReadPending.Read('/1.1' + CRLF + 'Host: foo.bar' + CRLF + CRLF);
   InitConn;
   AssertTrue('pending', ReadHead = poPending);
@@ -321,7 +320,6 @@ end;
 
 procedure TTestConnReadWrite.Conn_accepts_eof_when_idle;
 begin
-  { conn.rs:1369-1376 }
   InitConn;
   FConn.State.Idle;
   AssertTrue('Ready(None)', ReadHead = poNone);
@@ -329,7 +327,6 @@ end;
 
 procedure TTestConnReadWrite.Conn_rejects_eof_during_partial_head;
 begin
-  { conn.rs:1378-1390 }
   FMock.Read('GET / HTTP/1.1');
   InitConn;
   FConn.State.Idle;
@@ -339,7 +336,6 @@ end;
 
 procedure TTestConnReadWrite.Server_accepts_eof_while_busy;
 begin
-  { conn.rs:1405-1412 }
   InitConn;
   FConn.State.Busy;
   AssertTrue('Ready(None)', ReadHead = poNone);
@@ -349,7 +345,7 @@ procedure TTestConnReadWrite.Conn_reads_body_and_reports_end;
 var
   S: RawByteString;
 begin
-  { conn.rs:1428-1452; .wait(1s) is the pending read after the bytes }
+  { a pending read after the bytes }
   FMock.Read('POST / HTTP/1.1' + CRLF + 'Content-Length: 5' + CRLF + 'Host: x' + CRLF + CRLF + '12345').ReadPending;
   InitConn;
   AssertTrue('request', ReadHead = poSome);
@@ -361,7 +357,6 @@ end;
 
 procedure TTestConnReadWrite.Closed_conn_cannot_read_or_write;
 begin
-  { conn.rs:1454-1464 }
   InitConn;
   FConn.State.Close;
   AssertTrue(FConn.IsReadClosed);
@@ -374,7 +369,6 @@ procedure TTestConnReadWrite.Conn_writes_chunked_body;
 const
   S: RawByteString = 'headers';
 begin
-  { conn.rs:1466-1479 }
   FMock.Write('7' + CRLF + 'headers' + CRLF + '0' + CRLF + CRLF);
   InitConn;
   FConn.State.Writing := wrBody;
@@ -404,7 +398,7 @@ begin
   Result := '(' + RN[R] + ', ' + WN[W] + ', ' + KN[K] + ')';
 end;
 
-{ conn.rs:1100-1119 State::try_keep_alive, written as a table:
+{ TryKeepAlive, written as a table:
   (KeepAlive, KeepAlive, Busy)         -> idle(): (Init, Init, Idle)
   (KeepAlive, KeepAlive, Idle|Disabled) -> close(): (Closed, Closed, Disabled)
   (Closed, KeepAlive, *) and (KeepAlive, Closed, *) -> close()
@@ -466,7 +460,7 @@ begin
         Inc(N);
       end;
   AssertEquals('every triple', 60, N);
-  { with a header read timeout, idle() also sets notify_read (conn.rs:1154-1161) }
+  { with a header read timeout, idle() also sets notify_read }
   FConn.State.HeaderReadTimeoutMs := 1000;
   FConn.State.Reading := rdKeepAlive;
   FConn.State.Writing := wrKeepAlive;
@@ -507,7 +501,7 @@ var
   K: TKA;
   Tag: string;
 begin
-  { conn.rs:1077-1130 and 894-911, every triple:
+  { every triple:
     close()              -> (Closed, Closed, Disabled)
     close_read()         -> (Closed, W, Disabled)
     close_write()        -> (R, Closed, Disabled)
@@ -551,7 +545,7 @@ var
   Tag: string;
   Res: TPollResult;
 begin
-  { client EOF seen by poll_read_keep_alive (conn.rs:437-510), the only
+  { client EOF seen by poll_read_keep_alive, the only
     reads in the states where neither a head nor a body can be read:
     Closed -> Pending, nothing read; KeepAlive (mid-message, no half-close,
     empty buffer) -> one read, EOF: close_read, Err(IncompleteMessage) }
@@ -593,8 +587,8 @@ var
   Tag: string;
   Eof: Boolean;
 begin
-  { Conn::poll_flush with nothing buffered (conn.rs:855-860): try_keep_alive
-    (the table above), then maybe_notify (conn.rs:523-568), which reads only
+  { the flush with nothing buffered: try_keep_alive
+    (the table above), then maybe_notify, which reads only
     when Reading = Init and Writing <> Body. With a pending read nothing
     else changes and notify_read stays false; with EOF the connection
     closes if idle, else the read side closes. }
@@ -645,7 +639,7 @@ begin
   AssertTrue('busy from idle', FConn.State.KeepAlive = kaBusy);
   FConn.State.DisableKeepAlive;
   FConn.State.Busy;
-  AssertTrue('busy() keeps Disabled (conn.rs:1125-1130)', FConn.State.KeepAlive = kaDisabled);
+  AssertTrue('busy() keeps Disabled', FConn.State.KeepAlive = kaDisabled);
   AssertFalse('wants_keep_alive', FConn.State.WantsKeepAlive);
   FConn.State.CloseRead;
   AssertTrue(FConn.State.IsReadClosed);
@@ -656,7 +650,6 @@ end;
 
 procedure TTestConnState.Disable_keep_alive_idle_vs_busy;
 begin
-  { conn.rs:903-911 }
   InitConn;
   FConn.State.Idle;
   FConn.DisableKeepAlive;
@@ -671,7 +664,7 @@ end;
 
 procedure TTestConnState.Event_request_head;
 begin
-  { conn.rs:299-334 from (Init, Init, Busy) }
+  { from (Init, Init, Busy) }
   FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
@@ -731,7 +724,7 @@ end;
 
 procedure TTestConnState.Event_response_head;
 begin
-  { conn.rs:602-612: Body(enc) unless eof; eof: Closed if is_last else KeepAlive }
+  { Body(enc) unless eof; eof: Closed if is_last else KeepAlive }
   FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
@@ -880,7 +873,6 @@ procedure TTestConnBehavior.Expect_continue_on_first_body_read;
 var
   S: RawByteString;
 begin
-  { conn.rs:313-322 and 400-412 }
   FMock.Read('POST / HTTP/1.1' + CRLF + 'Expect: 100-continue' + CRLF + 'Content-Length: 5' + CRLF + 'Host: x' + CRLF + CRLF)
     .Write('HTTP/1.1 100 Continue' + CRLF + CRLF).Read('hello');
   InitConn;
@@ -937,7 +929,7 @@ end;
 
 procedure TTestConnBehavior.Expect_continue_drain_skips_100;
 begin
-  { conn.rs:876-892: Continue -> Body without the 100, one read attempt;
+  { Continue -> Body without the 100, one read attempt;
     a tiny body that is already there drains (expect_continue_waits_for_body_poll) }
   FMock.Read('POST / HTTP/1.1' + CRLF + 'Expect: 100-continue' + CRLF + 'Content-Length: 2' + CRLF + 'Host: x' + CRLF + CRLF + 'hi');
   InitConn;
@@ -961,7 +953,7 @@ procedure TTestConnBehavior.Trailers_not_allowed_without_te;
 var
   H, T: THttpHeaders;
 begin
-  { conn.rs:757-760: no TE: trailers -> nothing written, still Body }
+  { no TE: trailers -> nothing written, still Body }
   FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
   AssertTrue(ReadHead = poSome);
@@ -1152,7 +1144,7 @@ procedure TTestConnBehavior.User_header_error_writes_nothing;
 var
   H: THttpHeaders;
 begin
-  { role.rs: an invalid content-length from the service: new_user_header,
+  { an invalid content-length from the service: a user header error,
     nothing written, Closed }
   FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
@@ -1160,7 +1152,7 @@ begin
   H := THttpHeaders.Create;
   try
     H.AddTrusted('content-length', 'abc');
-    { Some(BodyLength::Unknown) with an invalid user content-length (role.rs) }
+    { blkUnknown with an invalid user content-length }
     WriteHeadStatus(200, blkUnknown, 0, H);
     AssertTrue('Closed', FConn.State.Writing = wrClosed);
     AssertFalse('nothing written', FConn.HasBufferedWrite);
@@ -1231,7 +1223,7 @@ var
   N0: QWord;
   {$ENDIF}
 begin
-  { conn.rs:671-698: an HTTP/1.0 client with keep-alive gets
+  { an HTTP/1.0 client with keep-alive gets
     "connection: keep-alive" and an HTTP/1.0 status line }
   FMock.Read('GET / HTTP/1.0' + CRLF + 'Connection: keep-alive' + CRLF + CRLF);
   InitConn;
@@ -1296,7 +1288,7 @@ var
   N0: QWord;
   {$ENDIF}
 begin
-  { conn.rs:713-724: an existing Connection header without close gets
+  { an existing Connection header without close gets
     "close" appended (grouped on the wire) }
   FMock.Read('GET / HTTP/1.1' + CRLF + 'Connection: close' + CRLF + 'Host: x' + CRLF + CRLF);
   InitConn;
@@ -1342,7 +1334,6 @@ end;
 
 procedure TTestConnBehavior.Maybe_notify_branches;
 begin
-  { conn.rs:523-568 }
   { 1. Pending: return without notify_read }
   FMock.ReadPending;
   InitConn;
@@ -1409,7 +1400,6 @@ end;
 
 procedure TTestConnBehavior.Mid_message_detect_eof;
 begin
-  { conn.rs:493-510 }
   FMock.Read('GET / HTTP/1.1' + CRLF + 'Host: x' + CRLF + CRLF).ReadEof;
   InitConn;
   AssertTrue(ReadHead = poSome);
@@ -1664,7 +1654,7 @@ const
 
 procedure TTestConnBehavior.Leading_crlf_then_eof_when_idle;
 begin
-  { decision 13 (S4 survivor 1): conn.rs:339-363 on_read_head_error consumes
+  { decision 13 (S4 survivor 1): the read-head error path consumes
     leading empty lines first, so CRLFs then EOF while idle is a graceful
     close (Ready(None)), not Err(Incomplete) }
   FMock.Read(CRLF + CRLF + CRLF);
@@ -1679,7 +1669,7 @@ procedure TTestConnBehavior.Body_end_after_response_goes_idle;
 var
   S: RawByteString;
 begin
-  { decision 13 (S4 survivor 2): conn.rs:426-428, poll_read_body ends with
+  { decision 13 (S4 survivor 2): poll_read_body ends with
     try_keep_alive: when the response already reached KeepAlive, the end of
     the request body makes the connection idle at once }
   { the last ReadPending: maybe_notify's read after going idle (an EOF there
@@ -1704,7 +1694,7 @@ var
   S: RawByteString;
 begin
   { decision 13 (S4 survivor 3): the last-chunk arrives in its own read; the
-    decoder returns an empty eof frame, which conn.rs:381-386 turns into
+    decoder returns an empty eof frame, which the connection turns into
     Ready(None), not an empty data frame }
   FMock.Read('POST / HTTP/1.1' + CRLF + 'Transfer-Encoding: chunked' + CRLF + 'Host: x' + CRLF + CRLF +
     '3' + CRLF + 'abc' + CRLF).ReadPending.Read('0' + CRLF + CRLF);
@@ -1857,7 +1847,7 @@ begin
   inherited InitConn;
 end;
 
-procedure TTestH1Config.Hyper_defaults;
+procedure TTestH1Config.Conformance_defaults;
 var
   C: TH1Config;
 begin
@@ -2263,8 +2253,8 @@ procedure TTestConnBodyRate.Config_fields;
 var C: TH1Config; M: string;
 begin
   C := ConformanceH1Config;
-  AssertEquals('hyper: off', 0, C.BodyReadTimeoutMs);
-  AssertEquals('hyper: no rate', 0, C.BodyMinRate);
+  AssertEquals('conformance: off', 0, C.BodyReadTimeoutMs);
+  AssertEquals('conformance: no rate', 0, C.BodyMinRate);
   C := ProductionH1Config;
   AssertEquals('production: 30 s', 30000, C.BodyReadTimeoutMs);
   AssertEquals('production: 1 KiB/s', 1024, C.BodyMinRate);

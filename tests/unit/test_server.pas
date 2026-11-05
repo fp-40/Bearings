@@ -1,6 +1,6 @@
 { M3 step S8 tests (docs/design.md sections 3, 5.4, 5.8, 5.9 and 6.7),
   over real sockets through TServer. They check outcomes (bytes a client
-  receives, fds, exit times), not hyper's write sizes or event order.
+  receives, fds, exit times), not write sizes or event order.
 
   TTestSendFile: file bodies (BodyFile, sendfile): a known-length file
   response equals the memory response with the same content; file

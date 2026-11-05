@@ -97,7 +97,7 @@ begin
   Result.ReleaseProc := @CountRelease;
 end;
 
-{ A plain buffer of S's bytes (hyper's Cursor<Vec<u8>> in the io.rs tests):
+{ A plain buffer of S's bytes:
   a close-delimited encoder writes the data as it is. S must outlive it. }
 function MemBuf(const S: RawByteString; const Owner: TBodyData): TQueuedBuf; overload;
 var
@@ -168,7 +168,7 @@ begin
   Result := StringOfChar(C, MAX_COPY_SIZE + 1);
 end;
 
-{ ================= io.rs tests ================= }
+{ ================= the read and write buffers ================= }
 
 procedure TTestIoBuffers.Test_iobuf_write_empty_slice;
 var
@@ -176,8 +176,8 @@ var
   Io: TH1Io;
   E: cint;
 begin
-  { io.rs:662-681 (#[ignore], body commented out). Stated intent: the
-    buffered io does not trigger a write when there is nothing to flush. }
+  { The buffered io does not trigger a write when there is nothing to
+    flush. }
   M := TMockTransport.Create;
   try
     Io.Init(M, nil);
@@ -199,8 +199,8 @@ var
   Head: TBytesView;
   Err: TH1Error;
 begin
-  { io.rs:683-726, server form: split over multiple reads, missing the last
-    line ending, then the io blocks (tokio_test's wait) }
+  { split over multiple reads, missing the last line ending, then the io
+    blocks }
   M := TMockTransport.Create;
   H := THttpHeaders.Create;
   try
@@ -224,7 +224,6 @@ var
   S: TReadStrategy;
   Mx: SizeUInt;
 begin
-  { io.rs:728-752 }
   S.InitDefault;
   AssertEquals(8192, Int64(S.Next));
   { Grows if record == next }
@@ -247,7 +246,6 @@ procedure TTestIoBuffers.Read_strategy_adaptive_decrements;
 var
   S: TReadStrategy;
 begin
-  { io.rs:754-783 }
   S.InitDefault;
   S.Record_(8192);
   AssertEquals(16384, Int64(S.Next));
@@ -269,7 +267,6 @@ procedure TTestIoBuffers.Read_strategy_adaptive_stays_the_same;
 var
   S: TReadStrategy;
 begin
-  { io.rs:785-804 }
   S.InitDefault;
   S.Record_(8192);
   AssertEquals(16384, Int64(S.Next));
@@ -309,7 +306,6 @@ var
   Mx, Half: SizeUInt;
   Checks, Maxes: Integer;
 begin
-  { io.rs:806-833 }
   Checks := 0;
   Maxes := 0;
   Mx := 8192;
@@ -336,7 +332,7 @@ var
   Raised: Boolean;
   Q: TQueuedBuf;
 begin
-  { io.rs:835-843 (#[should_panic], debug_assertions): -Sa build,
+  { -Sa build,
     EAssertionFailed, from Buffer and from the queue's Push. }
   M := TMockTransport.Create;
   try
@@ -371,15 +367,15 @@ var
   Io: TH1Io;
   E: cint;
 begin
-  { io.rs:868-885 write_buf_flatten: small pieces go into the cursor, one write }
+  { small pieces go into the cursor, one write }
   M := TMockTransport.Create;
   try
-    M.Vectored(True).Write('hello world, it''s hyper!');
+    M.Vectored(True).Write('hello world, it''s bearings!');
     Io.Init(M, nil);
     AppendStr(Io.HeadersBuf, 'hello ', nil);
     Io.Buffer(MemBuf('world, '));
     Io.Buffer(MemBuf('it''s '));
-    Io.Buffer(MemBuf('hyper!'));
+    Io.Buffer(MemBuf('bearings!'));
     AssertEquals('queue empty', 0, Io.WriteBuf.Queue.Count);
     AssertTrue('flush', Io.PollFlush(E) = ipReady);
     AssertEquals('one write', 1, M.WriteCalls);
@@ -396,7 +392,7 @@ var
   WB: TWriteBuf;
   Fill: RawByteString;
 begin
-  { io.rs:887-920 write_buf_flatten_partially_flushed: a partly written
+  { a partly written
     cursor keeps its prefix while the block has room, and drops it (moving
     the rest to the start) when the next piece does not fit }
   Pool.Init(POOL_DEFAULT_MAX_BYTES);
@@ -409,8 +405,8 @@ begin
   AssertEquals(', ', CursorStr(WB.Headers));
   AssertEquals('pos', 11, WB.Headers.Pos);
   { there's still room in the block, so just push on the end }
-  WB.Buffer(MemBuf('it''s hyper!'), @Pool);
-  AssertEquals(', it''s hyper!', CursorStr(WB.Headers));
+  WB.Buffer(MemBuf('it''s bearings!'), @Pool);
+  AssertEquals(', it''s bearings!', CursorStr(WB.Headers));
   AssertEquals('pos', 11, WB.Headers.Pos);
   { fill the block to 100 bytes short of its end, then write 4000 more }
   Fill := StringOfChar('F', WB.Headers.Bytes.Cap - WB.Headers.Bytes.Len - 100);
@@ -421,7 +417,7 @@ begin
   WB.Buffer(MemBuf(StringOfChar('X', 200)), @Pool);
   AssertEquals('pos', 0, WB.Headers.Pos);
   AssertEquals('same block size', 8192, WB.Headers.Bytes.Cap);
-  AssertEquals('bytes after the drop', Copy(', it''s hyper!' + Fill, 4001, MaxInt) +
+  AssertEquals('bytes after the drop', Copy(', it''s bearings!' + Fill, 4001, MaxInt) +
     StringOfChar('X', 200), CursorStr(WB.Headers));
   BlockFree(WB.Headers.Bytes.Block);
   Pool.Done;
@@ -434,7 +430,7 @@ var
   E: cint;
   A, B, C: RawByteString;
 begin
-  { io.rs:922-949 write_buf_queue_disable_auto: queued entries over a
+  { queued entries over a
     transport without writev (the default WriteV writes the first slice) }
   A := BigStr('a');
   B := BigStr('b');
@@ -465,7 +461,7 @@ var
   E: cint;
   A, B, C: RawByteString;
 begin
-  { io.rs:845-866 (commented out: needs a writev-capable mock): the cursor
+  { the cursor
     and the queued entries in one writev }
   A := BigStr('a');
   B := BigStr('b');
@@ -581,7 +577,7 @@ begin
     Head.Release;
     AppendStr(Io.HeadersBuf, 'RESP1', nil);
     AssertTrue('flush is Ready', Io.PollFlush(E) = ipReady);
-    AssertEquals('io.rs:279: no write while the read buffer holds bytes', 0, M.WriteCalls);
+    AssertEquals('no write while the read buffer holds bytes', 0, M.WriteCalls);
     AssertTrue('still buffered', Io.HasBufferedWrite);
     AssertTrue('can_buffer is always true with pipeline_flush', Io.CanBuffer);
     AssertTrue('second request', Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prOk);
@@ -638,9 +634,9 @@ var
   E: cint;
   N: SizeInt;
 begin
-  { io.rs:337-340 + 279-280: with pipeline_flush and unread bytes the
+  { with pipeline_flush and unread bytes the
     flush returns Ready without writing, so poll_shutdown shuts down with
-    the response still buffered (a hyper quirk kept on purpose, R5) }
+    the response still buffered (kept on purpose, risk R5) }
   M := TMockTransport.Create;
   try
     M.Read('GET / HTTP/1.1' + CRLF);
@@ -706,7 +702,7 @@ begin
         T.AssertEquals(Format('split %d: remaining', [N]), Length(All) - N, Io.WriteBuf.Remaining);
         if not Copied then
         begin
-          { io.rs:631: a write that ends exactly at (or past) the end of
+          { a write that ends exactly at (or past) the end of
             the head cursor clears it }
           if N >= 19 then
           begin
@@ -1130,7 +1126,7 @@ var
   E: cint;
   I: Integer;
 begin
-  { the adaptive strategy (io.rs:408-440) doubles next after a full read;
+  { the adaptive strategy doubles next after a full read;
     the buffer takes a block of the class >= next }
   M := TMockTransport.Create;
   try
@@ -1203,7 +1199,7 @@ var
   Err: TH1Error;
   Req1, Req2: RawByteString;
 begin
-  { io.rs:201: partial_len = None after a parsed message. A stale
+  { partial_len is cleared after a parsed message. A stale
     partial_len would make is_complete_fast start past the end of a short
     pipelined request and wait for bytes that never come. }
   M := TMockTransport.Create;
@@ -1263,7 +1259,7 @@ begin
       AssertTrue('error', Io.Parse(DefaultParseContext, H, Msg, Head, Err) = prErr);
       AssertTrue('kind parse', Err.Kind = h1eParse);
       AssertTrue(Format('case %d: parse error', [I]), Err.Parse = ERRS[I]);
-      AssertEquals(Format('case %d: role.rs:225 split the head off', [I]), 'XYZ', ReadBufStr(Io));
+      AssertEquals(Format('case %d: the head is split off', [I]), 'XYZ', ReadBufStr(Io));
       AssertTrue('no view handed out', Head.Block = nil);
       AssertEquals('head view released', 0, Io.ReadBuf.Block^.Pins);
       Io.Done;
@@ -1285,7 +1281,7 @@ var
   Ctx: TH1ParseContext;
   Req: RawByteString;
 begin
-  { errors raised before role.rs:225: method/version tokens, too many
+  { errors raised before the head is split off: method/version tokens, too many
     headers, max_header_size on a complete head, URI too long }
   M := TMockTransport.Create;
   H := THttpHeaders.Create;
@@ -1623,7 +1619,7 @@ begin
   Pool.Init(POOL_DEFAULT_MAX_BYTES);
   M := TMockTransport.Create;
   try
-    { Queue: three slices, as hyper's chain; partial write inside the fields }
+    { Queue: three slices; partial write inside the fields }
     M.Vectored(True).WriteLimit(5).Write('0'#13#10'fo').Write('o: bar'#13#10#13#10);
     Io.Init(M, @Pool);
     V := Default(TByteVec);
@@ -1714,7 +1710,7 @@ var
   Ctx: TH1ParseContext;
   Part: RawByteString;
 begin
-  { io.rs:204 "if curr_len >= max": a partial head of exactly
+  { a partial head of exactly
     max_header_size bytes is TooLarge; one byte less reads on }
   Part := 'GET / HTTP/1.1' + CRLF + 'X: ';
   Part := Part + StringOfChar('a', 100 - Length(Part));
@@ -1749,7 +1745,7 @@ var
   Io: TH1Io;
   E: cint;
 begin
-  { io.rs:325 headers.reset() after a complete write of the cursor: position
+  { the cursor is reset after a complete write: position
     and length back to 0, so later heads reuse the block from its start }
   M := TMockTransport.Create;
   try
@@ -1784,7 +1780,7 @@ var
   Head: TBytesView;
   Err: TH1Error;
 begin
-  { io.rs:279 returns Ready without writing while pipeline_flush is on and
+  { the flush returns Ready without writing while pipeline_flush is on and
     the read buffer holds bytes. With an entry queued (here a file),
     CanHeadersBuf stays False until it is written, so the next response
     could never be buffered and nothing would wake the task: a queued entry
@@ -1814,7 +1810,7 @@ begin
     AssertTrue('the next head can be buffered', Io.CanHeadersBuf);
     Got := DrainSocket(Sv[1]);
     AssertEquals('bytes', 'HEAD1' + CRLF + Content, Got);
-    { memory only: the io.rs:279 skip still applies }
+    { memory only: the pipeline_flush skip still applies }
     AppendStr(Io.HeadersBuf, 'HEAD2' + CRLF, nil);
     AssertTrue('flush skipped', Io.PollFlush(E) = ipReady);
     AssertTrue('still buffered', Io.HasBufferedWrite);

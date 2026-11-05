@@ -1,5 +1,5 @@
-{ Extra tests for bearings.http1.parser (not ports of httparse tests).
-  They cover edge cases that httparse's own tests do not: empty input,
+{ Extra tests for bearings.http1.parser: the edge cases the other
+  test_parser_* units do not cover: empty input,
   partial input at every byte boundary, CR/LF handling at each grammar
   position, the exact version match, method fast paths, request-target
   bytes and UTF-8, config options (including the response-only ones,
@@ -12,11 +12,10 @@
   oracle: for a request,
     'C <consumed> m=<off>,<len> p=<off>,<len> v=<minor> h=<n> <name off>,<len>:<value off>,<len> ...'
     'P m=... p=... v=...'          (Partial)
-    'E <httparse::Error> m=... p=... v=...'
+    'E <error> m=... p=... v=...'
   where '-' means None; for parse_headers 'C <consumed> h=<n> ...', 'P'
-  or 'E <Error>'.  Every ExpectReq / ExpectHdrs expectation in this file
-  was checked against the real httparse 1.10.1 (by a script and a Rust
-  tool removed on 2026-11-04); they are fixed expectations now. }
+  or 'E <error>'.  Every ExpectReq / ExpectHdrs expectation in this file
+  is a fixed value (frozen on 2026-11-04). }
 unit test_parser_extra;
 
 {$mode objfpc}{$H+}
@@ -54,13 +53,13 @@ type
     procedure Extra_invalid_header_lines;
     procedure Extra_space_before_first_header;
     procedure Extra_header_limit_order;
-    procedure Extra_header_limit_hyper_default;
+    procedure Extra_header_limit_default;
     procedure Extra_header_slots_written_only;
     procedure Extra_large_head_offsets;
     procedure Extra_parse_headers_trailers;
     procedure Extra_parse_header_block_offset;
     procedure Extra_request_reset_between_calls;
-    procedure Extra_hyper_token_error_mapping;
+    procedure Extra_token_error_mapping;
     procedure Extra_scanners_stop_at_len;
     procedure Extra_utf8_validation;
   end;
@@ -220,7 +219,7 @@ begin
   CheckEveryPrefix('GET /'#$C3#$A9' HTTP/1.1'#13#10'A:'#13#10'B:  '#9#13#10#13#10);
   CheckEveryPrefix('GETX /x HTTP/1.1'#13#10#13#10);
   CheckEveryPrefix('POST /x HTTP/1.1'#13#10#13#10);
-  { parse_headers (chunked trailers in hyper). }
+  { a header block on its own (the trailer section of a chunked body) }
   for L := 0 to Length(HDRS) - 1 do
   begin
     ParseHdrs(Copy(HDRS, 1, L), 4);
@@ -493,9 +492,9 @@ begin
   ExpectHdrs('A: b'#13#10#13#10, 0, 'E TooManyHeaders');
 end;
 
-procedure TTestParserExtra.Extra_header_limit_hyper_default;
+procedure TTestParserExtra.Extra_header_limit_default;
 const
-  SLOTS = 100; // hyper DEFAULT_MAX_HEADERS
+  SLOTS = 100; // DEFAULT_MAX_HEADERS of bearings.http1.role
 var
   Hdrs: array[0..SLOTS] of THeaderSlice;
   Req: TParsedRequest;
@@ -643,9 +642,10 @@ begin
   AssertEquals('Version reset', 0, FReq.Version);
 end;
 
-procedure TTestParserExtra.Extra_hyper_token_error_mapping;
+procedure TTestParserExtra.Extra_token_error_mapping;
 begin
-  { hyper role.rs: Token with method None -> Parse::Method, else Parse::Uri. }
+  { A Token error without a method is a method error, with one a
+    request-target error (the mapping is bearings.http1.role's). }
   ExpectReq(' / HTTP/1.1'#13#10#13#10, 4, 'E Token m=- p=- v=-');
   ExpectReq('GET '#$7F' HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');
   ExpectReq('GET  / HTTP/1.1'#13#10#13#10, 4, 'E Token m=0,3 p=- v=-');

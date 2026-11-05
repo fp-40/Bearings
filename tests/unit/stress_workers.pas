@@ -17,7 +17,7 @@
   when its last producer is gone); mode 12 is the sixth S7 verifiers'
   repro r1 (the call begins the stream, shares it with a helper that
   writes, then offloads the worker in the same Poll); a connection reset
-  in a mode that may leave the request body unread (hyper's drain or
+  in a mode that may leave the request body unread (the server's drain or
   close: the kernel resets a socket closed with unread bytes, and the
   reset can discard the end of the response) is counted apart, not as a
   client error.
@@ -944,7 +944,7 @@ begin
         Break;
       end;
       if (Len > 0) and (Mode in [0, 4, 5, 7, 11, 12]) then
-        { the body may be left unread: hyper drains or closes }
+        { the body may be left unread: the server drains or closes }
         Closes := True;
       case Mode of
         1, 8, 10:

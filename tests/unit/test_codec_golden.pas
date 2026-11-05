@@ -2,7 +2,7 @@
 
   Replays the cases of one file through the Pascal decoder or the header
   list (test_codec_replay) and prints one result line per case.
-  test_codec_golden.sh compares the lines with tests/golden/decode_expected.txt.xz
+  tests/test_golden.py compares the lines with tests/golden/decode_expected.txt.xz
   and headers_expected.txt.xz. The cases and the values were frozen on
   2026-11-04 from hyper v1.12.0's src/proto/h1/decode.rs and src/headers.rs,
   with the bare-LF trailer rule (docs/design/deviations.md) applied; they

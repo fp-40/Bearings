@@ -1,5 +1,5 @@
 { M3 step S1 tests for bearings.rt.net (docs/design.md section 3):
-  - tokio PollEvented readiness rules on real TCP sockets: data + FIN in one
+  - the readiness rules on real TCP sockets: data + FIN in one
     event (short read clears rdRead, sticky rdReadClosed makes the next read
     call the kernel and see EOF); a full read keeps rdRead; no syscall
     without readiness; a short scalar write clears rdWrite, a short writev
@@ -243,7 +243,7 @@ begin
   AssertEquals('short read', Length(Req), P.T.Read(@B[0], SizeOf(B)));
   AssertFalse('short read clears rdRead', rdRead in P.Src.Ready);
   AssertTrue('rdReadClosed is sticky', rdReadClosed in P.Src.Ready);
-  { hyper's mid_message_detect_eof: the next read must reach the kernel }
+  { EOF in the middle of a message: the next read must reach the kernel }
   AssertEquals('EOF seen thanks to the sticky bit', 0, P.T.Read(@B[0], SizeOf(B)));
   AssertTrue('still sticky after EOF', rdReadClosed in P.Src.Ready);
   { without the sticky bit the same read would have been Pending (no syscall) }
@@ -348,7 +348,7 @@ begin
   Iov[1].Len := 2 * 1024 * 1024;
   N := P.T.WriteV(@Iov[0], 2);
   AssertTrue('partial writev', (N > 0) and (N < Length(Big)));
-  AssertTrue('short writev keeps rdWrite (tokio poll_write_vectored)', rdWrite in P.Src.Ready);
+  AssertTrue('short writev keeps rdWrite', rdWrite in P.Src.Ready);
   { the next writevs call the kernel (it may still take some bytes as the
     peer's receive queue fills); every short one keeps rdWrite, the first
     EAGAIN clears it }

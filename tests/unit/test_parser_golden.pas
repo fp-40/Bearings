@@ -5,10 +5,9 @@
   [Buf, Buf+Len) then crashes with SIGSEGV.
   Reads the corpus written by test_parser_corpus.py and prints two result
   lines for every case: with 4 header slots (configuration 0) and with 1
-  (configuration 1). test_parser_golden.sh
-  compares the lines with tests/golden/parser_expected.txt.xz. Those
-  values were httparse 1.10.1's results for the same corpus when they
-  were frozen (2026-11-04); they are now maintained here. }
+  (configuration 1). tests/test_golden.py compares the lines with
+  tests/golden/parser_expected.txt.xz; the values were frozen on
+  2026-11-04 (first taken from httparse 1.10.1) and are maintained here. }
 program test_parser_golden;
 
 {$mode objfpc}{$H+}

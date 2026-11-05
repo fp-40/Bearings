@@ -80,7 +80,7 @@ begin
   AssertEquals(Int64(784111778) * 1000000, C.NextUpdateUs);
   C.Check(T0 + 700000);                       // .95 s: same second
   AssertEquals('Sun, 06 Nov 1994 08:49:37 GMT', C.AsString);
-  C.Check(Int64(784111778) * 1000000);        // exactly at next_update: hyper uses '>'
+  C.Check(Int64(784111778) * 1000000);        // exactly at next_update: no update yet
   AssertEquals('Sun, 06 Nov 1994 08:49:37 GMT', C.AsString);
   C.Check(Int64(784111778) * 1000000 + 1);
   AssertEquals('Sun, 06 Nov 1994 08:49:38 GMT', C.AsString);
@@ -190,7 +190,7 @@ begin
   AssertEquals('', CanonicalReasonStr(600));
 end;
 
-{ ---- headers.rs ---- }
+{ ---- header helpers ---- }
 
 procedure TTestHeaders.Test_te_is_trailers_accepts_comma_separated_values;
 var

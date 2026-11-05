@@ -281,7 +281,7 @@ var
 
   { one poll (Iter: a loop iteration, else the readiness edge's direct
     Run). An exception is what TLoop.Run would catch (docs/design.md section 2: the task is
-    aborted); only EH1Panic (hyper's panics, docs/design.md 5.6) is documented }
+    aborted); only EH1Panic (docs/design.md 5.6) is documented }
   procedure Poll(Iter: Boolean);
   begin
     try
@@ -478,14 +478,14 @@ begin
   CloseFile(F);
 end;
 
-{ Deviation S9-1 (hyper's is_complete_fast, role.rs parse_headers): after a
+{ Deviation S9-1 (IsCompleteFast): after a
   partial read, a head is parsed again only once its bytes hold an end of
   head (CRLF CRLF or LF LF). An invalid head that the reference run (one
   read) answers with 400 is, when it arrives in pieces and has no end of
   head, never parsed again: the client's EOF ends the connection as
   incomplete, with nothing written for it; when what is left of it is only
-  CR and LF bytes, hyper's EOF handling drops them as leading empty lines
-  (io.rs consume_leading_lines) and the connection ends ok. Equivalent when the split run
+  CR and LF bytes, the EOF handling drops them as leading empty lines
+  and the connection ends ok. Equivalent when the split run
   wrote and reported a prefix of the reference run's output (the responses
   to the requests before the invalid head) and ended incomplete where the
   reference run ended with a parse error (incomplete, or ok when the input
@@ -550,7 +550,7 @@ begin
     and (Copy(A.Events, 1, Length(B.Events)) = B.Events);
 end;
 
-{ Deviation S9-2 (hyper conn.rs on_parse_error / has_h2_prefix): the HTTP/2
+{ Deviation S9-2 (the HTTP/2 preface check on a parse error): the HTTP/2
   preface is recognized when the version error is found with at least its
   24 bytes buffered. Split so that the parser sees 'PRI * HTTP/2' before
   the 24th byte arrived, the head is an invalid HTTP/1 version: 400, outcome

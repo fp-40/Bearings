@@ -48,7 +48,7 @@ type
     procedure Extra_encode_and_end_details;
     procedure Extra_encode_trailers_details;
     procedure Extra_encode_trailer_header_lines;
-    { headers.rs helpers and the header list }
+    { the header helpers and the header list }
     procedure Extra_headers_list_value_edges;
     procedure Extra_headers_content_length_edges;
     procedure Extra_headers_copy_from_same_list;
@@ -171,14 +171,14 @@ begin
       Move(S[1], Result[I * Length(S) + 1], Length(S));
 end;
 
-{ hyper finished the body: STATUS is END or TRL:..., then one more call gave
-  END, and is_eof() was true. }
+{ The body ended: STATUS is END or TRL:..., one more call gives END, and
+  IsEof is true. }
 function OkR(const Status: string; const Data: RawByteString; Leftover: SizeInt): string;
 begin
   Result := Format('%s|%d|%s|%d|END|1', [Status, Length(Data), Fnv1aHex(Data), Leftover]);
 end;
 
-{ hyper returned this error after yielding Data. }
+{ The decoder fails with this error after yielding Data. }
 function ErrR(const KindAndMessage: string; const Data: RawByteString): string;
 begin
   Result := Format('ERR:%s|%d|%s|-|-|-', [KindAndMessage, Length(Data), Fnv1aHex(Data)]);
@@ -191,11 +191,11 @@ const
   E_EXT_LIMIT = 'InvalidData:chunk extensions over the byte limit';
   E_TRL_BYTES = 'InvalidData:trailer section over the byte limit';
   E_TRL_COUNT = 'InvalidData:trailer section over the field limit';
-  E_HP_NAME = 'InvalidInput:invalid trailer field name';     { httparse Error::HeaderName }
-  E_HP_VALUE = 'InvalidInput:invalid trailer field value';   { httparse Error::HeaderValue }
-  E_HP_TOO_MANY = 'InvalidInput:too many headers';    { httparse Error::TooManyHeaders }
-  E_TRL_BARE_LF = 'InvalidInput:bare LF in the trailer section';  { not in hyper }
-  E_HN_INVALID = 'InvalidInput:trailer field name too long';  { http HeaderName::try_from }
+  E_TRL_NAME = 'InvalidInput:invalid trailer field name';
+  E_TRL_VALUE = 'InvalidInput:invalid trailer field value';
+  E_TRL_TOO_MANY = 'InvalidInput:too many headers';   { the parser's slot limit }
+  E_TRL_BARE_LF = 'InvalidInput:bare LF in the trailer section';
+  E_HN_INVALID = 'InvalidInput:trailer field name too long';
 
 { Runs Body with: one read, one byte per read, two reads split at every
   offset (bodies up to 600 bytes; longer ones at 40 offsets), and three
@@ -321,11 +321,10 @@ end;
 
 procedure TTestCodecExtra.Extra_decode_trailer_parsing;
 begin
-  // A bare LF in the trailer section is refused. hyper's state machine
-  // ends trailer lines only at CRLF while httparse also ends them at a bare
-  // LF: there, "0 CRLF LF" ended the body for httparse but the decoder read
-  // on to the next CRLF CRLF, and the bytes between (a pipelined request)
-  // were dropped.
+  // A bare LF in the trailer section is refused (docs/design/deviations.md):
+  // a trailer line ends only at CRLF, and a bare LF accepted as a line end
+  // would leave "0 CRLF LF" ending the section for one reader and not for
+  // the other, with the bytes between (a pipelined request) dropped.
   CheckBody('bare LF', 'C', 0, -1, -1, '0'#13#10'a: b'#10'c: d'#13#10#13#10, ErrR(E_TRL_BARE_LF, ''));
   CheckBody('starts with LF', 'C', 0, -1, -1, '0'#13#10#10'foo: bar'#13#10#13#10, ErrR(E_TRL_BARE_LF, ''));
   CheckBody('starts with LF, request behind', 'C', 0, -1, -1,
@@ -333,16 +332,16 @@ begin
   CheckBody('field line ends with LF, then CRLF', 'C', 0, -1, -1,
     '0'#13#10'X: y'#10#13#10'GET /smuggled HTTP/1.1'#13#10#13#10, ErrR(E_TRL_BARE_LF, ''));
   CheckBody('LF after a trailer CRLF', 'C', 0, -1, -1, '0'#13#10'X: y'#13#10#10, ErrR(E_TRL_BARE_LF, ''));
-  CheckBody('obs-fold', 'C', 0, -1, -1, '0'#13#10'a: b'#13#10' c'#13#10#13#10, ErrR(E_HP_NAME, ''));
+  CheckBody('obs-fold', 'C', 0, -1, -1, '0'#13#10'a: b'#13#10' c'#13#10#13#10, ErrR(E_TRL_NAME, ''));
   CheckBody('empty and trimmed values', 'C', 0, -1, -1,
     '0'#13#10'a:'#13#10'b: '#9' x '#9#13#10#13#10, OkR('TRL:a=-,b=78', '', 0));
-  CheckBody('space before colon', 'C', 0, -1, -1, '0'#13#10'a : b'#13#10#13#10, ErrR(E_HP_NAME, ''));
-  CheckBody('DEL in value', 'C', 0, -1, -1, '0'#13#10'a: b'#$7F'c'#13#10#13#10, ErrR(E_HP_VALUE, ''));
-  CheckBody('NUL in value', 'C', 0, -1, -1, '0'#13#10'a: b'#0'c'#13#10#13#10, ErrR(E_HP_VALUE, ''));
+  CheckBody('space before colon', 'C', 0, -1, -1, '0'#13#10'a : b'#13#10#13#10, ErrR(E_TRL_NAME, ''));
+  CheckBody('DEL in value', 'C', 0, -1, -1, '0'#13#10'a: b'#$7F'c'#13#10#13#10, ErrR(E_TRL_VALUE, ''));
+  CheckBody('NUL in value', 'C', 0, -1, -1, '0'#13#10'a: b'#0'c'#13#10#13#10, ErrR(E_TRL_VALUE, ''));
   CheckBody('obs-text value', 'C', 0, -1, -1,
     '0'#13#10'a: b'#$80#$FF'c'#13#10#13#10, OkR('TRL:a=6280ff63', '', 0));
-  CheckBody('no colon', 'C', 0, -1, -1, '0'#13#10'nocolon'#13#10#13#10, ErrR(E_HP_NAME, ''));
-  CheckBody('empty name', 'C', 0, -1, -1, '0'#13#10':v'#13#10#13#10, ErrR(E_HP_NAME, ''));
+  CheckBody('no colon', 'C', 0, -1, -1, '0'#13#10'nocolon'#13#10#13#10, ErrR(E_TRL_NAME, ''));
+  CheckBody('empty name', 'C', 0, -1, -1, '0'#13#10':v'#13#10#13#10, ErrR(E_TRL_NAME, ''));
   // http MAX_HEADER_NAME_LEN = 65535
   CheckBody('name 65535', 'C', 0, -1, 200000,
     '0'#13#10 + StringOfChar('a', 65535) + ': v'#13#10#13#10,
@@ -353,10 +352,10 @@ end;
 
 procedure TTestCodecExtra.Extra_decode_trailer_long_name_error_order;
 begin
-  // hyper runs HeaderName::try_from only after httparse parsed every line,
-  // so a later httparse error wins over a too-long name
+  // the name length is checked after every trailer line is parsed, so a
+  // later bad line wins over a too-long name
   CheckBody('long name, then bad line', 'C', 0, -1, 200000,
-    '0'#13#10 + StringOfChar('a', 65536) + ': v'#13#10'b@: x'#13#10#13#10, ErrR(E_HP_NAME, ''));
+    '0'#13#10 + StringOfChar('a', 65536) + ': v'#13#10'b@: x'#13#10#13#10, ErrR(E_TRL_NAME, ''));
   // a bare LF is refused by the decoder while it reads, before the
   // trailer lines are parsed
   CheckBody('long name, then bare LF', 'C', 0, -1, 200000,
@@ -380,7 +379,7 @@ begin
   CheckBody('digit after LWS', 'C', 0, -1, -1, '1 2'#13#10,
     ErrR('InvalidInput:invalid byte after the whitespace that follows the chunk size', ''));
   CheckBody('tab LWS then extension', 'C', 0, -1, -1, '1'#9';x'#13#10'a'#13#10'0'#13#10#13#10, OkR('END', 'a', 0));
-  // a lone LF after the last chunk is refused (hyper: a trailer byte)
+  // a lone LF after the last chunk is refused (it starts the trailer section)
   CheckBody('last chunk then LF', 'C', 0, -1, -1, '0'#13#10#10, ErrR(E_TRL_BARE_LF, ''));
 end;
 
@@ -448,7 +447,7 @@ var
   K, DataLen: Integer;
   Msg: string;
 begin
-  // hyper's result for COMPLEX cut to K bytes, then EOF:
+  // COMPLEX cut to K bytes, then EOF:
   //   K 0..6  : EOF in the size line            (no data)
   //   K 7..9  : EOF in the 3-byte chunk          (K-7 data bytes)
   //   K 10..16: EOF in a framing line            (3)
@@ -544,7 +543,8 @@ var
   NotEof: QWord;
 begin
   S := 'abc';
-  // hyper encode: Ok(limit) if limit < len => Limited(take(limit)), remaining = 0
+  // a length encoder with less remaining than the data: Limited to the
+  // remaining bytes, remaining = 0
   E := TEncoder.Length(0);
   E.Encode(PByte(Pointer(S)), 3, B);
   AssertTrue(B.Kind = ebkLimited);
@@ -586,7 +586,7 @@ var
   end;
 
 begin
-  // hyper ChunkSize::new: write!("{len:X}\r\n"), uppercase, no leading zeros
+  // the chunk-size line: uppercase hex, no leading zeros, CRLF
   AssertEquals('1'#13#10, Line(1));
   AssertEquals('F'#13#10, Line(15));
   AssertEquals('10'#13#10, Line(16));
@@ -681,7 +681,7 @@ begin
     H.Add('b', '2');
     H.Add('c', '3');
     H.Add('d', '4');
-    // hyper role.rs: each Trailer line extends the list
+    // each Trailer line extends the list
     E := TEncoder.Chunked;
     Line('a');
     Line(' b ,c');
@@ -867,7 +867,7 @@ var
   S: RawByteString;
   Want: Boolean;
 begin
-  // hyper is_valid_byte: HTAB, SP, VCHAR 0x21..0x7E, obs-text 0x80..0xFF
+  // field-value bytes (RFC 9110 5.5): HTAB, SP, VCHAR 0x21..0x7E, obs-text 0x80..0xFF
   for B := 0 to 255 do
   begin
     S := 'a' + AnsiChar(B) + 'b';

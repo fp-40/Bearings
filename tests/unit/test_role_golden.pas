@@ -4,7 +4,7 @@
 
   Reads the cases (one per line: "P <max headers> <max header size>
   <request hex>" or "U <target hex>") and prints one result
-  line per case. test_role_golden.sh compares the lines with
+  line per case. tests/test_golden.py compares the lines with
   tests/golden/role_expected.txt.xz. The cases and the values were frozen on
   2026-11-04 from hyper v1.12.0's Server::parse and http::Uri, with the
   Host rule of RFC 9112 3.2 (docs/design/deviations.md) applied; they are
@@ -149,7 +149,8 @@ begin
   Ctx.MaxHeaderSize := StrToInt(Fields[2]);
   Req := Unhex(Fields[3]);
   Buf := PlaceBuffer(Req);
-  { hyper's Server::parse is only called with a non-empty buffer }
+  { ServerParse answers Partial for an empty buffer without parsing; the
+    empty cases go through ServerParseHeaders }
   if Length(Req) = 0 then
     St := ServerParseHeaders(Buf, 0, -1, Ctx, H, Msg)
   else

@@ -375,7 +375,7 @@ var
   E: TEncoder;
   V: TByteVec;
 begin
-  { hyper collects into a HeaderMap: a: 1, b: 2, a: 3 -> a, a, b }
+  { the fields are grouped by name: a: 1, b: 2, a: 3 -> a, a, b }
   H.Add('a', '1');
   H.Add('b', '2');
   H.Add('A', '3');

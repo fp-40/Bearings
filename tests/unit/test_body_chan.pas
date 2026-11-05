@@ -7,7 +7,7 @@
   test_size_of and the nightly benches are not ported), plus the want
   transitions and the pin rules of TBodyChan (Held, Item, ToRelease).
 
-  Wakes: on the loop both chan.rs wakers are the connection task, so a wake
+  Wakes: on the loop both wakers of the channel are the connection task, so a wake
   is observed as the owner task being queued (one run of the loop's run
   queue counts it).
 
@@ -49,14 +49,14 @@ type
     function Recv(out S: RawByteString; out E: TH1Error): TChanPoll;
   end;
 
-  TTestChanRs = class(TChanCase)
+  TTestChan = class(TChanCase)
   published
     procedure Error_queued_behind_accepted_data;
     procedure Trailers_follow_data_close;
     procedure Drop_wakes_only_an_open_peer;
   end;
 
-  TTestIncomingRs = class(TChanCase)
+  TTestIncoming = class(TChanCase)
   published
     procedure Size_hint;
     procedure Channel_abort;
@@ -138,14 +138,13 @@ begin
   end;
 end;
 
-{ ================= chan.rs ================= }
+{ ================= the channel ================= }
 
-procedure TTestChanRs.Error_queued_behind_accepted_data;
+procedure TTestChan.Error_queued_behind_accepted_data;
 var
   S: RawByteString;
   E: TH1Error;
 begin
-  { chan.rs:250-259 }
   FEx.Chan.Open(False);
   AssertTrue('try_send_data', FEx.Chan.TrySendData(View('data')));
   FEx.Chan.SendError(NewIncomplete);
@@ -157,13 +156,12 @@ begin
   AssertTrue('none', Recv(S, E) = cnEnd);
 end;
 
-procedure TTestChanRs.Trailers_follow_data_close;
+procedure TTestChan.Trailers_follow_data_close;
 var
   S: RawByteString;
   E: TH1Error;
   Ch: TByteSlice;
 begin
-  { chan.rs:261-270 }
   FEx.Chan.Open(False);
   FEx.ReqTrailers.Add('x-trailer', 'value');
   AssertTrue('try_send_trailers', FEx.Chan.TrySendTrailers);
@@ -180,13 +178,12 @@ begin
   AssertTrue('still end', FEx.TryRead(Ch) = brEnd);
 end;
 
-procedure TTestChanRs.Drop_wakes_only_an_open_peer;
+procedure TTestChan.Drop_wakes_only_an_open_peer;
 var
   Closed: Boolean;
   S: RawByteString;
   E: TH1Error;
 begin
-  { chan.rs:272-311 }
   { A receiver dropped after the sender does not wake the sender's stale waker. }
   FEx.Chan.Open(True);
   AssertFalse('poll_ready pending', FEx.Chan.PollReady(Closed));
@@ -212,15 +209,15 @@ begin
   FEx.Chan.CloseReceiver;
 end;
 
-{ ================= incoming.rs ================= }
+{ ================= the body side ================= }
 
-procedure TTestIncomingRs.Size_hint;
+procedure TTestIncoming.Size_hint;
 var
   Msg: TParsedRequestHead;
   V: TBytesView;
   Ch: TByteSlice;
 begin
-  { incoming.rs:412-428: empty -> exact 0, channel (chunked) -> unknown,
+  { empty -> exact 0, channel (chunked) -> unknown,
     new_channel(4) -> exact 4; ContentLength is the size hint (-1 unknown) }
   V := Default(TBytesView);
   Msg := Default(TParsedRequestHead);
@@ -236,23 +233,22 @@ begin
   AssertEquals('channel with length', 4, FEx.ContentLength);
 end;
 
-procedure TTestIncomingRs.Channel_abort;
+procedure TTestIncoming.Channel_abort;
 var
   Ch: TByteSlice;
 begin
-  { incoming.rs:430-439: tx.abort() = send_error(new_body_write_aborted()), then drop }
+  { abort = SendError(NewBodyWriteAborted), then drop }
   FEx.Chan.Open(False);
   FEx.Chan.SendError(NewBodyWriteAborted(0));
   FEx.Chan.CloseSender;
   AssertTrue('error', FEx.TryRead(Ch) = brError);
 end;
 
-procedure TTestIncomingRs.Channel_abort_when_buffer_is_full;
+procedure TTestIncoming.Channel_abort_when_buffer_is_full;
 var
   Ch: TByteSlice;
   S: RawByteString;
 begin
-  { incoming.rs:441-461 }
   FEx.Chan.Open(False);
   AssertTrue('send 1', FEx.Chan.TrySendData(View('chunk 1')));
   { buffer is full, but can still send abort }
@@ -264,12 +260,11 @@ begin
   AssertTrue('error', FEx.TryRead(Ch) = brError);
 end;
 
-procedure TTestIncomingRs.Channel_buffers_one;
+procedure TTestIncoming.Channel_buffers_one;
 var
   V2: TBytesView;
   S: RawByteString;
 begin
-  { incoming.rs:463-472 }
   FEx.Chan.Open(False);
   AssertTrue('send 1', FEx.Chan.TrySendData(View('chunk 1')));
   V2 := View('chunk 2');
@@ -280,32 +275,29 @@ begin
   FEx.Chan.CloseReceiver;
 end;
 
-procedure TTestIncomingRs.Channel_empty;
+procedure TTestIncoming.Channel_empty;
 var
   Ch: TByteSlice;
 begin
-  { incoming.rs:474-481 }
   FEx.Chan.Open(False);
   FEx.Chan.CloseSender;
   AssertTrue('none', FEx.TryRead(Ch) = brEnd);
 end;
 
-procedure TTestIncomingRs.Channel_ready;
+procedure TTestIncoming.Channel_ready;
 var
   Closed: Boolean;
 begin
-  { incoming.rs:483-491 }
   FEx.Chan.Open(False);
   AssertTrue('tx is ready immediately', FEx.Chan.PollReady(Closed));
   AssertFalse(Closed);
 end;
 
-procedure TTestIncomingRs.Channel_wanter;
+procedure TTestIncoming.Channel_wanter;
 var
   Closed: Boolean;
   Ch: TByteSlice;
 begin
-  { incoming.rs:493-513 }
   FEx.Chan.Open(True);
   AssertFalse('tx isn''t ready before rx has been polled', FEx.Chan.PollReady(Closed));
   AssertTrue('poll rx.data', FEx.TryRead(Ch) = brPending);
@@ -313,11 +305,10 @@ begin
   AssertTrue('tx is ready after rx has been polled', FEx.Chan.PollReady(Closed));
 end;
 
-procedure TTestIncomingRs.Channel_notices_closure;
+procedure TTestIncoming.Channel_notices_closure;
 var
   Closed: Boolean;
 begin
-  { incoming.rs:515-532 }
   FEx.Chan.Open(True);
   AssertFalse('tx isn''t ready before rx has been polled', FEx.Chan.PollReady(Closed));
   FEx.Chan.CloseReceiver;
@@ -399,7 +390,7 @@ var
   E: TH1Error;
   Closed: Boolean;
 begin
-  { decision 13 (S4 survivor 4): chan.rs poll_next takes a pending error and
+  { decision 13 (S4 survivor 4): the receiver's poll takes a pending error and
     wakes the sender only when want went false -> true in this call; taking
     an item always wakes it }
   FEx.Chan.Open(False);                       { want = true from the start }
@@ -467,7 +458,7 @@ begin
   AssertEquals('the previous chunk is released by the next body call', 2, B^.Pins);
   AssertTrue(FEx.Chan.TrySendData(V3));
   FEx.DiscardBody;
-  { chan.rs:218-227: drop(Receiver) only clears receiver_open; the item it
+  { dropping the receiver only clears receiver_open; the item it
     never took stays in the shared state (and pins its block) until the
     Sender is dropped too (corrected in S5: conformance/conn-diff found the
     read-capacity difference this makes) }
@@ -505,8 +496,8 @@ begin
 end;
 
 begin
-  RegisterTest(TTestChanRs);
-  RegisterTest(TTestIncomingRs);
+  RegisterTest(TTestChan);
+  RegisterTest(TTestIncoming);
   RegisterTest(TTestChanExtra);
   with TTestRunner.Create(nil) do
   try

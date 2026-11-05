@@ -224,8 +224,7 @@ type
     procedure Error_releases_taken_upgrade_slot;
     { S6 fixes: deviation S6-15 (decision 14). With pipeline_flush the
       response held while the read buffer has bytes is flushed once the
-      connection is done (hyper 1.12.0 drops it in into_inner / skips it in
-      poll_shutdown) }
+      connection is done }
     procedure Pipeline_flush_upgrade_101_before_hand_off;
     procedure Pipeline_flush_upgrade_101_write_pending;
     { the PROXY protocol header (TH1Config.ProxyProtocol) and the
@@ -648,13 +647,13 @@ begin
   Result := -1;
 end;
 
-{ ---- hyper regression tests ---- }
+{ ---- regression tests over a scripted transport ---- }
 
 procedure TTestDispatchRegressions.H1_flush_before_yield;
 var
   Src: TScriptSource;
 begin
-  { tests/h1_flush_before_yield.rs: one data frame, Pending (no wake), then
+  { one data frame, Pending (no wake), then
     end of stream, inside one poll_loop iteration; the terminating chunk
     must be flushed before the task returns Pending }
   Src := TScriptSource.Create(['d:hello', 'p']);
@@ -682,7 +681,7 @@ procedure TTestDispatchRegressions.H1_shutdown_while_buffered;
 var
   Big: RawByteString;
 begin
-  { tests/h1_shutdown_while_buffered.rs: the transport accepts 212 992
+  { the transport accepts 212 992
     bytes, then every write pends; a 500 000-byte Full body; shutdown must
     never be called while bytes are buffered. The transport is vectored
     (the large body is queued and goes out with the head in one writev). }
@@ -708,7 +707,7 @@ var
   Chunk: RawByteString;
   I, BodyStart: Integer;
 begin
-  { tests/unbuffered_stream.rs (fixture.rs): max_buf_size 64 KiB, a
+  { max_buf_size 64 KiB, a
     StreamBody of 16 x 64 KiB with content-length; every write is followed
     by one Pending write (the 100 ms sleep, delivered by the driver as the
     readiness edge); more than 4 write polls while pending would be hot
@@ -735,13 +734,9 @@ begin
     end;
     Start;
     Drive;
-    { decision 13: hyper's UnbufferedStream fails with "We are being hot
-      polled!" when its poll_cnt passes 4 while the sleep is pending.
-      poll_cnt is reset to 0 when the sleep has completed, before the write
-      is accepted, except for the stream's first write (poll_cnt = 1). So
-      hyper allows the Pending ("wp") call plus 2 more before the readiness
-      edge after the first write and plus 3 after later writes; this check
-      allows 2 throughout (equal for the first write, stricter after, H-6).
+    { decision 13 (H-6): while a write is blocked, the stream may be polled
+      at most 2 times after the Pending ("wp") call and before the
+      readiness edge; a stream that is polled more is being hot-polled.
       StrictWriteBlock makes those calls Pending without consuming the
       script, so a re-poll without the edge cannot succeed by accident. }
     AssertTrue(Format('at most 2 writes while blocked per wait, max %d (total %d)',
@@ -772,7 +767,7 @@ var
   Chunk: RawByteString;
   I, BodyStart: Integer;
 begin
-  { tests/ready_on_poll_stream.rs: every write first pends (arming a timer)
+  { every write first pends (arming a timer)
     and is accepted on the next poll. Its poll_flush half does not apply:
     TTransport has no flush (a TCP stream has nothing to flush, docs/design.md
     5.4). Same fixture as unbuffered_stream. }
@@ -808,7 +803,7 @@ procedure TTestDispatchRegressions.Body_empty_chunks_ignored;
 var
   Src: TScriptSource;
 begin
-  { dispatch.rs body_empty_chunks_ignored, server form: empty data frames
+  { empty data frames
     are discarded by the dispatcher, they never reach write_body (whose
     debug assertion would fire) and never end the chunked body early }
   Src := TScriptSource.Create(['d:', 'd:x', 'd:', 'd:yz', 'd:']);
@@ -945,7 +940,7 @@ end;
 procedure TTestDispatchBehavior.Request_body_prefetched_before_first_poll;
 begin
   { want = True: poll_read fills the slot with the first chunk before the
-    handler's first poll (chan.rs; docs/design.md 6.2, the prefetch) }
+    handler's first poll (docs/design.md 6.2, the prefetch) }
   FSvc.ReadBody := True;
   FIo.AddRead('POST / HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Content-Length: 5' + CRLF + CRLF + 'abcde')
     .AddReadPending.AddReadEof;
@@ -1080,7 +1075,7 @@ procedure TTestDispatchBehavior.Response_version_panic_aborts;
 var
   Raised: Boolean;
 begin
-  { 2.8: role.rs panics on an HTTP/0.9 response version; the loop aborts
+  { 2.8: an HTTP/0.9 response version is a panic; the loop aborts
     the task (1.10): fd closed, no completion event }
   FSvc.RespVersion := hv09;
   FIo.AddRead(GET_REQ);
@@ -1130,8 +1125,8 @@ var
   U: TRecUpgrade;
 begin
   { upgrades_ignored: the request asked for an upgrade, the response is a
-    200; the pending upgrade stays in State.upgrade (hyper keeps it, risk
-    R5); when the connection finishes, poll_inner returns Upgrade without
+    200; the pending upgrade stays in State.upgrade (risk R5); when the
+    connection finishes, poll_inner returns Upgrade without
     shutdown and Connection::poll calls manual() }
   U := TRecUpgrade.Create;
   try
@@ -1244,7 +1239,7 @@ end;
 procedure TTestDispatchBehavior.Body_framing_error_outcome_io;
 begin
   { a malformed chunk size: the handler sees the body error and answers,
-    and the connection ends with the stored error (hyper: Ok) }
+    and the connection ends with the stored error }
   FSvc.ReadBody := True;
   FSvc.Status := 400;
   FIo.AddRead('POST / HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Transfer-Encoding: chunked' + CRLF + CRLF +
@@ -1301,7 +1296,7 @@ var
 begin
   { the error comes in the same poll as the data: the head and the chunk,
     still in the write buffer, are flushed before the connection fails
-    (hyper never sends them: docs/design/deviations.md) }
+    (docs/design/deviations.md) }
   Src := TScriptSource.Create(['d:abc', 'd:de', 'e']);
   try
     FSvc.Stream := Src;
@@ -1448,8 +1443,8 @@ const
 begin
   { the response's body waits behind a blocked write; the request body is
     drained after it, which makes the connection idle, and the next head is
-    a parse error: the 400 follows the body on the wire (hyper 1.12.0's
-    Queue strategy writes it between the head and the body, S5-3). The
+    a parse error: the 400 follows the body on the wire (deviation S5-3).
+    The
     queued-body form is test_h1_conn's Error_head_queued_behind_body. }
   FIo.Vectored(True);
   FIo.AddRead('POST / HTTP/1.1' + CRLF + 'Host: x' + CRLF + 'Content-Length: 5' + CRLF + CRLF)
@@ -1548,11 +1543,11 @@ var
   U: TRecUpgrade;
   L0: LongInt;
 begin
-  { decision 9: poll_inner takes the pending upgrade (dispatch.rs:151-153)
+  { decision 9: poll_inner takes the pending upgrade
     and then returns the stored error (take_error()?), so Finish does not
     hand it on and DropAll releases the dispatcher's reference. Here the
-    upgrade request gets a 200 (the upgrade stays pending in the state, as
-    in hyper) and the next head is a parse error. }
+    upgrade request gets a 200 (the upgrade stays pending in the state)
+    and the next head is a parse error. }
   L0 := UpgradeSlotsLive;
   U := TRecUpgrade.Create;
   try
@@ -1641,7 +1636,7 @@ end;
 procedure TTestDispatchBehavior.Pipeline_flush_keep_alive_off_pipelined;
 begin
   { keep-alive off, a second request in the same read: the first response
-    is flushed before the shutdown (hyper's poll_shutdown skips it) }
+    is flushed before the shutdown (deviation S6-15) }
   FCfg.PipelineFlush := True;
   FCfg.KeepAlive := False;
   FIo.AddRead(GET_REQ + GET_REQ);
@@ -1659,8 +1654,9 @@ end;
 
 procedure TTestDispatchBehavior.No_pipeline_flush_unchanged_at_end;
 begin
-  { hyper's defaults: the end-of-connection flush is not taken (the normal
-    poll_flush already wrote); the write and shutdown sequence is hyper's }
+  { PipelineFlush off: the end-of-connection flush is not taken (the
+    normal flush already wrote); the write and shutdown sequence is the
+    plain one }
   FCfg.PipelineFlush := False;
   FCfg.KeepAlive := False;
   FIo.AddRead(GET_REQ + GET_REQ);
@@ -2424,8 +2420,9 @@ begin
   Cfg := TestServerConfig;
   Cfg.Loops := 1;
   Cfg.H1.Mode := cmWithUpgrades;
-  { hyper's defaults: with pipeline_flush the 101 stays in the write buffer
-    when the read buffer holds the leftover, and into_inner drops it }
+  { PipelineFlush off: with it on, the 101 would wait in the write buffer
+    while the read buffer holds the leftover (deviation S6-15 flushes it
+    at the hand-off) }
   Cfg.H1.PipelineFlush := False;
   Srv := TServer.Create(Cfg, @App.NewService, Obs);
   try

@@ -19,7 +19,7 @@ uses
 type
   TTestRoleServer = class(TTestCase)
   published
-    { role.rs, server side }
+    { request parsing and response encoding }
     procedure Test_parse_request;
     procedure Test_parse_request_errors;
     procedure Test_parse_reject_request_with_multiple_spaces_in_request_line;
@@ -32,14 +32,14 @@ type
     procedure Test_h1_server_max_header_size;
     procedure Test_is_complete_fast;
     procedure Test_parse_accepts_lf_crlf_terminator;
-    { role.rs client tests ported to the server side }
+    { response-side cases rewritten for a request }
     procedure Test_parse_reject_response_with_spaces_before_colons_request_variant;
     procedure Test_parse_header_htabs_request_variant;
     procedure Test_client_obs_fold_line_request_variant;
-    { tests/server.rs }
+    { end-to-end cases }
     procedure Test_http1_response_with_http2_version;
     procedure Test_http1_trailer_recv_fields;
-    { conn.rs }
+    { a chunked body }
     procedure Test_conn_writes_chunked_body;
   end;
 
@@ -85,7 +85,7 @@ begin
   Result := Copy(S, 1, Length(Prefix)) = Prefix;
 end;
 
-{ ---- role.rs ---- }
+{ ---- request parsing and response encoding ---- }
 
 procedure TTestRoleServer.Test_parse_request;
 var
@@ -95,7 +95,7 @@ var
   P: PByte;
   L: SizeInt;
 begin
-  Raw := 'GET /echo HTTP/1.1'#13#10'Host: hyper.rs'#13#10#13#10;
+  Raw := 'GET /echo HTTP/1.1'#13#10'Host: example.com'#13#10#13#10;
   H := THttpHeaders.Create;
   try
     AssertTrue(ParseStr(Raw, DefaultParseContext, H, Msg) = spsComplete);
@@ -109,7 +109,7 @@ begin
     AssertEquals(0, CompareByte(P^, PAnsiChar('/echo')^, 5));
     AssertTrue(Msg.Version = hv11);
     AssertEquals(1, H.Count);
-    AssertEquals('hyper.rs', H.GetValue('Host'));
+    AssertEquals('example.com', H.GetValue('Host'));
     { ctx.req_method = Some(GET) }
     AssertTrue(Msg.Method = hmGet);
   finally
@@ -124,7 +124,7 @@ var
 begin
   H := THttpHeaders.Create;
   try
-    AssertTrue(ParseStr('GET htt:p// HTTP/1.1'#13#10'Host: hyper.rs'#13#10#13#10,
+    AssertTrue(ParseStr('GET htt:p// HTTP/1.1'#13#10'Host: example.com'#13#10#13#10,
       DefaultParseContext, H, Msg) = spsError);
     { http::Uri rejects it: Parse::Uri -> 400 }
     AssertTrue(Msg.Error = h1peUri);
@@ -137,7 +137,7 @@ end;
 
 const
   REQUEST_WITH_MULTIPLE_SPACES_IN_REQUEST_LINE: RawByteString =
-    'GET  /echo  HTTP/1.1'#13#10'Host: hyper.rs'#13#10#13#10;
+    'GET  /echo  HTTP/1.1'#13#10'Host: example.com'#13#10#13#10;
 
 procedure TTestRoleServer.Test_parse_reject_request_with_multiple_spaces_in_request_line;
 var
@@ -148,7 +148,8 @@ begin
   try
     AssertTrue(ParseStr(REQUEST_WITH_MULTIPLE_SPACES_IN_REQUEST_LINE,
       DefaultParseContext, H, Msg) = spsError);
-    { not asserted by hyper; httparse gives Token after the method -> Uri }
+    { the second space is a Token error after the method: a
+      request-target error }
     AssertTrue(Msg.Error = h1peUri);
     AssertEquals(400, ServerErrorStatus(Msg.Error));
   finally
@@ -165,7 +166,7 @@ begin
     of each occurrence and finds it case-insensitively }
   H := THttpHeaders.Create;
   try
-    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'Host: hyper.rs'#13#10'X-BREAD: baguette'#13#10#13#10,
+    AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'Host: example.com'#13#10'X-BREAD: baguette'#13#10#13#10,
       DefaultParseContext, H, Msg) = spsComplete);
     AssertEquals(1, H.CountOf('host'));
     AssertEquals('Host', H.Name(H.IndexOf('host')));
@@ -306,7 +307,7 @@ begin
   S := EncodeStr(Head, P, Enc, Res);
   AssertTrue(Res = serOk);
   AssertTrue(Enc.IsLast);
-  { not asserted by hyper: no content-length / transfer-encoding }
+  { no content-length / transfer-encoding }
   AssertEquals(0, Pos('content-length', S));
   AssertEquals(0, Pos('transfer-encoding', S));
 end;
@@ -359,7 +360,7 @@ var
     Msg: TParsedRequestHead;
     St: TServerParseStatus;
   begin
-    { server side (the client half of this hyper test is not ported) }
+    { server side only }
     Ctx := DefaultParseContext;
     Ctx.MaxHeaders := MaxHeaders;
     St := ParseStr(GenReqWithHeaders(GenSize), Ctx, H, Msg);
@@ -491,7 +492,7 @@ begin
     AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'Host : x'#13#10#13#10, DefaultParseContext, H, Msg) = spsError);
     AssertTrue(Msg.Error = h1peHeaderToken);
     AssertEquals(400, ServerErrorStatus(Msg.Error));
-    { the same bytes as the hyper test's header line, in a request }
+    { the same header line with a longer name }
     AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'Access-Control-Allow-Credentials : true'#13#10'Host: x'#13#10#13#10,
       DefaultParseContext, H, Msg) = spsError);
     AssertTrue(Msg.Error = h1peHeaderToken);
@@ -521,8 +522,8 @@ var
   H: THttpHeaders;
   Msg: TParsedRequestHead;
 begin
-  { hyper unfolds obs-fold only in responses; in requests httparse rejects
-    it, so the server answers 400 }
+  { obs-fold in a request is refused (RFC 9112 5.2: a server rejects it
+    with 400 or replaces it; this one rejects it) }
   H := THttpHeaders.Create;
   try
     AssertTrue(ParseStr('GET / HTTP/1.1'#13#10'x: obs'#13#10' fold'#13#10#9' line'#13#10'Host: x'#13#10#13#10,
@@ -537,7 +538,7 @@ begin
   end;
 end;
 
-{ ---- tests/server.rs ---- }
+{ ---- end-to-end cases ---- }
 
 procedure TTestRoleServer.Test_http1_response_with_http2_version;
 var
@@ -547,7 +548,7 @@ var
   Res: TServerEncodeResult;
   S: RawByteString;
 begin
-  { the service sets version HTTP/2.0; role.rs:440-443 writes HTTP/1.1 }
+  { the service sets version HTTP/2.0; the encoder writes HTTP/1.1 }
   Head := DefaultResponseHead;
   Head.Version := hv2;
   P := DefaultEncodeParams;
@@ -601,7 +602,7 @@ begin
   end;
 end;
 
-{ ---- conn.rs ---- }
+{ ---- a chunked body ---- }
 
 procedure TTestRoleServer.Test_conn_writes_chunked_body;
 var

@@ -1,13 +1,13 @@
-{ Ports of the backend tests in httparse v1.10.1 src/simd/ (sse42.rs, avx2.rs, neon.rs, swar.rs).
-  Each checks that a scanner stops exactly at the first byte outside its
-  byte class, using httparse's byte_is_allowed harness (a run of '_' with
-  the probe byte at index 10 of 16, or 26 of 32 for AVX2).
+{ The byte-class scanners of bearings.http1.parser: each must stop exactly
+  at the first byte outside its class, probed with a run of '_' and the
+  byte under test at index 10 of 16, or 26 of 32 (the widths of a NEON or
+  SSE4.2 block and of an AVX2 block). First written as ports of the
+  backend tests of httparse v1.10.1 src/simd/.
 
   bearings.http1.parser has only scalar scanners today, so these tests run the
   scalar ScanUri / ScanHeaderValue / ScanHeaderName.  They are the
-  acceptance tests for a future SSE4.2/AVX2 replacement.  As an extra
-  check (not in httparse), each byte class is also compared with its
-  definition written out in the test. }
+  acceptance tests for a future SSE4.2/AVX2 replacement.  Each byte class
+  is also compared with its definition written out in the test. }
 unit test_parser_simd;
 
 {$mode objfpc}{$H+}
@@ -21,7 +21,7 @@ type
   TScanFunc = function(P: PByte; Len: SizeInt): SizeInt;
   TClassFunc = function(B: Byte): Boolean;
 
-  TTestHttparseSimd = class(TTestCase)
+  TTestParserByteClasses = class(TTestCase)
   private
     function ByteIsAllowed(B: Byte; F: TScanFunc; Width, At: Integer): Boolean;
     procedure CheckTable(F: TScanFunc; Spec: TClassFunc; Width, At: Integer;
@@ -39,8 +39,8 @@ type
 
 implementation
 
-{ Byte classes as written in httparse lib.rs (URI_MAP, HEADER_VALUE_MAP,
-  TOKEN_MAP), spelled out independently of bearings.http1.parser. }
+{ The byte classes (request-target, field value, token), spelled out
+  independently of bearings.http1.parser. }
 function SpecUri(B: Byte): Boolean;
 begin
   Result := ((B >= $21) and (B <= $7E)) or (B >= $80);
@@ -57,7 +57,7 @@ begin
     (Pos(Chr(B), '!#$%&''*+-.^_`|~') > 0);
 end;
 
-function TTestHttparseSimd.ByteIsAllowed(B: Byte; F: TScanFunc;
+function TTestParserByteClasses.ByteIsAllowed(B: Byte; F: TScanFunc;
   Width, At: Integer): Boolean;
 var
   Slice: array[0..31] of Byte;
@@ -77,7 +77,7 @@ begin
   end;
 end;
 
-procedure TTestHttparseSimd.CheckTable(F: TScanFunc; Spec: TClassFunc;
+procedure TTestParserByteClasses.CheckTable(F: TScanFunc; Spec: TClassFunc;
   Width, At: Integer; const What: string);
 var
   B: Integer;
@@ -89,58 +89,58 @@ begin
       ByteIsAllowed(B, F, Width, At));
 end;
 
-procedure TTestHttparseSimd.Test_sse_code_matches_uri_chars_table;
+procedure TTestParserByteClasses.Test_sse_code_matches_uri_chars_table;
 var
   B: Integer;
 begin
   for B := 0 to 255 do
     AssertEquals(Format('IsUriChar(%d)', [B]), SpecUri(B), IsUriChar(B));
-  CheckTable(@ScanUri, @SpecUri, 16, 10, 'URI_MAP');
+  CheckTable(@ScanUri, @SpecUri, 16, 10, 'request-target bytes');
 end;
 
-procedure TTestHttparseSimd.Test_sse_code_matches_header_value_chars_table;
+procedure TTestParserByteClasses.Test_sse_code_matches_header_value_chars_table;
 var
   B: Integer;
 begin
   for B := 0 to 255 do
     AssertEquals(Format('IsHeaderValueChar(%d)', [B]), SpecHeaderValue(B),
       IsHeaderValueChar(B));
-  CheckTable(@ScanHeaderValue, @SpecHeaderValue, 16, 10, 'HEADER_VALUE_MAP');
+  CheckTable(@ScanHeaderValue, @SpecHeaderValue, 16, 10, 'field-value bytes');
 end;
 
-procedure TTestHttparseSimd.Test_avx2_code_matches_uri_chars_table;
+procedure TTestParserByteClasses.Test_avx2_code_matches_uri_chars_table;
 begin
-  CheckTable(@ScanUri, @SpecUri, 32, 26, 'URI_MAP');
+  CheckTable(@ScanUri, @SpecUri, 32, 26, 'request-target bytes');
 end;
 
-procedure TTestHttparseSimd.Test_avx2_code_matches_header_value_chars_table;
+procedure TTestParserByteClasses.Test_avx2_code_matches_header_value_chars_table;
 begin
-  CheckTable(@ScanHeaderValue, @SpecHeaderValue, 32, 26, 'HEADER_VALUE_MAP');
+  CheckTable(@ScanHeaderValue, @SpecHeaderValue, 32, 26, 'field-value bytes');
 end;
 
-procedure TTestHttparseSimd.Test_neon_code_matches_uri_chars_table;
+procedure TTestParserByteClasses.Test_neon_code_matches_uri_chars_table;
 begin
-  CheckTable(@ScanUri, @SpecUri, 16, 10, 'URI_MAP');
+  CheckTable(@ScanUri, @SpecUri, 16, 10, 'request-target bytes');
 end;
 
-procedure TTestHttparseSimd.Test_neon_code_matches_header_value_chars_table;
+procedure TTestParserByteClasses.Test_neon_code_matches_header_value_chars_table;
 begin
-  CheckTable(@ScanHeaderValue, @SpecHeaderValue, 16, 10, 'HEADER_VALUE_MAP');
+  CheckTable(@ScanHeaderValue, @SpecHeaderValue, 16, 10, 'field-value bytes');
 end;
 
-procedure TTestHttparseSimd.Test_neon_code_matches_header_name_chars_table;
+procedure TTestParserByteClasses.Test_neon_code_matches_header_name_chars_table;
 var
   B: Integer;
 begin
   for B := 0 to 255 do
     AssertEquals(Format('IsTokenChar(%d)', [B]), SpecToken(B), IsTokenChar(B));
-  CheckTable(@ScanHeaderName, @SpecToken, 16, 10, 'TOKEN_MAP');
-  CheckTable(@ScanToken, @SpecToken, 16, 10, 'TOKEN_MAP (ScanToken)');
+  CheckTable(@ScanHeaderName, @SpecToken, 16, 10, 'token bytes');
+  CheckTable(@ScanToken, @SpecToken, 16, 10, 'token bytes (ScanToken)');
 end;
 
-{ swar.rs test_is_uri_block: a block of 8 equal bytes is fully accepted
+{ A block of 8 equal bytes is fully accepted as request-target bytes
   exactly for 33..126 and 128..255. }
-procedure TTestHttparseSimd.Test_is_uri_block;
+procedure TTestParserByteClasses.Test_is_uri_block;
 var
   Block: array[0..7] of Byte;
   B: Integer;
@@ -154,5 +154,5 @@ begin
 end;
 
 initialization
-  RegisterTest(TTestHttparseSimd);
+  RegisterTest(TTestParserByteClasses);
 end.

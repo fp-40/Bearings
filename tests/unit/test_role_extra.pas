@@ -1,6 +1,6 @@
 { Extra tests of bearings.http1.role and bearings.http.uri. Each expected
   value is fixed (first derived from hyper's role.rs / http 1.5.0 on
-  2026-11-04); tests/unit/test_golden.sh checks the parse rules over a
+  2026-11-04); tests/test_golden.py checks the parse rules over a
   larger set of frozen cases.
   Test_wd_bench_* check the byte length of an encoded response head with
   no headers and with a preset header list. }
@@ -473,11 +473,11 @@ var
   Enc: TEncoder;
   Res: TServerEncodeResult;
 begin
-  { hyper sets must_write_chunked for a Transfer-Encoding not ending in
-    chunked and never clears it, so the next special header group
-    (connection, trailer, a second content-length group) also gets
-    ', chunked'. Reproduced on purpose (hyper's output, checked by the
-    role encode differential before step T1). }
+  { A Transfer-Encoding not ending in chunked sets the encoder's
+    must-write-chunked mark, which is never cleared, so the next special
+    header group (connection, trailer, a second content-length group)
+    also gets ', chunked'. Inherited behaviour, kept as the expected
+    value until it is decided otherwise. }
   H := THttpHeaders.Create;
   try
     H.Add('transfer-encoding', 'gzip');

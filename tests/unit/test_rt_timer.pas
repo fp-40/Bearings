@@ -1,7 +1,7 @@
 { M3 step S1 tests for bearings.rt.timer (docs/design.md section 4):
-  - tokio's tick rounding (TimeSource::deadline_to_tick / instant_to_tick)
-    and the wheel's level_for / slot_for tables (tokio's own unit tests,
-    ported);
+  - the tick rounding (a deadline rounds up to the next millisecond, the
+    current time rounds down) and the wheel's level and slot tables
+    (first ported from tokio's unit tests);
   - arm / lazy re-arm / lazy cancel / remove / fire-in-proc semantics;
   - a randomized comparison against a sorted-list reference: random arm,
     re-arm, cancel, remove and advance (small steps and large jumps over
@@ -21,9 +21,9 @@ uses
 type
   TTestTimer = class(TTestCase)
   published
-    procedure Tick_rounding_matches_tokio;
-    procedure Level_for_matches_tokio_tests;
-    procedure Slot_for_matches_tokio_tests;
+    procedure Tick_rounding;
+    procedure Level_for_table;
+    procedure Slot_for_table;
     procedure Fires_at_deadline_not_before;
     procedure Lazy_rearm_later_keeps_filing;
     procedure Rearm_earlier_refiles;
@@ -100,10 +100,10 @@ end;
 
 { ---- tables ---- }
 
-procedure TTestTimer.Tick_rounding_matches_tokio;
+procedure TTestTimer.Tick_rounding;
 const
-  { (ns, deadline_to_tick, instant_to_tick) with start_time = 0:
-    deadline_to_tick(t) = (t + 999_999 ns).as_millis(); instant_to_tick(t) = t.as_millis() }
+  { (ns, DeadlineToTick, InstantToTick) with start time 0:
+    DeadlineToTick(t) = (t + 999_999 ns) in ms; InstantToTick(t) = t in ms }
   Tab: array[0..9, 0..2] of Int64 = (
     (0, 0, 0),
     (1, 1, 0),
@@ -125,8 +125,8 @@ begin
   end;
 end;
 
-{ wheel/mod.rs test_level_for }
-procedure TTestTimer.Level_for_matches_tokio_tests;
+{ the level of a deadline, by its distance from the elapsed time }
+procedure TTestTimer.Level_for_table;
 var
   Pos, Level: Integer;
   A: Int64;
@@ -145,8 +145,8 @@ begin
     end;
 end;
 
-{ level.rs test_slot_for, through the filing of an entry }
-procedure TTestTimer.Slot_for_matches_tokio_tests;
+{ the slot of a deadline at each level, through the filing of an entry }
+procedure TTestTimer.Slot_for_table;
 var
   Pos, Level: Integer;
   A: Int64;
@@ -263,7 +263,7 @@ begin
   AssertEquals('no sleep', 0, W.NextTimeoutMs(1000 * 1000000));
   AdvanceTo(1000);
   AssertEquals(1, Owners[7].FireCount);
-  W.Arm(@Timers[7], 1000);   { = elapsed: fires too (tokio: when <= elapsed) }
+  W.Arm(@Timers[7], 1000);   { = elapsed: fires too (a deadline not after elapsed fires) }
   AdvanceTo(1000);
   AssertEquals(2, Owners[7].FireCount);
 end;
