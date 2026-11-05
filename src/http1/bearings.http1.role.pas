@@ -969,14 +969,18 @@ var
   EncKind: TEncoderKind;
   EncLen: QWord;
 
-  { ends the joined line of the previous name, adding ", chunked" when
-    the application's Transfer-Encoding did not end with chunked }
+  { ends the joined line of the previous name; a Transfer-Encoding line
+    whose last coding is not chunked gets ", chunked" first (and only that
+    line: the mark is cleared once it is written) }
   procedure HandleIsNameWritten;
   begin
     if IsNameWritten then
     begin
       if MustWriteChunked then
-        Put(D, @CRLF_CHUNKED[0], Length(CRLF_CHUNKED))
+      begin
+        Put(D, @CRLF_CHUNKED[0], Length(CRLF_CHUNKED));
+        MustWriteChunked := False;
+      end
       else
         PutCrLf(D);
     end;

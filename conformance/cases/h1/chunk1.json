@@ -164,7 +164,7 @@
     {
       "name": "response_body_lengths::te_response_adds_chunked",
       "source": "tests/server.rs:248",
-      "notes": "run_test (tests/server.rs:94-178), see fixed_response_known and chunked_response_known. Reply: transfer-encoding: gzip header (body not actually gzipped), Unknown body 'foo bar baz'. The server must add chunked as the final transfer coding (hyper writes 'transfer-encoding: gzip, chunked'; only the substrings below are asserted). Asserts: CRLFCRLF present; head has 'transfer-encoding:' and 'chunked\\r\\n', no 'content-length:'; chunked body layout as in chunked_response_known. not_contains check adds ci:true (port decision). Observed on the reference (not asserted by hyper): the head is 'transfer-encoding: gzip, chunked\\r\\nconnection: close, chunked\\r\\n': role.rs encode_headers never resets must_write_chunked, so the next multi-valued field written by the same code path (here the connection: close hyper adds for the request's Connection: close) also gets ', chunked' appended. Diff mode compares these bytes.",
+      "notes": "See fixed_response_known and chunked_response_known. Reply: a transfer-encoding: gzip header (the body is not gzipped), a body of unknown length 'foo bar baz'. The server adds chunked as the final transfer coding: 'transfer-encoding: gzip, chunked'; only the substrings below are asserted. Asserts: CRLFCRLF present; the head has 'transfer-encoding:' and 'chunked\\r\\n', no 'content-length:'; the chunked body layout as in chunked_response_known. The connection: close line that answers the request's Connection: close is written as is (before 2026-11-04 it got ', chunked' appended too).",
       "server": {
         "handler": "test_service",
         "replies": [

@@ -29,7 +29,7 @@ type
     procedure Test_wd_encode_head_204_304;
     procedure Test_wd_encode_user_transfer_encoding;
     procedure Test_wd_encode_header_grouping;
-    procedure Test_wd_encode_must_write_chunked_quirk;
+    procedure Test_wd_encode_chunked_added_to_transfer_encoding_only;
     procedure Test_wd_encode_user_header_errors;
     procedure Test_wd_encode_unsupported_1xx;
     procedure Test_wd_encode_status_line;
@@ -467,23 +467,24 @@ begin
   end;
 end;
 
-procedure TTestRoleExtra.Test_wd_encode_must_write_chunked_quirk;
+procedure TTestRoleExtra.Test_wd_encode_chunked_added_to_transfer_encoding_only;
 var
   H: THttpHeaders;
   Enc: TEncoder;
   Res: TServerEncodeResult;
 begin
-  { A Transfer-Encoding not ending in chunked sets the encoder's
-    must-write-chunked mark, which is never cleared, so the next special
-    header group (connection, trailer, a second content-length group)
-    also gets ', chunked'. Inherited behaviour, kept as the expected
-    value until it is decided otherwise. }
+  { A Transfer-Encoding whose last coding is not chunked gets ', chunked'
+    (RFC 9112 6.1: chunked is the final coding of a response with an
+    unknown length). The header lines after it are written as given:
+    before 2026-11-04 the mark was never cleared and the next joined line
+    (here connection) got ', chunked' too. }
   H := THttpHeaders.Create;
   try
     H.Add('transfer-encoding', 'gzip');
     H.Add('connection', 'close');
-    AssertEquals('HTTP/1.1 200 OK'#13#10'transfer-encoding: gzip, chunked'#13#10'connection: close, chunked'#13#10 +
-      DateLine + CRLF, Enc1(200, Params(blkUnknown, 0, hmGet), H, Enc, Res));
+    H.Add('trailer', 'x-sum');
+    AssertEquals('HTTP/1.1 200 OK'#13#10'transfer-encoding: gzip, chunked'#13#10'connection: close'#13#10 +
+      'trailer: x-sum'#13#10 + DateLine + CRLF, Enc1(200, Params(blkUnknown, 0, hmGet), H, Enc, Res));
     AssertTrue(Enc.IsLast);
   finally
     H.Free;
