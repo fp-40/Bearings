@@ -40,9 +40,18 @@ class EventLog:
         with self.cond:
             return list(self.events)
 
-    def wait_change(self, timeout_ms: int) -> None:
+    def wait_for(self, deadline_us: int, found):
+        """Calls found(events) until it is true or the deadline has passed,
+        and returns its last result. The log stays locked from the check to
+        the wait, so an event added right after a check that found nothing
+        still ends the wait (the reader cannot add it in between)."""
         with self.cond:
-            self.cond.wait(max(timeout_ms, 1) / 1000)
+            while True:
+                r = found(self.events)
+                left_us = deadline_us - now_us()
+                if r or left_us <= 0:
+                    return r
+                self.cond.wait(left_us / 1_000_000)
 
 
 class ServerProc:

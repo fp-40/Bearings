@@ -367,13 +367,9 @@ class Exec:
         raise CaseError(f"unknown op {op}")
 
     def wait_event(self, deadline: int, found):
-        """Polls the event log until found(events) is true or the deadline."""
-        while True:
-            with self.server.events.cond:
-                r = found(self.server.events.events)
-            if r or now_us() >= deadline:
-                return r
-            self.server.events.wait_change((deadline - now_us()) // 1000 + 1)
+        """Waits until found(events) is true for the event log, or the
+        deadline."""
+        return self.server.events.wait_for(deadline, found)
 
     def run_step(self, i: int, s: dict) -> None:
         op = get_str(s, "op")

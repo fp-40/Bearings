@@ -1,10 +1,14 @@
 """The runner's own checks: JSON strings as byte strings, latin-1, ${var},
-the date normalization, the UTF-8 check and the assertion errors."""
+the date normalization, the UTF-8 check, the assertion errors and the wait
+on the event log."""
 
 import json
+import threading
 
 from .assertions import CANONICAL_DATE, Capture, check, json_equal, normalize
 from .bytestr import CaseError, decode_bytes, is_valid_utf8, json_text, latin1
+from .conn import now_us
+from .server import EventLog
 
 DATE = b"Wed, 04 Nov 2026 19:22:45 GMT"
 
@@ -122,6 +126,30 @@ def selftest() -> int:
         check_fails('{"starts_with": "ab"}', b"a")
         and check_fails('{"ends_with": "b", "x": 1}', b"b"),
         "starts_with, unknown key",
+    )
+    # the event log: an event added right after a check that found nothing
+    # ends the wait (the adder starts inside that check and gets the lock
+    # only when the wait gives it up)
+    log = EventLog()
+    adder = threading.Thread(target=log.add, args=({"event": "x"},))
+    checks = []
+
+    def found(events):
+        checks.append(len(events))
+        if len(checks) == 1:
+            adder.start()
+        return len(events) > 0
+
+    started = now_us()
+    ok = log.wait_for(started + 5_000_000, found)
+    adder.join()
+    expect(ok and checks == [0, 1], "event log: the added event ends the wait")
+    expect(now_us() - started < 1_000_000, "event log: no wait until the deadline")
+    started = now_us()
+    expect(
+        not EventLog().wait_for(started + 50_000, lambda events: len(events) > 0)
+        and now_us() - started >= 50_000,
+        "event log: nothing found at the deadline",
     )
     for f in failures:
         print("selftest FAIL:", f)
