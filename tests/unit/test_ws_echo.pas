@@ -8,8 +8,11 @@
   service, the subprotocol header, 16 clients on 2 loops at once, a client
   that floods without reading (backpressure; every echo arrives in order),
   a producer that sends from OnWritable to a client that only reads,
-  and a client that disconnects in the middle of a frame (the connection
-  object is freed). TTestWsWorker covers the handler on the worker pool
+  a client that disconnects in the middle of a frame (the connection
+  object is freed), a graceful server stop, a stop that reaches its
+  deadline, and a stop that reaches the loop after the socket was handed
+  over and before the handler got it (path /stop: nothing is left behind).
+  TTestWsWorker covers the handler on the worker pool
   (TWsWorkerHandler, path /worker): echo in order from a worker thread,
   the receive mark (reading pauses and resumes), an exception (1011),
   PostClose, 16 clients on 2 loops, and a server stop while a handler is
@@ -188,6 +191,7 @@ type
     procedure Disconnect_mid_frame_frees_the_connection;
     procedure Server_stop_closes_websockets;
     procedure Server_stop_aborts_at_the_deadline;
+    procedure Server_stop_before_the_upgrade_is_delivered;
     procedure Origin_refused_with_403;
     procedure Broadcast_to_a_room_on_two_loops;
   end;
@@ -622,6 +626,13 @@ begin
       AcceptWebSocket(Ex, R, TTopicHandler.Create, WsCfg)
     else if R.Ok and PathIs(Ex, '/topics-worker') then
       AcceptWebSocket(Ex, R, TTopicWorker.Create, ServerForPool.Workers, WsCfg)
+    else if R.Ok and PathIs(Ex, '/stop') then
+    begin
+      { the stop message is in the loop's inbox when the dispatcher hands
+        the socket over: the inbox runs before the upgrade is delivered }
+      AcceptWebSocket(Ex, R, TEchoHandler.Create, WsCfg);
+      ServerForPool.Stop(1000);
+    end
     else if R.Ok then
       AcceptWebSocket(Ex, R, TEchoHandler.Create, WsCfg)
     else
@@ -1152,6 +1163,30 @@ begin
   end;
   FreeAndNil(Srv);
   AssertEquals('every TWebSocket freed', Live0, WebSocketsLive);
+end;
+
+procedure TTestWsEcho.Server_stop_before_the_upgrade_is_delivered;
+var
+  C: TClient;
+  H: RawByteString;
+begin
+  { The stop reaches the loop between the hand-off of the socket and the
+    delivery of the upgraded stream to its handler (/stop: TEchoCall.Poll).
+    The stream is closed by the stop; the handler never gets it, and
+    neither a TWebSocket nor its handler is left behind (the heaptrc run
+    checks the handler). }
+  StartServer(1);
+  C := TClient.Connect(Srv.Port);
+  try
+    H := C.Handshake('', '', '/stop');
+    AssertTrue(H, Pos('HTTP/1.1 101 ', H) = 1);
+    AssertTrue('the socket was closed, without a frame', C.AtEof);
+    Srv.Wait;
+  finally
+    C.Free;
+  end;
+  FreeAndNil(Srv);
+  AssertEquals('no TWebSocket left', Live0, WebSocketsLive);
 end;
 
 procedure TTestWsEcho.Origin_refused_with_403;

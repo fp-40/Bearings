@@ -182,7 +182,12 @@ and the exception goes on to the loop. When no upgrade happens,
 `H.UpgradeFailed(Msg)` runs on the loop thread instead: `no upgrade
 available` at once when the request has no upgrade slot, `upgrade expected
 but low level API in use` in a mode that does not hand upgrades over (5.8),
-`upgrade not completed` when the connection ended first. The
+`upgrade not completed` when the connection ended first, or when a stop
+of the server reached the loop after the socket was handed over and before
+`Upgraded` ran: the stream is in the server's list from the hand-off on,
+the stop closes it, and the handler must not get a closed stream (a
+`TWebSocket` built on one would never be finished or freed). The 101 has
+been sent by then; the client sees the connection close. The
 listener's `Shutdown(U)` is called by a graceful stop (default: `U.Close`)
 and `Aborted(U)` by `U.Abort` at the stop deadline, before the socket is
 closed (5.9). An upgraded connection keeps its connection-limit slot until

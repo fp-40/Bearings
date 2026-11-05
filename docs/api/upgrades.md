@@ -19,7 +19,8 @@ What happens next depends on `TH1Config.Mode`:
 - `cmPlain`: upgrades are not handed over; `H.UpgradeFailed(Msg)` is
   called and the connection ends.
 
-If the upgrade does not happen (no 101, the connection failed),
+If the upgrade does not happen (no 101, the connection failed, or the
+server was stopped after the 101 and before `Upgraded` ran),
 `UpgradeFailed` is called instead of `Upgraded`. `OnUpgrade` on a request
 that did not ask for an upgrade calls `UpgradeFailed('no upgrade
 available')` at once. The default `UpgradeFailed` does nothing.

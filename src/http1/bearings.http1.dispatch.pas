@@ -20,6 +20,9 @@
                       bearings.server for graceful shutdown and stop.
     TUpgradeDelivery  a task that hands an upgraded connection to its
                       handler after the connection-close event was reported.
+    TUndelivered      the listener of the upgraded stream until that task
+                      runs: a server stop in between closes the stream, and
+                      the handler then gets UpgradeFailed, not the stream.
     TConnHooks        the server layer's per-connection and per-request
                       hooks (connection limit, metrics, access log):
                       RequestStarted when a head was read, RequestDone when
@@ -278,12 +281,28 @@ type
     property NextConn: TH1Dispatcher read FNextConn;      { the loop's connection list }
   end;
 
+  { The listener of an upgraded stream between its hand-off (Finish) and its delivery
+    (TUpgradeDelivery.Run). The stream is in the server's list from the hand-off on, so a
+    stop that reaches the loop in between closes it: the graceful pass through Shutdown,
+    the deadline through Abort. The slot's pointer is cleared then. The delivery sees it and
+    fails the upgrade instead of handing a closed stream to the handler, which would build
+    on it something that nothing ends (a TWebSocket would never be finished or freed); and
+    nothing uses the stream after the loop freed its task, at the end of that iteration. }
+  TUndelivered = class(TRawListener)
+  public
+    Slot: TUpgradeSlot;
+    procedure Shutdown(U: TUpgraded); override;
+    procedure Aborted(U: TUpgraded); override;
+  end;
+
   { Delivers a fulfilled upgrade (the connection switched to another protocol) to the
     upgrade handler. Finish queues it, so it runs after the connection's completion was
     reported: an observer sees the connection close before the upgraded connection starts. }
   TUpgradeDelivery = class(TLoopTask)
   public
     Slot: TUpgradeSlot;
+    Waiting: TUndelivered;           { the stream's listener until Run or Abort }
+    destructor Destroy; override;
     procedure Run; override;
     procedure Abort; override;
   end;
@@ -335,7 +354,28 @@ begin
   end;
 end;
 
+{ TUndelivered }
+
+procedure TUndelivered.Shutdown(U: TUpgraded);
+begin
+  { no protocol to end yet: the stream closes, as one without a listener does }
+  Slot.Upgraded := nil;
+  U.Close;
+end;
+
+procedure TUndelivered.Aborted(U: TUpgraded);
+begin
+  Slot.Upgraded := nil;              { U closes itself after this returns }
+end;
+
 { TUpgradeDelivery }
+
+destructor TUpgradeDelivery.Destroy;
+begin
+  { the stream no longer points at it: Run detached it, or the stream closed }
+  Waiting.Free;
+  inherited Destroy;
+end;
 
 procedure TUpgradeDelivery.Run;
 var
@@ -349,7 +389,13 @@ begin
   S := Slot;
   if S <> nil then
   begin
-    S.Deliver;
+    if S.Upgraded = nil then
+      S.Cancel                       { a server stop closed the stream first (TUndelivered) }
+    else
+    begin
+      S.Upgraded.Attach(nil);        { the handler attaches its own listener }
+      S.Deliver;
+    end;
     Slot := nil;
     S.Release;                 { the connection side's reference }
   end;
@@ -1386,6 +1432,10 @@ begin
       Delivery := TUpgradeDelivery.Create;
       Delivery.Loop := Loop;
       Delivery.Slot := Slot;
+      { until the delivery runs, a stop of the server may close the stream }
+      Delivery.Waiting := TUndelivered.Create;
+      Delivery.Waiting.Slot := Slot;
+      U.Attach(Delivery.Waiting);
     end
     else
     begin
