@@ -8,8 +8,11 @@ from harness import ROOT, TARGET
 
 
 def pytest_addoption(parser):
-    parser.addoption("--fpc-suite", default=None,
-                     help="run only this fpcunit suite class or Class.Method")
+    parser.addoption(
+        "--fpc-suite",
+        default=None,
+        help="run only this fpcunit suite class or Class.Method",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -21,7 +24,9 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.fast)
             item.add_marker(pytest.mark.python)
         if TARGET != "x86_64" and item.get_closest_marker("hostonly"):
-            item.add_marker(pytest.mark.skip(reason=f"host-only step (TARGET={TARGET})"))
+            item.add_marker(
+                pytest.mark.skip(reason=f"host-only step (TARGET={TARGET})")
+            )
 
 
 @pytest.fixture

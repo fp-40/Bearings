@@ -17,10 +17,10 @@ class Parsed:
     version: bytes = b""
     status: int = 0
     reason: bytes = b""
-    headers: list = field(default_factory=list)   # [(name, value)]
+    headers: list = field(default_factory=list)  # [(name, value)]
     body: bytes = b""
     trailers: list = field(default_factory=list)
-    framing: str = "none"                         # none | content-length | chunked | close
+    framing: str = "none"  # none | content-length | chunked | close
     raw: bytes = b""
 
 

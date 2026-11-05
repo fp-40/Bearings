@@ -33,6 +33,7 @@ def crun():
     """The case runner (conformance/runner/crun), imported when first needed."""
     sys.path.insert(0, str(ROOT / "conformance/runner"))
     import crun
+
     return crun
 
 
@@ -46,7 +47,18 @@ JOBS = int(os.environ.get("JOBS", "4"))
 LOOPS = os.environ.get("LOOPS")
 PROFILE = os.environ.get("PROFILE", "debug")
 PROFILE_FLAGS = {
-    "debug": ["-Mobjfpc", "-Sh", "-O2", "-gl", "-Ci", "-Cr", "-Co", "-Ct", "-Sa", "-dWD_DEBUG"],
+    "debug": [
+        "-Mobjfpc",
+        "-Sh",
+        "-O2",
+        "-gl",
+        "-Ci",
+        "-Cr",
+        "-Co",
+        "-Ct",
+        "-Sa",
+        "-dWD_DEBUG",
+    ],
     "release": ["-Mobjfpc", "-Sh", "-O2", "-gl"],
 }
 CASES = CONF / "cases/h1"
@@ -60,15 +72,25 @@ WANT_PROBE = (0, 2, 0, 2)
 @pytest.fixture(scope="module")
 def beconf() -> str:
     """The conformance server command (built once per module)."""
-    binary = fpc_build(PS / "beconf.lpr", OUT, OUT / f"units-{PROFILE}", PROFILE_FLAGS[PROFILE],
-                       extra_units=["conformance/pascal-server"], fpc=HOST_FPC,
-                       output=OUT / "beconf")
+    binary = fpc_build(
+        PS / "beconf.lpr",
+        OUT,
+        OUT / f"units-{PROFILE}",
+        PROFILE_FLAGS[PROFILE],
+        extra_units=["conformance/pascal-server"],
+        fpc=HOST_FPC,
+        output=OUT / "beconf",
+    )
     return shlex.quote(str(binary))
 
 
 def counts(results):
-    return (sum(r.status == "PASS" for r in results), sum(r.status == "FAIL" for r in results),
-            sum(r.status == "PEND" for r in results), len(results))
+    return (
+        sum(r.status == "PASS" for r in results),
+        sum(r.status == "FAIL" for r in results),
+        sum(r.status == "PEND" for r in results),
+        len(results),
+    )
 
 
 def run_gate(subtests, server: str, paths, log: Path, want, allowed_failures=()):
@@ -79,7 +101,9 @@ def run_gate(subtests, server: str, paths, log: Path, want, allowed_failures=())
     cases = runner.load_cases([str(p) for p in paths])
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "w") as f:
-        results = runner.run_cases(cases, server, jobs=JOBS, report=lambda r: print(r.text, file=f))
+        results = runner.run_cases(
+            cases, server, jobs=JOBS, report=lambda r: print(r.text, file=f)
+        )
         print(runner.summary_line(results), file=f)
     used = []
     for r in results:
@@ -92,8 +116,10 @@ def run_gate(subtests, server: str, paths, log: Path, want, allowed_failures=())
     passed, failed, pending, total = counts(results)
     got = (passed + len(used), failed - len(used), pending, total)
     note = f" (only listed exception cases fail: {' '.join(used)})" if used else ""
-    assert got == want, f"{runner.summary_line(results)} (see {log}); expected " \
+    assert got == want, (
+        f"{runner.summary_line(results)} (see {log}); expected "
         f"passed={want[0]} failed={want[1]} pending={want[2]} total={want[3]}{note}"
+    )
     print(f"{runner.summary_line(results)}{note}")
 
 
@@ -121,13 +147,24 @@ def test_inline_extra(beconf, subtests):
 
 @pytest.mark.parametrize("run", range(1, RUNS + 1), ids=lambda n: f"run{n}")
 def test_worker_cases(beconf, run, subtests):
-    run_gate(subtests, f"{beconf} --executor worker", [CASES], OUT / "gate-worker" / f"run-{run}.log",
-             WANT_CASES, allowed_failures=listed_exceptions())
+    run_gate(
+        subtests,
+        f"{beconf} --executor worker",
+        [CASES],
+        OUT / "gate-worker" / f"run-{run}.log",
+        WANT_CASES,
+        allowed_failures=listed_exceptions(),
+    )
 
 
 def test_worker_extra(beconf, subtests):
-    run_gate(subtests, f"{beconf} --executor worker", [EXTRA], OUT / "gate-worker" / "extra.log",
-             WANT_EXTRA)
+    run_gate(
+        subtests,
+        f"{beconf} --executor worker",
+        [EXTRA],
+        OUT / "gate-worker" / "extra.log",
+        WANT_EXTRA,
+    )
 
 
 def test_worker_probe(beconf):
@@ -138,8 +175,13 @@ def test_worker_probe(beconf):
     log = OUT / "gate-worker" / "probe-wd.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "w") as f:
-        results = runner.run_cases(cases, f"{beconf} --executor worker", jobs=JOBS,
-                                   report=lambda r: print(r.text, file=f))
+        results = runner.run_cases(
+            cases,
+            f"{beconf} --executor worker",
+            jobs=JOBS,
+            report=lambda r: print(r.text, file=f),
+        )
         print(runner.summary_line(results), file=f)
-    assert counts(results) == WANT_PROBE, \
+    assert counts(results) == WANT_PROBE, (
         f"{runner.summary_line(results)} (see {log}); expected both to fail"
+    )

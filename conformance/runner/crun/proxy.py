@@ -171,7 +171,13 @@ def proxy_one(client: Sock, server_port: int) -> bool:
     chunked = is_chunked(req_fields)
     body = read_body(client, req_fields, False)
 
-    out = [method + b" http://127.0.0.1:" + str(server_port).encode() + target_path(target) + b" HTTP/1.1\r\n"]
+    out = [
+        method
+        + b" http://127.0.0.1:"
+        + str(server_port).encode()
+        + target_path(target)
+        + b" HTTP/1.1\r\n"
+    ]
     for n, v in req_fields:
         out.append(n.lower() + b": " + v + b"\r\n")
     out.append(b"\r\n")
@@ -245,7 +251,7 @@ class Proxy:
             try:
                 while not self.stop and proxy_one(client, self.server_port):
                     pass
-            except Exception as e:   # noqa: BLE001 - reported, the proxy goes on
+            except Exception as e:  # noqa: BLE001 - reported, the proxy goes on
                 print(f"runner proxy: {e}", file=sys.stderr)
             fd.close()
 

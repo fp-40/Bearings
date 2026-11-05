@@ -1,4 +1,5 @@
 """WebSockets: the events of each connection, handed to a `WebSocketHandler`."""
+
 import sys
 import traceback
 import typing as t

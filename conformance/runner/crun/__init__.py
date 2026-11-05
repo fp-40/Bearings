@@ -25,26 +25,28 @@ class CaseFileError(Exception):
 
 @dataclass
 class LoadedCase:
-    id: str                 # "<file stem>::<name>"
+    id: str  # "<file stem>::<name>"
     file: str
     case: dict
-    invalid: str | None     # why the case is invalid, or None
-    pending: str | None     # the pending reason, or None
+    invalid: str | None  # why the case is invalid, or None
+    pending: str | None  # the pending reason, or None
 
 
 @dataclass
 class CaseResult:
     id: str
-    status: str             # PASS | FAIL | PEND
+    status: str  # PASS | FAIL | PEND
     ms: int
-    text: str               # the lines the CLI prints for this case, joined with "\n"
+    text: str  # the lines the CLI prints for this case, joined with "\n"
     reason: str | None = None
 
 
 def collect_files(path: str, out: list) -> None:
     """Directories are searched recursively for *.json, in sorted order."""
     if os.path.isdir(path):
-        for name in sorted(os.listdir(path), key=lambda n: n.encode("utf-8", "surrogateescape")):
+        for name in sorted(
+            os.listdir(path), key=lambda n: n.encode("utf-8", "surrogateescape")
+        ):
             full = os.path.join(path, name)
             if os.path.isdir(full) or full.endswith(".json"):
                 collect_files(full, out)
@@ -91,14 +93,20 @@ def load_cases(paths, filters=()) -> list:
 
 def run_one(lc: LoadedCase, server: str, verbose: bool) -> CaseResult:
     if lc.invalid is not None:
-        return CaseResult(lc.id, "FAIL", 0, f"FAIL {lc.id} (invalid case)\n    {lc.invalid}")
+        return CaseResult(
+            lc.id, "FAIL", 0, f"FAIL {lc.id} (invalid case)\n    {lc.invalid}"
+        )
     if lc.pending is not None:
         return CaseResult(lc.id, "PEND", 0, f"PEND {lc.id}: {lc.pending}", lc.pending)
     try:
         r = run_case(lc.case, server, verbose)
-    except Exception as e:   # noqa: BLE001 - a runner defect is reported as a failed case
-        return CaseResult(lc.id, "FAIL", 0,
-                          f"FAIL {lc.id} (runner error)\n    {type(e).__name__}: {e}")
+    except Exception as e:  # noqa: BLE001 - a runner defect is reported as a failed case
+        return CaseResult(
+            lc.id,
+            "FAIL",
+            0,
+            f"FAIL {lc.id} (runner error)\n    {type(e).__name__}: {e}",
+        )
     if not r.failures:
         lines = [f"PASS {lc.id} ({r.elapsed_ms} ms)"]
         if verbose:
@@ -111,11 +119,16 @@ def run_one(lc: LoadedCase, server: str, verbose: bool) -> CaseResult:
     err = r.stderr.strip(bytes(range(33)))
     if err:
         lines.append("    server stderr (last 2000 bytes):")
-        lines += ["      " + line for line in err[-2000:].decode("utf-8", "replace").splitlines()]
+        lines += [
+            "      " + line
+            for line in err[-2000:].decode("utf-8", "replace").splitlines()
+        ]
     return CaseResult(lc.id, "FAIL", r.elapsed_ms, "\n".join(lines))
 
 
-def run_cases(cases, server: str, jobs: int = 1, verbose: bool = False, report=None) -> list:
+def run_cases(
+    cases, server: str, jobs: int = 1, verbose: bool = False, report=None
+) -> list:
     """Runs the cases, jobs at a time; report (if given) gets each result in
     case order as soon as it and every case before it are done."""
     results = []
@@ -136,5 +149,12 @@ def summary_line(results) -> str:
     return f"SUMMARY passed={n['PASS']} failed={n['FAIL']} pending={n['PEND']} total={len(results)}"
 
 
-__all__ = ["CaseError", "CaseFileError", "CaseResult", "LoadedCase", "load_cases", "run_cases",
-           "summary_line"]
+__all__ = [
+    "CaseError",
+    "CaseFileError",
+    "CaseResult",
+    "LoadedCase",
+    "load_cases",
+    "run_cases",
+    "summary_line",
+]

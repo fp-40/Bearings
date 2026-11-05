@@ -12,7 +12,6 @@ import time
 
 from .bytestr import CaseError
 
-
 DEFAULT_TIMEOUT_MS = 1000
 
 OPEN, EOF, RESET = "open", "eof", "reset"
@@ -36,10 +35,14 @@ class Conn:
         try:
             self.sock = socket.create_connection(("127.0.0.1", port), timeout=5)
         except OSError as e:
-            raise CaseError(f"connect to 127.0.0.1:{port} failed: {e.strerror or e}") from None
+            raise CaseError(
+                f"connect to 127.0.0.1:{port} failed: {e.strerror or e}"
+            ) from None
         self.connected_at = now_us()
         try:
-            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1 if nodelay else 0)
+            self.sock.setsockopt(
+                socket.IPPROTO_TCP, socket.TCP_NODELAY, 1 if nodelay else 0
+            )
         except OSError as e:
             raise CaseError(f"set_nodelay: {e.strerror}") from None
 
@@ -97,5 +100,5 @@ class Conn:
 
     def take(self, maximum: int) -> bytes:
         out = self.buf[:maximum]
-        self.buf = self.buf[len(out):]
+        self.buf = self.buf[len(out) :]
         return out

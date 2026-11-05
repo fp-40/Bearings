@@ -20,7 +20,7 @@ every case as the Rust runner and dumb server did.
 ## Summary
 
 | status | count |
-|---|---|
+|--------|-------|
 | passing (against `reference-server`) | 104 |
 | pending | 1 |
 | excluded | 0 |
@@ -65,7 +65,7 @@ Before the fix, 5 cases passed in `--events` mode (1 in plain mode). Each was co
 hyper test:
 
 | case | dumb result | judgement |
-|---|---|---|
+|------|-------------|-----------|
 | `chunk3::http1_allow_half_close` | passed `--events` | **Strengthened.** hyper asserts only that the response starts with `HTTP/1.1 200 OK\r\n` and that `serve_connection` returns Ok. In hyper the service's 500 ms sleep is test code, so the client's FIN always reaches the server while the request is in progress, which is the situation `half_close(true)` is about. In the port the sleep is the server's `delay_ms`, which the dumb server ignores: it answered before the FIN mattered and passed. The read step now has a timing window of 425..1000 ms after connect (SPEC 13 port decision, recorded in the case notes). The dumb server now fails with `completed 0 ms after connect, expected >= 425 ms`. The reference server passed 5 of 5 single runs and all full runs after the change. |
 | `chunk2::pipeline_disabled` | passes both modes | **Justified.** hyper asserts only that the first `read()` returns n != 0 and that the conditional second `read()` does not return `Ok(0)`. It does not check the response bytes (the test comment calls it "wishy-washy"). Two 200 responses to two pipelined requests satisfy exactly that. Response content for pipelined requests is covered by `pipeline_enabled`, which the dumb server fails. Adding byte checks here would assert more than hyper does (SPEC 14). |
 | `chunk3::upgrades_ignored` | passes `--events` | **Justified.** hyper asserts that the service sees `upgrade: yolo` and that both responses are status 200. Ignoring the upgrade and answering 200 is the behavior under test. Fails in plain mode (no `request` / `conn_close` events). |
@@ -107,7 +107,7 @@ reference runs, the outcome against `dumb-server` / `dumb-server --events`, and 
 reference diff result.
 
 | hyper test | source | case id | status | 3 runs | dumb / dumb --events | self-diff |
-|---|---|---|---|---|---|---|
+|------------|--------|---------|--------|--------|----------------------|-----------|
 | `get_should_ignore_body` | `tests/server.rs:38` | `chunk1::get_should_ignore_body` | passing | PASS/PASS/PASS | FAIL / FAIL | SAME |
 | `get_with_body` | `tests/server.rs:59` | `chunk1::get_with_body` | passing | PASS/PASS/PASS | FAIL / FAIL | SAME |
 | `response_body_lengths::fixed_response_known` | `tests/server.rs:181` | `chunk1::response_body_lengths::fixed_response_known` | passing | PASS/PASS/PASS | FAIL / FAIL | SAME |

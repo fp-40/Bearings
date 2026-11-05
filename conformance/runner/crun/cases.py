@@ -27,11 +27,31 @@ from .proxy import Proxy
 from .response import read_response
 from .server import ServerProc
 
-
-CASE_KEYS = ("name", "source", "pending", "notes", "comment", "server", "via_proxy", "steps",
-             "expect_events", "forbid_events", "events_timeout_ms", "events_settle_ms")
-READ_COMMON = ("op", "conn", "comment", "mark", "expect", "timing", "timeout_ms", "allow_reset",
-               "diff_capture")
+CASE_KEYS = (
+    "name",
+    "source",
+    "pending",
+    "notes",
+    "comment",
+    "server",
+    "via_proxy",
+    "steps",
+    "expect_events",
+    "forbid_events",
+    "events_timeout_ms",
+    "events_settle_ms",
+)
+READ_COMMON = (
+    "op",
+    "conn",
+    "comment",
+    "mark",
+    "expect",
+    "timing",
+    "timeout_ms",
+    "allow_reset",
+    "diff_capture",
+)
 STEP_FIELDS = {
     "connect": ["nodelay"],
     "write": ["data", "may_fail", "expect_fail", "timeout_ms"],
@@ -50,6 +70,7 @@ STEP_FIELDS = {
 
 
 # ---- validation ----
+
 
 def validate_step(s) -> None:
     if not isinstance(s, dict):
@@ -79,7 +100,9 @@ def validate_step(s) -> None:
             raise CaseError('read_until needs an "until" object')
         check_keys(u, ["ends_with", "contains", "starts_with", "min_len"])
         if len(u) != 1:
-            raise CaseError("until: exactly one of ends_with, contains, starts_with, min_len")
+            raise CaseError(
+                "until: exactly one of ends_with, contains, starts_with, min_len"
+            )
     elif op == "expect_open":
         if get_u64(s, "for_ms") is None:
             raise CaseError('expect_open needs integer "for_ms"')
@@ -137,10 +160,11 @@ def pending_reason(c: dict):
 
 # ---- execution ----
 
+
 @dataclass
 class CaseOutcome:
     failures: list = field(default_factory=list)
-    events: list = field(default_factory=list)     # JSON text of every server event
+    events: list = field(default_factory=list)  # JSON text of every server event
     stderr: bytes = b""
     elapsed_ms: int = 0
 
@@ -165,7 +189,9 @@ class Exec:
     def conn(self, name: str) -> Conn:
         c = self.conns.get(name)
         if c is None:
-            raise CaseError(f"connection {json_str(name)} is not connected (add a connect step)")
+            raise CaseError(
+                f"connection {json_str(name)} is not connected (add a connect step)"
+            )
         return c
 
     def close_conns(self) -> None:
@@ -189,11 +215,17 @@ class Exec:
         mn = get_u64(t, "min_ms")
         mx = get_u64(t, "max_ms")
         if mn is not None and elapsed < mn:
-            raise CaseError(f"timing: completed {elapsed} ms after {since}, expected >= {mn} ms")
+            raise CaseError(
+                f"timing: completed {elapsed} ms after {since}, expected >= {mn} ms"
+            )
         if mx is not None and elapsed > mx:
-            raise CaseError(f"timing: completed {elapsed} ms after {since}, expected <= {mx} ms")
+            raise CaseError(
+                f"timing: completed {elapsed} ms after {since}, expected <= {mx} ms"
+            )
 
-    def exec_read(self, op: str, cname: str, s: dict, timeout_ms: int, allow_reset: bool):
+    def exec_read(
+        self, op: str, cname: str, s: dict, timeout_ms: int, allow_reset: bool
+    ):
         """The read steps: (Capture, done_at)."""
         c = self.conn(cname)
         if c.closed_locally:
@@ -218,8 +250,15 @@ class Exec:
                         raise CaseError(timeout_err("read_once", 0))
                     timed_out = True
             cap = Capture(raw=c.take(maximum), end=c.end)
-            cap.read_result = ("data" if cap.raw else "timeout" if timed_out
-                               else "reset" if c.end == RESET else "eof")
+            cap.read_result = (
+                "data"
+                if cap.raw
+                else "timeout"
+                if timed_out
+                else "reset"
+                if c.end == RESET
+                else "eof"
+            )
             return cap, now_us()
         if op == "read_exact":
             n = get_u64(s, "len")
@@ -228,14 +267,16 @@ class Exec:
                     return Capture(raw=c.take(n), end=c.end), now_us()
                 r = c.read_some(timeout_ms)
                 if r == EOF:
-                    raise CaseError(f"EOF after {len(c.buf)} of {n} bytes: {show(c.buf, 300)}")
+                    raise CaseError(
+                        f"EOF after {len(c.buf)} of {n} bytes: {show(c.buf, 300)}"
+                    )
                 if r == RESET:
                     raise CaseError(reset_err("read_exact"))
                 if r == TIMEOUT:
                     raise CaseError(timeout_err("read_exact", len(c.buf)))
         if op == "read_until":
             maximum = _ms_of(s, "max", 8192)
-            (kind, val), = s["until"].items()
+            ((kind, val),) = s["until"].items()
             needle = b"" if kind == "min_len" else decode_bytes(val, self.variables)
             min_len = val if is_u64(val) else 0
             cap = b""
@@ -253,15 +294,23 @@ class Exec:
                 if ok:
                     return Capture(raw=cap, end=c.end), now_us()
                 if len(cap) >= maximum:
-                    raise CaseError(f"read_until: {maximum} bytes received without a match (buffer filled): "
-                                    f"{show(norm, 600)}")
+                    raise CaseError(
+                        f"read_until: {maximum} bytes received without a match (buffer filled): "
+                        f"{show(norm, 600)}"
+                    )
                 r = c.read_some(timeout_ms)
                 if r == EOF:
-                    raise CaseError(f"read_until: EOF before match; received {show(norm, 600)}")
+                    raise CaseError(
+                        f"read_until: EOF before match; received {show(norm, 600)}"
+                    )
                 if r == RESET:
-                    raise CaseError(f"{reset_err('read_until')}; received {show(norm, 600)}")
+                    raise CaseError(
+                        f"{reset_err('read_until')}; received {show(norm, 600)}"
+                    )
                 if r == TIMEOUT:
-                    raise CaseError(f"{timeout_err('read_until', len(cap))}; received {show(norm, 600)}")
+                    raise CaseError(
+                        f"{timeout_err('read_until', len(cap))}; received {show(norm, 600)}"
+                    )
         if op == "read_to_eof":
             maximum = _ms_of(s, "max", 64 << 20)
             has_deadline = "deadline_ms" in s
@@ -276,17 +325,25 @@ class Exec:
                 if c.end == RESET:
                     if allow_reset:
                         return Capture(raw=cap, end=RESET), now_us()
-                    raise CaseError(f"{reset_err('read_to_eof')}; received {show(normalize(cap), 600)}")
+                    raise CaseError(
+                        f"{reset_err('read_to_eof')}; received {show(normalize(cap), 600)}"
+                    )
                 wait = timeout_ms
                 if has_deadline:
                     now = now_us()
                     if now >= deadline:
-                        raise CaseError(f"read_to_eof: deadline passed without EOF; received "
-                                        f"{show(normalize(cap), 600)}")
+                        raise CaseError(
+                            f"read_to_eof: deadline passed without EOF; received "
+                            f"{show(normalize(cap), 600)}"
+                        )
                     wait = min(wait, (deadline - now + 999) // 1000)
-                if c.read_some(wait) == TIMEOUT and (not has_deadline or now_us() < deadline):
-                    raise CaseError(f"{timeout_err('read_to_eof', len(cap))}; received "
-                                    f"{show(normalize(cap), 600)}")
+                if c.read_some(wait) == TIMEOUT and (
+                    not has_deadline or now_us() < deadline
+                ):
+                    raise CaseError(
+                        f"{timeout_err('read_to_eof', len(cap))}; received "
+                        f"{show(normalize(cap), 600)}"
+                    )
         if op == "read_response":
             is_head = get_str(s, "method").lower() == "head"
             resp, end, done_at = read_response(c, is_head, timeout_ms, allow_reset)
@@ -299,8 +356,10 @@ class Exec:
                 cap += c.take(sys.maxsize)
                 if c.end != OPEN:
                     what = "reached EOF" if c.end == EOF else "was reset"
-                    raise CaseError(f"expect_open: connection {what} before {for_ms} ms; received "
-                                    f"{show(normalize(cap), 600)}")
+                    raise CaseError(
+                        f"expect_open: connection {what} before {for_ms} ms; received "
+                        f"{show(normalize(cap), 600)}"
+                    )
                 now = now_us()
                 if now >= until:
                     return Capture(raw=cap, end=OPEN), now
@@ -357,9 +416,13 @@ class Exec:
                 self.server.send_line(line)
 
                 def acked(events):
-                    return any(get_str(ev, "event") == "control_ack" and get_str(ev, "command") == cmd
-                               and (cmd != "signal" or get_str(ev, "name") == name)
-                               for ev in events[start:])
+                    return any(
+                        get_str(ev, "event") == "control_ack"
+                        and get_str(ev, "command") == cmd
+                        and (cmd != "signal" or get_str(ev, "name") == name)
+                        for ev in events[start:]
+                    )
+
                 if not self.wait_event(now_us() + 2_000_000, acked):
                     raise CaseError(f"no control_ack for {json_str(line)} within 2 s")
             elif op == "await_event":
@@ -372,8 +435,11 @@ class Exec:
                             self.cursor = k + 1
                             return True
                     return False
+
                 if not self.wait_event(deadline, seen):
-                    raise CaseError(f"no event matching {json_text(pat)} within the timeout")
+                    raise CaseError(
+                        f"no event matching {json_text(pat)} within the timeout"
+                    )
             else:
                 cap, done_at = self.exec_read(op, cname, s, timeout_ms, allow_reset)
                 cap.norm = normalize(cap.raw)
@@ -453,13 +519,16 @@ def run_case(c: dict, server_cmd: str, verbose: bool) -> CaseOutcome:
                         state["error"] = str(e)
                         return True
                     return True
+
                 ok = ex.wait_event(now_us() + wait_ms * 1000, all_matched)
                 if state["error"]:
                     result.failures.append("expect_events: " + state["error"])
                 elif not ok:
                     u = state["unmatched"]
-                    result.failures.append(f"expect_events[{u}] {json_text(pats[u])} not matched "
-                                           f"(in order) within {wait_ms} ms")
+                    result.failures.append(
+                        f"expect_events[{u}] {json_text(pats[u])} not matched "
+                        f"(in order) within {wait_ms} ms"
+                    )
             pats = c.get("forbid_events")
             if isinstance(pats, list):
                 sleep_ms(_ms_of(c, "events_settle_ms", 200))
@@ -467,8 +536,10 @@ def run_case(c: dict, server_cmd: str, verbose: bool) -> CaseOutcome:
                     for pi, p in enumerate(pats):
                         try:
                             if matches(p, ev, ex.variables):
-                                result.failures.append(f"forbid_events[{pi}] {json_text(p)} matched event "
-                                                       f"{json_text(ev)}")
+                                result.failures.append(
+                                    f"forbid_events[{pi}] {json_text(p)} matched event "
+                                    f"{json_text(ev)}"
+                                )
                         except CaseError as e:
                             result.failures.append(f"forbid_events[{pi}]: {e}")
 

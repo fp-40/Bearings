@@ -52,9 +52,11 @@ class ServerProc:
         self._err_lock = threading.Lock()
         self._err = []
         self._proc = None
-        self._first = None          # (ok: bool, port or error text) once the first line is read
+        self._first = None  # (ok: bool, port or error text) once the first line is read
         self._first_ready = threading.Event()
-        fd, self.config_path = tempfile.mkstemp(prefix="bearings-conformance-", suffix=".json")
+        fd, self.config_path = tempfile.mkstemp(
+            prefix="bearings-conformance-", suffix=".json"
+        )
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(json_text(spec))
@@ -62,9 +64,19 @@ class ServerProc:
             raise CaseError(f"cannot write {self.config_path}: {e}") from None
         try:
             self._proc = subprocess.Popen(
-                ["sh", "-c", "exec " + cmd + ' "$@"', "sh", "--config", self.config_path],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                close_fds=True, restore_signals=True,
+                [
+                    "sh",
+                    "-c",
+                    "exec " + cmd + ' "$@"',
+                    "sh",
+                    "--config",
+                    self.config_path,
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                close_fds=True,
+                restore_signals=True,
             )
         except OSError as e:
             raise CaseError(f"cannot spawn server {json_str(cmd)}: {e}") from None
@@ -119,8 +131,11 @@ class ServerProc:
                         if rest.isdigit() and int(rest) <= 65535:
                             port = int(rest)
                     if port is None:
-                        self._first = (False, 'first stdout line must be "LISTENING <port>", got '
-                                       + json_str(line.decode("utf-8", "replace") + "\n"))
+                        self._first = (
+                            False,
+                            'first stdout line must be "LISTENING <port>", got '
+                            + json_str(line.decode("utf-8", "replace") + "\n"),
+                        )
                         self._first_ready.set()
                         return
                     self._first = (True, port)
@@ -132,7 +147,10 @@ class ServerProc:
                 try:
                     ev = json.loads(text.decode("utf-8"))
                 except (ValueError, UnicodeDecodeError):
-                    ev = {"event": "invalid_line", "line": text.decode("utf-8", "replace")}
+                    ev = {
+                        "event": "invalid_line",
+                        "line": text.decode("utf-8", "replace"),
+                    }
                 self.events.add(ev)
         if first:
             self._first = (False, "server closed stdout before LISTENING")

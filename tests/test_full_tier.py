@@ -32,7 +32,6 @@ from harness import (
     valgrind_errors,
 )
 
-
 pytestmark = [pytest.mark.full, pytest.mark.hostonly]
 DR = OUT / "drd"
 DRD_RUNS = int(os.environ.get("DRD_RUNS", "3"))
@@ -42,10 +41,21 @@ def drd_run(binary: Path, out_dir: Path, name: str, subtests, suite: str | None 
     """One run of an fpcunit binary under drd: the tests as subtests, then
     the drd error count."""
     out, err = out_dir / f"{name}.out", out_dir / f"{name}.err"
-    r = run_fpcunit(binary, out, suite=suite, env={"WD_ITER": "20"}, timeout=DRD_TIMEOUT,
-                    cwd=out_dir, stderr=err,
-                    prefix=[VALGRIND, "--tool=drd", "--fair-sched=yes",
-                            f"--suppressions={ROOT / 'tools/drd.supp'}"])
+    r = run_fpcunit(
+        binary,
+        out,
+        suite=suite,
+        env={"WD_ITER": "20"},
+        timeout=DRD_TIMEOUT,
+        cwd=out_dir,
+        stderr=err,
+        prefix=[
+            VALGRIND,
+            "--tool=drd",
+            "--fair-sched=yes",
+            f"--suppressions={ROOT / 'tools/drd.supp'}",
+        ],
+    )
     report_fpcunit(subtests, r, f"{binary.name} ({name})")
     errors = valgrind_errors(err)
     assert errors == 0, f"{binary.name} ({name}): drd errors: {errors} (see {err})"
@@ -53,8 +63,12 @@ def drd_run(binary: Path, out_dir: Path, name: str, subtests, suite: str | None 
 
 def drd_build(suite: str, out_dir: Path) -> Path:
     require_valgrind()
-    return fpc_build(ROOT / "tests/unit" / f"{suite}.pas", out_dir, out_dir / "u",
-                     [*TEST_FLAGS, "-dWD_DRD"])
+    return fpc_build(
+        ROOT / "tests/unit" / f"{suite}.pas",
+        out_dir,
+        out_dir / "u",
+        [*TEST_FLAGS, "-dWD_DRD"],
+    )
 
 
 @pytest.mark.drd
@@ -94,13 +108,20 @@ def test_s7_stress():
     own defaults are 10 and 3."""
     require_valgrind()
     log = OUT / "s7-stress" / "s7-stress.log"
-    proc = run_script("tools/s7-stress.sh", log=log,
-                      env={"OUT_DIR": str(OUT / "s7-stress"),
-                           "SEEDS": os.environ.get("STRESS_SEEDS", "3"),
-                           "DRD_RUNS": os.environ.get("STRESS_DRD_RUNS", "1"),
-                           "VALGRIND": VALGRIND})
-    assert proc.returncode == 0, f"s7-stress failed (exit {proc.returncode}, see {log}):\n" \
+    proc = run_script(
+        "tools/s7-stress.sh",
+        log=log,
+        env={
+            "OUT_DIR": str(OUT / "s7-stress"),
+            "SEEDS": os.environ.get("STRESS_SEEDS", "3"),
+            "DRD_RUNS": os.environ.get("STRESS_DRD_RUNS", "1"),
+            "VALGRIND": VALGRIND,
+        },
+    )
+    assert proc.returncode == 0, (
+        f"s7-stress failed (exit {proc.returncode}, see {log}):\n"
         + "\n".join(proc.stdout.splitlines()[-15:])
+    )
 
 
 @pytest.mark.valgrind
@@ -109,7 +130,13 @@ def test_rt_echo_memcheck():
     the server under valgrind memcheck, 0 errors (tests/unit/test_rt_echo.sh)."""
     require_valgrind()
     log = OUT / "test_rt_echo.log"
-    proc = run_script("tests/unit/test_rt_echo.sh", [os.environ.get("ECHO_BYTES", "1073741824")],
-                      log=log, env={"OUT_DIR": str(OUT), "VALGRIND": VALGRIND})
-    assert proc.returncode == 0, f"test_rt_echo failed (exit {proc.returncode}, see {log}):\n" \
+    proc = run_script(
+        "tests/unit/test_rt_echo.sh",
+        [os.environ.get("ECHO_BYTES", "1073741824")],
+        log=log,
+        env={"OUT_DIR": str(OUT), "VALGRIND": VALGRIND},
+    )
+    assert proc.returncode == 0, (
+        f"test_rt_echo failed (exit {proc.returncode}, see {log}):\n"
         + "\n".join(proc.stdout.splitlines()[-15:])
+    )

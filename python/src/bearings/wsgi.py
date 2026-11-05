@@ -9,6 +9,7 @@ orders their calls with its end).
 `RawHandler` is the callback with `Server(app, raw=True)`: the app gets the
 head as Bearings sends it, without an environ, and returns its response.
 """
+
 import io
 import os
 import stat
@@ -233,7 +234,9 @@ class Response:
 
     def _respond(self, body: bytes) -> None:
         code, headers = self._head()
-        self._check(lib.bearings_respond(self.ex, code, headers, len(headers), body, len(body)))
+        self._check(
+            lib.bearings_respond(self.ex, code, headers, len(headers), body, len(body))
+        )
 
     def send(self, result: t.Iterable[bytes], method: str) -> None:
         if self.streaming:  # the app used write(): the rest follows
@@ -285,7 +288,7 @@ class Response:
             if not stat.S_ISREG(info.st_mode):  # a pipe, a socket
                 return False
             offset = filelike.tell()
-        except (OSError, ValueError, AttributeError):  # closed, or no tell()
+        except OSError, ValueError, AttributeError:  # closed, or no tell()
             return False
         length = info.st_size - offset
         # at most the app's Content-Length; the server writes the length it
@@ -296,7 +299,9 @@ class Response:
         code, headers = self._head()
         dup = os.dup(fd)  # the server closes it once sent
         self._check(
-            lib.bearings_respond_file(self.ex, code, headers, len(headers), dup, offset, length)
+            lib.bearings_respond_file(
+                self.ex, code, headers, len(headers), dup, offset, length
+            )
         )
         return True
 
@@ -362,7 +367,9 @@ class WsgiHandler:
         environ["REQUEST_METHOD"] = method
         # PEP 3333: the path decoded, as bytes in a latin-1 str
         environ["PATH_INFO"] = (
-            unquote_to_bytes(path.encode("latin-1")).decode("latin-1") if "%" in path else path
+            unquote_to_bytes(path.encode("latin-1")).decode("latin-1")
+            if "%" in path
+            else path
         )
         environ["QUERY_STRING"] = query
         environ["RAW_URI"] = environ["REQUEST_URI"] = f"{path}?{query}" if query else path

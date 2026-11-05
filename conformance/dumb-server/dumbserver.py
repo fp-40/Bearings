@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """dumbserver - a mutation check for the conformance cases (test tooling only).
 
 It implements the process protocol of SPEC.md section 3 (the LISTENING
@@ -30,7 +29,6 @@ import os
 import socket
 import sys
 import threading
-
 
 RESPONSE = b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n"
 
@@ -74,9 +72,17 @@ def request_event(conn: int, req: int, head: bytes) -> str:
         c = line.find(b":")
         if c < 0:
             continue
-        fields.append("[" + jstr(line[:c].lower()) + "," + jstr(line[c + 1 :].strip(bytes(range(33)))) + "]")
-    return (f'{{"event":"request","conn":{conn},"req":{req},"method":{jstr(method)},'
-            f'"target":{jstr(target)},"version":{jstr(version)},"headers":[{",".join(fields)}]}}')
+        fields.append(
+            "["
+            + jstr(line[:c].lower())
+            + ","
+            + jstr(line[c + 1 :].strip(bytes(range(33))))
+            + "]"
+        )
+    return (
+        f'{{"event":"request","conn":{conn},"req":{req},"method":{jstr(method)},'
+        f'"target":{jstr(target)},"version":{jstr(version)},"headers":[{",".join(fields)}]}}'
+    )
 
 
 def serve(sock: socket.socket, conn_id: int) -> None:
@@ -120,7 +126,9 @@ def read_stdin() -> None:
         elif line == b"graceful_shutdown":
             emit('{"event":"control_ack","command":"graceful_shutdown"}')
         elif line.startswith(b"signal "):
-            emit(f'{{"event":"control_ack","command":"signal","name":{jstr(line[7:])}}}')
+            emit(
+                f'{{"event":"control_ack","command":"signal","name":{jstr(line[7:])}}}'
+            )
         else:
             emit(f'{{"event":"control_error","line":{jstr(line)}}}')
     # the end of stdin: the runner is gone

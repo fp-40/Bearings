@@ -17,7 +17,6 @@ import sys
 from . import CaseFileError, load_cases, run_cases, summary_line
 from .bytestr import get_str
 
-
 USAGE = """usage:
   crun run  --server CMD [--filter S]... [--jobs N] [-v] PATH...
   crun list [--filter S]... PATH...
@@ -74,6 +73,7 @@ def main(argv=None) -> int:
         k += 1
     if cmd == "selftest":
         from .selftest import selftest
+
         return selftest()
     if cmd not in ("run", "list") or not paths:
         return usage()
@@ -87,7 +87,13 @@ def main(argv=None) -> int:
         return 2
     if cmd == "list":
         for lc in cases:
-            tag = "INVALID" if lc.invalid is not None else "PEND" if lc.pending is not None else "CASE"
+            tag = (
+                "INVALID"
+                if lc.invalid is not None
+                else "PEND"
+                if lc.pending is not None
+                else "CASE"
+            )
             print(f"{tag} {lc.id} {get_str(lc.case, 'source')}")
             if lc.invalid is not None:
                 print(f"    {lc.invalid}")

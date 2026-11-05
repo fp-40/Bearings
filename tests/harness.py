@@ -23,7 +23,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parent.parent
 TARGET = os.environ.get("TARGET", "x86_64")
 if TARGET == "aarch64":
@@ -43,8 +42,16 @@ VALGRIND = os.environ.get("VALGRIND", str(ROOT / "build/tools/bin/valgrind"))
 
 # the unit-test flags (docs/design/verification.md)
 TEST_FLAGS = ["-Mobjfpc", "-Sh", "-O2", "-gl", "-Cr", "-Co", "-Ct", "-Sa"]
-UNIT_DIRS = ["src/rt", "src/http", "src/http1", "src/server", "src/ws", "src/capi",
-             "tests/support", "tests/unit"]
+UNIT_DIRS = [
+    "src/rt",
+    "src/http",
+    "src/http1",
+    "src/server",
+    "src/ws",
+    "src/capi",
+    "tests/support",
+    "tests/unit",
+]
 
 
 def valgrind_available() -> bool:
@@ -54,11 +61,20 @@ def valgrind_available() -> bool:
 def require_valgrind():
     """A missing valgrind fails the run (decision 12), it does not skip it."""
     if not valgrind_available():
-        pytest.fail(f"no valgrind at {VALGRIND} (run tools/get-tools.sh, or set VALGRIND)")
+        pytest.fail(
+            f"no valgrind at {VALGRIND} (run tools/get-tools.sh, or set VALGRIND)"
+        )
 
 
-def fpc_build(source: Path, out_dir: Path, unit_dir: Path, flags=None, extra_units=(),
-              fpc: str = FPC, output: Path | None = None) -> Path:
+def fpc_build(
+    source: Path,
+    out_dir: Path,
+    unit_dir: Path,
+    flags=None,
+    extra_units=(),
+    fpc: str = FPC,
+    output: Path | None = None,
+) -> Path:
     """Compiles `source` into `out_dir` (binary `out_dir/<stem>`, or `output`),
     with the unit files in `unit_dir`. One compiler at a time per unit
     directory (a file lock): pytest-xdist workers share the directories.
@@ -67,9 +83,15 @@ def fpc_build(source: Path, out_dir: Path, unit_dir: Path, flags=None, extra_uni
     unit_dir.mkdir(parents=True, exist_ok=True)
     binary = output or out_dir / source.stem
     log = out_dir / f"{source.stem}.build.log"
-    cmd = [fpc, *(flags if flags is not None else TEST_FLAGS),
-           *[f"-Fu{ROOT / d}" for d in (*UNIT_DIRS, *extra_units)],
-           f"-FU{unit_dir}", f"-FE{out_dir}", f"-o{binary}", str(source)]
+    cmd = [
+        fpc,
+        *(flags if flags is not None else TEST_FLAGS),
+        *[f"-Fu{ROOT / d}" for d in (*UNIT_DIRS, *extra_units)],
+        f"-FU{unit_dir}",
+        f"-FE{out_dir}",
+        f"-o{binary}",
+        str(source),
+    ]
     with open(unit_dir / ".fpc.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         with open(log, "w") as logf:
@@ -84,7 +106,7 @@ def fpc_build(source: Path, out_dir: Path, unit_dir: Path, flags=None, extra_uni
 class FpcTest:
     suite: str
     name: str
-    result: str          # OK, Failed, Error, Ignored
+    result: str  # OK, Failed, Error, Ignored
     message: str
 
 
@@ -94,25 +116,37 @@ class FpcRun:
     run: int
     errors: int
     failures: int
-    exit_code: int       # 124 when the timeout stopped it
+    exit_code: int  # 124 when the timeout stopped it
     output: Path
 
 
-def run_fpcunit(binary: Path, output: Path, suite: str | None = None, env=None,
-                timeout: int = SUITE_TIMEOUT, cwd: Path | None = None,
-                prefix: list[str] | None = None, stderr: Path | None = None) -> FpcRun:
+def run_fpcunit(
+    binary: Path,
+    output: Path,
+    suite: str | None = None,
+    env=None,
+    timeout: int = SUITE_TIMEOUT,
+    cwd: Path | None = None,
+    prefix: list[str] | None = None,
+    stderr: Path | None = None,
+) -> FpcRun:
     """Runs an fpcunit program (--all, or --suite=<suite>) with XML output into
     `output` and parses the result. `prefix` runs it under a command (valgrind);
     `stderr` gets the program's stderr (default: appended to `output`)."""
-    args = [*(prefix if prefix is not None else RUN), str(binary),
-            f"--suite={suite}" if suite else "--all", "--format=xml"]
+    args = [
+        *(prefix if prefix is not None else RUN),
+        str(binary),
+        f"--suite={suite}" if suite else "--all",
+        "--format=xml",
+    ]
     full_env = dict(os.environ, **(env or {}))
     err = open(stderr, "w") if stderr else subprocess.STDOUT
     try:
         with open(output, "w") as out:
             try:
-                proc = subprocess.run(args, stdout=out, stderr=err, env=full_env,
-                                      timeout=timeout, cwd=cwd)
+                proc = subprocess.run(
+                    args, stdout=out, stderr=err, env=full_env, timeout=timeout, cwd=cwd
+                )
                 code = proc.returncode
             except subprocess.TimeoutExpired:
                 code = 124
@@ -131,7 +165,7 @@ def parse_fpcunit_xml(output: Path, exit_code: int) -> FpcRun:
     run = errors = failures = -1
     if start >= 0 and end >= 0:
         try:
-            root = ET.fromstring(text[start:end + len("</TestResults>")])
+            root = ET.fromstring(text[start : end + len("</TestResults>")])
         except ET.ParseError:
             root = None
         if root is not None:
@@ -140,7 +174,9 @@ def parse_fpcunit_xml(output: Path, exit_code: int) -> FpcRun:
                     continue
                 for t in ts.findall("Test"):
                     msg = t.findtext("Message") or ""
-                    tests.append(FpcTest(ts.get("Name"), t.get("Name"), t.get("Result"), msg))
+                    tests.append(
+                        FpcTest(ts.get("Name"), t.get("Name"), t.get("Result"), msg)
+                    )
             run = int(root.findtext("NumberOfRunTests") or -1)
             errors = int(root.findtext("NumberOfErrors") or -1)
             failures = int(root.findtext("NumberOfFailures") or -1)
@@ -156,8 +192,9 @@ def report_fpcunit(subtests, r: FpcRun, label: str = ""):
     if r.exit_code == 124:
         pytest.fail(f"{label}: TIMEOUT (see {r.output})", pytrace=False)
     assert r.run >= 0, f"{label}: no fpcunit report in {r.output}"
-    assert (r.exit_code, r.errors, r.failures) == (0, 0, 0), \
+    assert (r.exit_code, r.errors, r.failures) == (0, 0, 0), (
         f"{label}: exit {r.exit_code}, errors {r.errors}, failures {r.failures} (see {r.output})"
+    )
 
 
 def heaptrc_unfreed(heap_log: Path) -> int | None:
@@ -185,14 +222,21 @@ def valgrind_errors(err_log: Path) -> int | None:
     return count
 
 
-def run_script(script: str, args=(), env=None, timeout: int = DRD_TIMEOUT,
-               log: Path | None = None) -> subprocess.CompletedProcess:
+def run_script(
+    script: str, args=(), env=None, timeout: int = DRD_TIMEOUT, log: Path | None = None
+) -> subprocess.CompletedProcess:
     """Runs a repository shell script (tools/*.sh, tests/unit/*.sh); its output
     goes to `log` and is returned as `stdout`."""
     cmd = ["sh", str(ROOT / script), *map(str, args)]
-    proc = subprocess.run(cmd, env=dict(os.environ, **(env or {})), timeout=timeout,
-                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                          errors="replace")
+    proc = subprocess.run(
+        cmd,
+        env=dict(os.environ, **(env or {})),
+        timeout=timeout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        errors="replace",
+    )
     if log:
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text(proc.stdout)

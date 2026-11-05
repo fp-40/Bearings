@@ -33,7 +33,6 @@ from pathlib import Path
 import pytest
 from harness import OUT, ROOT, fpc_build
 
-
 G = ROOT / "tests/golden"
 GOLDEN_OUT = OUT / "golden"
 UPDATE = os.environ.get("UPDATE") == "1"
@@ -48,23 +47,28 @@ def build(driver: str) -> Path:
 
 def run(binary: Path, args: list[str], output: Path):
     with open(output, "w") as out:
-        proc = subprocess.run([str(binary), *args], stdout=out, stderr=subprocess.PIPE,
-                              timeout=600)
-    assert proc.returncode == 0, f"{binary.name} {' '.join(args)}: exit {proc.returncode}: " \
+        proc = subprocess.run(
+            [str(binary), *args], stdout=out, stderr=subprocess.PIPE, timeout=600
+        )
+    assert proc.returncode == 0, (
+        f"{binary.name} {' '.join(args)}: exit {proc.returncode}: "
         f"{proc.stderr.decode(errors='replace')[-500:]}"
+    )
 
 
 def guards_match(plain: Path, *guards: Path):
     for g in guards:
-        assert g.read_bytes() == plain.read_bytes(), \
+        assert g.read_bytes() == plain.read_bytes(), (
             f"guard-page run {g} differs from {plain} or crashed"
+        )
 
 
 def compare(name: str, expected_xz: Path, got: Path, cases: Path | None):
     """The result lines against the expected file; with UPDATE=1 the file is
     rewritten and the changes are printed. The case of line N is line N of the
     cases file (the parser's lines carry their case index instead)."""
-    expected = lzma.open(expected_xz).read().decode("latin-1").split("\n")
+    with lzma.open(expected_xz) as file:
+        expected = file.read().decode("latin-1").split("\n")
     actual = got.read_text(encoding="latin-1").split("\n")
     if expected == actual:
         print(f"golden {name}: {len(actual) - 1} result lines as expected")
@@ -89,24 +93,42 @@ def compare(name: str, expected_xz: Path, got: Path, cases: Path | None):
     if UPDATE:
         with lzma.open(expected_xz, "wb", preset=9 | lzma.PRESET_EXTREME) as f:
             f.write(got.read_bytes())
-        print(f"golden {name}: UPDATE: {changed} lines change (first {limit} below)\n{detail}\n"
-              f"golden {name}: {expected_xz} rewritten")
+        print(
+            f"golden {name}: UPDATE: {changed} lines change (first {limit} below)\n{detail}\n"
+            f"golden {name}: {expected_xz} rewritten"
+        )
         return
-    pytest.fail(f"golden {name}: MISMATCH: {changed} lines differ from the expected values "
-                f"(first {limit} below)\n{detail}", pytrace=False)
+    pytest.fail(
+        f"golden {name}: MISMATCH: {changed} lines differ from the expected values "
+        f"(first {limit} below)\n{detail}",
+        pytrace=False,
+    )
 
 
 def test_parser():
     binary = build("test_parser_golden")
     corpus = GOLDEN_OUT / "corpus.bin"
-    subprocess.run([sys.executable, "-I", str(ROOT / "tests/unit/test_parser_corpus.py"),
-                    str(corpus), "50000", "1"], check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(ROOT / "tests/unit/test_parser_corpus.py"),
+            str(corpus),
+            "50000",
+            "1",
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
     sha = hashlib.sha256(corpus.read_bytes()).hexdigest()
     assert sha == CORPUS_SHA256, (
         f"golden parser: the corpus changed (sha256 {sha}, expected {CORPUS_SHA256}): "
         "test_parser_corpus.py or Python's random module produce other cases, so the "
-        "expected values no longer belong to them")
-    got, end, start = (GOLDEN_OUT / n for n in ("parser.got", "parser.guard-end", "parser.guard-start"))
+        "expected values no longer belong to them"
+    )
+    got, end, start = (
+        GOLDEN_OUT / n for n in ("parser.got", "parser.guard-end", "parser.guard-start")
+    )
     run(binary, [str(corpus)], got)
     run(binary, [str(corpus), "--guard-end"], end)
     run(binary, [str(corpus), "--guard-start"], start)
@@ -117,7 +139,8 @@ def test_parser():
 def test_role():
     binary = build("test_role_golden")
     cases = GOLDEN_OUT / "role_cases.txt"
-    cases.write_bytes(lzma.open(G / "role_cases.txt.xz").read())
+    with lzma.open(G / "role_cases.txt.xz") as file:
+        cases.write_bytes(file.read())
     got, guard = GOLDEN_OUT / "role.got", GOLDEN_OUT / "role.guard"
     run(binary, [str(cases)], got)
     run(binary, [str(cases), "--guard"], guard)
@@ -129,8 +152,12 @@ def test_role():
 def test_codec(kind):
     binary = build("test_codec_golden")
     cases = GOLDEN_OUT / f"{kind}_cases.txt"
-    cases.write_bytes(lzma.open(G / f"{kind}_cases.txt.xz").read())
-    got, end, start = (GOLDEN_OUT / n for n in (f"{kind}.got", f"{kind}.guard-end", f"{kind}.guard-start"))
+    with lzma.open(G / f"{kind}_cases.txt.xz") as file:
+        cases.write_bytes(file.read())
+    got, end, start = (
+        GOLDEN_OUT / n
+        for n in (f"{kind}.got", f"{kind}.guard-end", f"{kind}.guard-start")
+    )
     run(binary, [kind, str(cases)], got)
     run(binary, [kind, str(cases), "--guard-end"], end)
     run(binary, [kind, str(cases), "--guard-start"], start)

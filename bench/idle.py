@@ -1,5 +1,7 @@
 # open N keep-alive connections, one request each, keep them idle; print when ready, wait for stdin
-import socket, sys, selectors
+import socket
+import sys
+
 port, n = int(sys.argv[1]), int(sys.argv[2])
 req = b"GET /plaintext HTTP/1.1\r\nHost: x\r\n\r\n"
 socks = []
@@ -12,7 +14,8 @@ for s in socks:
     buf = b""
     while b"Hello, world!" not in buf:
         d = s.recv(4096)
-        if not d: break
+        if not d:
+            break
         buf += d
     got += 1
 print("ready", got, flush=True)

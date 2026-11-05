@@ -1,4 +1,5 @@
 """The server: Bearings' event loops and worker pool, with a WSGI app (or a raw one)."""
+
 import ipaddress
 import os
 import re
@@ -32,7 +33,11 @@ def _address(host: str) -> str:
     except ValueError:
         pass
     # an AF_INET or AF_INET6 sockaddr: its first item is the address, a str
-    return str(socket.getaddrinfo(host, None, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)[0][4][0])
+    return str(
+        socket.getaddrinfo(host, None, type=socket.SOCK_STREAM, flags=socket.AI_PASSIVE)[
+            0
+        ][4][0]
+    )
 
 
 def _error(message: str) -> OSError:
@@ -180,12 +185,12 @@ class Server:
         if access_log not in ACCESS_LOGS:
             raise ValueError(f"access_log must be one of {list(ACCESS_LOGS)}")
         if access_log_level not in ACCESS_LOG_LEVELS:
-            raise ValueError(
-                f"access_log_level must be one of {list(ACCESS_LOG_LEVELS)}"
-            )
+            raise ValueError(f"access_log_level must be one of {list(ACCESS_LOG_LEVELS)}")
         self.host = host
         handler = RawHandler if raw else WsgiHandler
-        self._handler = handler(app, host=host, unix_path=unix_path, url_scheme=url_scheme)
+        self._handler = handler(
+            app, host=host, unix_path=unix_path, url_scheme=url_scheme
+        )
         # kept alive with the config: the struct only points to them
         self._strings: list = []
         config = ffi.new("bearings_config *")
@@ -423,7 +428,8 @@ def serve(
     os.set_blocking(wake_write, False)
     previous_fd = signal.set_wakeup_fd(wake_write)
     previous = {
-        signum: signal.signal(signum, on_signal) for signum in (signal.SIGINT, signal.SIGTERM)
+        signum: signal.signal(signum, on_signal)
+        for signum in (signal.SIGINT, signal.SIGTERM)
     }
     try:
         server.start()

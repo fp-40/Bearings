@@ -22,34 +22,65 @@ from harness import (
     run_fpcunit,
 )
 
-
 FZ = OUT / "split-fuzz"
 
 
 @pytest.mark.fuzz
 @pytest.mark.hostonly
-@pytest.mark.parametrize("seeds", [pytest.param(100, marks=pytest.mark.fast),
-                                   pytest.param(2000, marks=pytest.mark.full)])
+@pytest.mark.parametrize(
+    "seeds",
+    [
+        pytest.param(100, marks=pytest.mark.fast),
+        pytest.param(2000, marks=pytest.mark.full),
+    ],
+)
 def test_split_fuzz(seeds, subtests):
-    seeds = int(os.environ.get("FUZZ_SEEDS", seeds))
+    seeds = int(os.environ.get("FUZZ_SEEDS", seeds) or seeds)
     FZ.mkdir(parents=True, exist_ok=True)
     py = [sys.executable, "-I"]
-    subprocess.run([*py, str(ROOT / "tests/unit/test_split_fuzz_cases.py"), str(FZ / "cases.bin"),
-                    str(ROOT / "conformance/cases/h1"),
-                    str(ROOT / "conformance/pascal-server/extra/extra-cases.json")],
-                   check=True, stdout=open(FZ / "cases.log", "w"), stderr=subprocess.STDOUT)
-    subprocess.run([*py, str(ROOT / "tests/unit/test_parser_corpus.py"), str(FZ / "corpus.bin"),
-                    "20000", "1"], check=True, stdout=open(FZ / "corpus.log", "w"),
-                   stderr=subprocess.STDOUT)
-    binary = fpc_build(ROOT / "tests/unit/test_split_fuzz.pas", FZ, FZ / "u",
-                       [*TEST_FLAGS, "-Ci", "-gh", "-dWD_DEBUG"],
-                       extra_units=["conformance/pascal-server"])
+    with open(FZ / "cases.log", "w") as log:
+        subprocess.run(
+            [
+                *py,
+                str(ROOT / "tests/unit/test_split_fuzz_cases.py"),
+                str(FZ / "cases.bin"),
+                str(ROOT / "conformance/cases/h1"),
+                str(ROOT / "conformance/pascal-server/extra/extra-cases.json"),
+            ],
+            check=True,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+    with open(FZ / "corpus.log", "w") as log:
+        subprocess.run(
+            [
+                *py,
+                str(ROOT / "tests/unit/test_parser_corpus.py"),
+                str(FZ / "corpus.bin"),
+                "20000",
+                "1",
+            ],
+            check=True,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+    binary = fpc_build(
+        ROOT / "tests/unit/test_split_fuzz.pas",
+        FZ,
+        FZ / "u",
+        [*TEST_FLAGS, "-Ci", "-gh", "-dWD_DEBUG"],
+        extra_units=["conformance/pascal-server"],
+    )
     heap = FZ / "heap.txt"
     heap.unlink(missing_ok=True)
     for f in FZ.glob("fail-*.txt"):
         f.unlink()
-    r = run_fpcunit(binary, FZ / "out.txt", timeout=DRD_TIMEOUT,
-                    env={"FUZZ_DATA": str(FZ), "FUZZ_SEEDS": str(seeds), "HEAPTRC": f"log={heap}"})
+    r = run_fpcunit(
+        binary,
+        FZ / "out.txt",
+        timeout=DRD_TIMEOUT,
+        env={"FUZZ_DATA": str(FZ), "FUZZ_SEEDS": str(seeds), "HEAPTRC": f"log={heap}"},
+    )
     for line in (FZ / "out.txt").read_text(errors="replace").splitlines():
         if line.startswith("split fuzz: ") and line[12:13].isdigit():
             print("  " + line)

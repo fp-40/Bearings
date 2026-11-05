@@ -116,7 +116,7 @@ values, event patterns), `${name}` is replaced by a variable value, and `$${` pr
 literal `${`. An unknown variable is an error. Variables:
 
 | name | value |
-|---|---|
+|------|-------|
 | `port` | the port the runner's connections go to: the proxy port in `via_proxy` cases, else the server port |
 | `server_port` | the conformance server's listening port |
 | `proxy_port` | the proxy port (only in `via_proxy` cases) |
@@ -166,7 +166,7 @@ stderr only when a case fails.
 The runner writes commands to the server's stdin, one per line:
 
 | line | effect | acknowledgement event |
-|---|---|---|
+|------|--------|-----------------------|
 | `graceful_shutdown` | start graceful shutdown on every connection open at that moment (section 6.2). Connections accepted later are not affected. The listener keeps accepting. | `{"event":"control_ack","command":"graceful_shutdown"}` |
 | `signal <name>` | set the named latch. Every waiter on that name (upgrade `await_signal`, section 6.3) is released, now and in the future. Latches never reset. | `{"event":"control_ack","command":"signal","name":"<name>"}` |
 | `exit` | exit the process immediately (status 0) | none |
@@ -209,7 +209,7 @@ Unknown fields are errors. Every `config` field is optional. Defaults are hyper 
 `http1::Builder::new()` defaults. A field that is absent means "do not call the builder method".
 
 | field | type | default | hyper call | semantics the server must implement |
-|---|---|---|---|---|
+|-------|------|---------|------------|-------------------------------------|
 | `keep_alive` | bool | `true` | `keep_alive(v)` | `false`: every connection is closed after the first response (HTTP/1.1 responses get `connection: close`) |
 | `max_headers` | int | 100 | `max_headers(n)` | more than `n` request header fields: 431 response, outcome `parse_too_large`. Also the limit on trailer field count |
 | `max_header_size` | int | none | `max_header_size(n)` | request head (request line + header fields) larger than `n` bytes: 431, outcome `parse_too_large`. Applies to an incomplete head once the buffered head reaches `n` bytes, and to a complete head longer than `n`. Also limits trailer bytes |
@@ -231,7 +231,7 @@ Unknown fields are errors. Every `config` field is optional. Defaults are hyper 
 `handler` is one of:
 
 | handler | hyper origin | behavior |
-|---|---|---|
+|---------|--------------|----------|
 | `"test_service"` (default) | tests/server.rs `TestService` (L3765-3818), the t! macro server (tests/support/mod.rs L362-389), and the per-test `service_fn`s | takes the next reply from the reply queue and acts on it (5.3) |
 | `"hello_world"` | tests/server.rs `HelloWorld` (L3822-3833) | responds 200 with a fixed-length body `hello` (5 bytes). Never reads the request body. `replies` must be empty |
 | `"unreachable"` | tests/server.rs `unreachable_service` (L3835-3842) | the handler fails immediately (no response; outcome `user`). `replies` must be empty |
@@ -252,7 +252,7 @@ replies are queued before the requests arrive.
 All fields are optional. `{}` is the default reply: status 200, no headers, empty body.
 
 | field | type | default | meaning |
-|---|---|---|---|
+|-------|------|---------|---------|
 | `status` | int 100..999 | 200 | response status code. A 1xx status as the final response is passed to the HTTP layer unchanged (hyper then sends a 500 and fails the connection: outcome `user`) |
 | `reason` | byte string | standard phrase | custom reason phrase (hyper `ext::ReasonPhrase`). Must be valid reason-phrase bytes (HTAB, SP, VCHAR, obs-text) |
 | `version` | `"HTTP/1.0"` \| `"HTTP/1.1"` \| `"HTTP/2.0"` \| `"HTTP/0.9"` \| `"HTTP/3.0"` | `"HTTP/1.1"` | the response version the handler sets. In hyper, `HTTP/1.0` without a `connection: keep-alive` header makes the connection close after this response (http_10_close_on_no_ka). The Pascal server maps this to its own way of saying "this response is HTTP/1.0" |
@@ -267,7 +267,7 @@ All fields are optional. `{}` is the default reply: status 200, no headers, empt
 ### 5.4 Body spec
 
 | form | hyper equivalent | meaning |
-|---|---|---|
+|------|------------------|---------|
 | absent | `http_body_util::Empty` | empty body whose length is known to be 0 |
 | `{"known": <byte string>}` | `Full::new(bytes)` | body with a length known in advance (exact size hint). An empty `known` body behaves like an absent body |
 | `{"stream": [items], "trailers": [[name, value], ...]}` | `StreamBody` / tests' `StreamBodyWithTrailers` | body of **unknown** length (no size hint), produced as a sequence of frames |
@@ -317,7 +317,7 @@ connection ends with outcome `user`.
 ### 6.1 `conn_mode`
 
 | value | hyper call | meaning |
-|---|---|---|
+|-------|------------|---------|
 | `plain` | `serve_connection(io, svc).await` | upgrades are not supported. The connection ends when the HTTP layer is done |
 | `with_upgrades` | `serve_connection(io, svc).with_upgrades().await` | after a 101 response (or a 2xx response to CONNECT) to a request whose handler registered with `on_upgrade`, the HTTP layer hands the connection to the upgrade task, together with the bytes it had already read past the request head. The connection outcome is `ok` |
 
@@ -342,7 +342,7 @@ Triggered by the `graceful_shutdown` control command or `graceful_shutdown_on_ac
 ```
 
 | field | type | default | meaning |
-|---|---|---|---|
+|-------|------|---------|---------|
 | `on_upgrade` | bool | `true` | `true`: the handler registers for the upgrade (hyper `upgrade::on`), and the actions run when the HTTP layer hands over the connection (`conn_mode` `with_upgrades`). `false`: the handler does not register, and the actions never run (until 2026-11-04 they ran on the socket a `without_shutdown` mode returned; that mode is gone) |
 | `await_signal` | string | none | before writing, wait until the runner sends `signal <name>` (stands in for the oneshot channels hyper's tests use to wait until the client has read the 101) |
 | `write` | byte string | none | write these bytes on the raw socket |
@@ -362,7 +362,7 @@ Fields named `message` and `detail` are implementation-specific text: they are r
 case may assert on them only where this table gives canonical text.
 
 | event | fields | emitted when |
-|---|---|---|
+|-------|--------|--------------|
 | `conn_open` | `conn` | a connection is accepted, before anything is read |
 | `request` | `conn`, `req`, `method`, `target`, `version`, `headers` | the handler is called (request head parsed). `method`: method token. `target`: the request-target as received (origin-form `/a?b`, absolute-form `http://h:p/`, authority-form `localhost:80`, `*`). `version`: `"HTTP/1.0"` or `"HTTP/1.1"`. `headers`: array of `[name, value]`, names **lowercased**, values as received (OWS trimmed), ordered by **first appearance of each name**, all values of a name together in received order (http::HeaderMap iteration order; example: `A:1, B:2, a:3` is reported as `[["a","1"],["a","3"],["b","2"]]`) |
 | `request_body` | `conn`, `req`, `body`, optional `trailers` | test_service read the whole body. `body`: all data bytes. `trailers`: present only if the request had a trailer section; same format as `headers` |
@@ -393,7 +393,7 @@ a socket error (`io`) or anything else (`other`). A conformance server must use 
 and should use the same `message` for the same condition.
 
 | kind | message | condition |
-|---|---|---|
+|------|---------|-----------|
 | `unexpected_eof` | `connection closed before the end of the body` | EOF before Content-Length bytes, or inside chunk data |
 | `unexpected_eof` | `connection closed inside the chunk framing` | EOF while reading a chunk-size line |
 | `invalid_data` | `chunk size overflows 64 bits` | chunk size does not fit in 64 bits |
@@ -417,7 +417,7 @@ and should use the same `message` for the same condition.
 Exactly one class, checked in this order:
 
 | outcome | when |
-|---|---|
+|---------|------|
 | `ok` | the connection ended without error: client EOF while idle, keep-alive off after a response, graceful shutdown, upgrade hand-off |
 | `timeout` | header read timeout fired (no response written) |
 | `parse_too_large` | request head over `max_buf_size` / `max_header_size`, too many headers, a header name of 65536 bytes or more (431 written), or a request-target longer than 65534 bytes (414 written) |
@@ -445,7 +445,7 @@ A case file is a JSON object:
 Case names must be unique within a file. Case fields (unknown fields are errors):
 
 | field | required | meaning |
-|---|---|---|
+|-------|----------|---------|
 | `name` | yes | hyper test name, e.g. `response_body_lengths::fixed_response_known`, `get_1 [run1 h1 direct]` |
 | `source` | no | `file:line` of the hyper test |
 | `notes` / `comment` | no | free text: what hyper asserts, which assertions were unenforced, port decisions |
@@ -483,7 +483,7 @@ Unknown fields are errors.
 ### 9.1 Connection and write steps
 
 | op | fields | semantics |
-|---|---|---|
+|----|--------|-----------|
 | `connect` | `nodelay` (bool, default false) | open a TCP connection to `127.0.0.1:${port}` (5 s connect timeout). Records the mark `connect:<conn>`. Nagle is left on by default, as with std `TcpStream` in hyper's tests |
 | `write` | `data` (byte string), `timeout_ms` (default 1000), `may_fail`, `expect_fail` (bools) | write all bytes (write timeout = `timeout_ms`, like the tests' 1 s `set_write_timeout`). A failed write fails the step unless `may_fail`. With `expect_fail`, the step fails if the write succeeds. On Linux the first write after the peer closed usually succeeds, so `expect_fail` is rarely reliable |
 | `sleep` | `ms` | sleep |
@@ -505,7 +505,7 @@ true: RST ends the step like EOF, end state `reset`); `expect` (array of asserti
 `timing` (section 13); `diff_capture` (accepted, no effect; section 12). The bytes a read step consumed are its **capture**.
 
 | op | fields | semantics | step completes |
-|---|---|---|---|
+|----|--------|-----------|----------------|
 | `read_once` | `max` (default 4096), `allow_timeout` (bool, default false) | one `read()`: if the buffer has bytes, take up to `max` of them without reading the socket; otherwise one socket read, then take up to `max`. EOF gives an empty capture with end `eof` (not a failure). A timeout fails the step unless `allow_timeout` is true; then the step succeeds with an empty capture and end `open`. The step's **read result** (assertion `read_result`) is `"data"` if the capture is non-empty, else `"timeout"`, `"reset"` or `"eof"`. Mirrors `stream.read(&mut [0; max])`; `allow_timeout` + `allow_reset` + `{"read_result": ["data", "timeout", "reset"]}` mirrors `if let Ok(n) = stream.read(..) { assert_ne!(n, 0) }` | when the read returns or times out |
 | `read_exact` | `len` | read exactly `len` bytes; EOF earlier fails. Mirrors `read_exact` | when `len` bytes are there |
 | `read_until` | `until`: exactly one of `{"ends_with": b}`, `{"contains": b}`, `{"starts_with": b}`, `{"min_len": n}`; `max` (default 8192) | read until the (date-normalized) capture satisfies `until`. Fails on EOF, RST, timeout, or when `max` bytes have been captured without a match. The capture may extend past the match point (everything read so far). Mirrors server.rs `read_until` with its 8192-byte buffer | when the condition first holds |
@@ -523,7 +523,7 @@ assertion has exactly one **kind** key, plus optional modifiers.
 ### 10.1 Byte assertions
 
 | kind | value | passes when the subject... |
-|---|---|---|
+|------|-------|----------------------------|
 | `equals` | byte string | is exactly the value |
 | `starts_with` | byte string | starts with the value |
 | `ends_with` | byte string | ends with the value |
@@ -550,7 +550,7 @@ Modifiers:
 ### 10.2 Other assertions
 
 | kind | value | passes when |
-|---|---|---|
+|------|-------|-------------|
 | `end` | `"eof"`, `"reset"`, `"open"`, `"closed"` (eof or reset) | the connection end state after the step |
 | `read_result` | one of `"data"`, `"eof"`, `"reset"`, `"timeout"`, or a non-empty array of them | (`read_once`) the step's read result (9.2) is the value or one of the array's values |
 | `status` | int | (`read_response`) status code |
@@ -611,7 +611,7 @@ assertions are not normalized.
 Defaults, chosen to mirror hyper's tests:
 
 | item | value | origin |
-|---|---|---|
+|------|-------|--------|
 | per-read timeout | 1000 ms | `connect()` sets `set_read_timeout(1 s)`, tests/server.rs L3844-3849 |
 | write timeout | 1000 ms | same, `set_write_timeout(1 s)` |
 | `read_until` buffer | 8192 bytes | tests/server.rs `read_until` L3992-4016 |
@@ -644,7 +644,7 @@ value), use a lower bound of about 85 % of the nominal value and an upper bound 
 ## 14. Porting hyper tests to cases
 
 | hyper construct | case equivalent |
-|---|---|
+|-----------------|-----------------|
 | `serve()` / `serve_opts()` fixture | `"handler": "test_service"` with `config` from `ServeOptions` (`keep_alive`, `pipeline_flush`). `serve_opts().http2()` is out of scope (HTTP/2) |
 | `server.reply().status(..).header(..).body(..)` | one entry in `replies`, in the order the test queues them |
 | `.body_stream(stream::once(..))` | `{"stream": [{"data": ...}]}` |

@@ -9,7 +9,6 @@ import shlex
 import pytest
 from harness import OUT, run_script
 
-
 pytestmark = [pytest.mark.fast]
 
 

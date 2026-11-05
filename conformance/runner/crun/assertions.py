@@ -27,17 +27,46 @@ from .bytestr import (
 from .conn import OPEN
 from .response import Parsed, field_values, fields_show
 
-
 CANONICAL_DATE = b"Sun, 06 Nov 1994 08:49:37 GMT"
 
-BYTE_KINDS = ("equals", "starts_with", "ends_with", "contains", "not_contains", "len", "min_len",
-              "max_len", "utf8")
-OTHER_KINDS = ("end", "read_result", "status", "reason", "version", "framing", "header", "trailer",
-               "body")
+BYTE_KINDS = (
+    "equals",
+    "starts_with",
+    "ends_with",
+    "contains",
+    "not_contains",
+    "len",
+    "min_len",
+    "max_len",
+    "utf8",
+)
+OTHER_KINDS = (
+    "end",
+    "read_result",
+    "status",
+    "reason",
+    "version",
+    "framing",
+    "header",
+    "trailer",
+    "body",
+)
 READ_RESULTS = ("data", "eof", "reset", "timeout")
 DAYS = (b"mon", b"tue", b"wed", b"thu", b"fri", b"sat", b"sun")
-MONTHS = (b"jan", b"feb", b"mar", b"apr", b"may", b"jun", b"jul", b"aug", b"sep", b"oct", b"nov",
-          b"dec")
+MONTHS = (
+    b"jan",
+    b"feb",
+    b"mar",
+    b"apr",
+    b"may",
+    b"jun",
+    b"jul",
+    b"aug",
+    b"sep",
+    b"oct",
+    b"nov",
+    b"dec",
+)
 
 
 @dataclass
@@ -46,20 +75,32 @@ class Capture:
     norm: bytes = b""
     end: str = OPEN
     resp: Parsed | None = None
-    read_result: str = ""              # read_once only
+    read_result: str = ""  # read_once only
 
 
 # ---- normalization ----
+
 
 def _fixdate_at(s: bytes, p: int) -> bool:
     if p + 29 > len(s):
         return False
     low = s[p : p + 29].lower()
-    return (low[0:3] in DAYS and low[3:5] == b", " and low[5:7].isdigit() and low[7:8] == b" "
-            and low[8:11] in MONTHS and low[11:12] == b" " and low[12:16].isdigit()
-            and low[16:17] == b" " and low[17:19].isdigit() and low[19:20] == b":"
-            and low[20:22].isdigit() and low[22:23] == b":" and low[23:25].isdigit()
-            and low[25:29] == b" gmt")
+    return (
+        low[0:3] in DAYS
+        and low[3:5] == b", "
+        and low[5:7].isdigit()
+        and low[7:8] == b" "
+        and low[8:11] in MONTHS
+        and low[11:12] == b" "
+        and low[12:16].isdigit()
+        and low[16:17] == b" "
+        and low[17:19].isdigit()
+        and low[19:20] == b":"
+        and low[20:22].isdigit()
+        and low[22:23] == b":"
+        and low[23:25].isdigit()
+        and low[25:29] == b" gmt"
+    )
 
 
 def normalize(b: bytes) -> bytes:
@@ -87,9 +128,12 @@ def normalize(b: bytes) -> bytes:
 
 # ---- step assertions ----
 
+
 def _need_resp(cap: Capture, kind: str) -> Parsed:
     if cap.resp is None:
-        raise CaseError(f"assertion {json_str(kind)} is only valid on a read_response step")
+        raise CaseError(
+            f"assertion {json_str(kind)} is only valid on a read_response step"
+        )
     return cap.resp
 
 
@@ -108,7 +152,9 @@ def check_simple(kind: str, v, m: dict, cap: Capture, variables: dict) -> None:
         else:
             raise CaseError(f"end: unknown value {json_str(v)}")
         if not ok:
-            raise CaseError(f"expected end {json_str(v)}, connection state is {json_str(cap.end)}")
+            raise CaseError(
+                f"expected end {json_str(v)}, connection state is {json_str(cap.end)}"
+            )
         return
     if kind == "read_result":
         if not cap.read_result:
@@ -123,10 +169,14 @@ def check_simple(kind: str, v, m: dict, cap: Capture, variables: dict) -> None:
             raise CaseError("read_result: the array must not be empty")
         for w in wants:
             if w not in READ_RESULTS:
-                raise CaseError(f"read_result: unknown value {json_str(w)} (expected one of "
-                                f"{_str_list(READ_RESULTS)})")
+                raise CaseError(
+                    f"read_result: unknown value {json_str(w)} (expected one of "
+                    f"{_str_list(READ_RESULTS)})"
+                )
         if cap.read_result not in wants:
-            raise CaseError(f"expected read_result in {_str_list(wants)}, got {json_str(cap.read_result)}")
+            raise CaseError(
+                f"expected read_result in {_str_list(wants)}, got {json_str(cap.read_result)}"
+            )
         return
     if kind == "status":
         resp = _need_resp(cap, kind)
@@ -139,27 +189,35 @@ def check_simple(kind: str, v, m: dict, cap: Capture, variables: dict) -> None:
         resp = _need_resp(cap, kind)
         want = decode_bytes(v, variables)
         if resp.reason != want:
-            raise CaseError(f"expected reason {show(want, 200)}, got {show(resp.reason, 200)}")
+            raise CaseError(
+                f"expected reason {show(want, 200)}, got {show(resp.reason, 200)}"
+            )
         return
     if kind == "version":
         resp = _need_resp(cap, kind)
         if not isinstance(v, str):
             raise CaseError("version: expected a string")
         if latin1(resp.version) != v:
-            raise CaseError(f"expected version {json_str(v)}, got {json_str(latin1(resp.version))}")
+            raise CaseError(
+                f"expected version {json_str(v)}, got {json_str(latin1(resp.version))}"
+            )
         return
     if kind == "framing":
         resp = _need_resp(cap, kind)
         if not isinstance(v, str):
             raise CaseError("framing: expected a string")
         if resp.framing != v:
-            raise CaseError(f"expected framing {json_str(v)}, got {json_str(resp.framing)}")
+            raise CaseError(
+                f"expected framing {json_str(v)}, got {json_str(resp.framing)}"
+            )
         return
     if kind == "body":
         resp = _need_resp(cap, kind)
         want = decode_bytes(v, variables)
         if resp.body != want:
-            raise CaseError(f"expected decoded body {show(want, 400)}, got {show(resp.body, 400)}")
+            raise CaseError(
+                f"expected decoded body {show(want, 400)}, got {show(resp.body, 400)}"
+            )
         return
 
     # the byte kinds, on the selected scope
@@ -186,13 +244,17 @@ def check_simple(kind: str, v, m: dict, cap: Capture, variables: dict) -> None:
         n = len(subject)
         ok = n == v if kind == "len" else n >= v if kind == "min_len" else n <= v
         if not ok:
-            raise CaseError(f"expected {kind} {v}{where}, got length {n}: {show(subject, 300)}")
+            raise CaseError(
+                f"expected {kind} {v}{where}, got length {n}: {show(subject, 300)}"
+            )
         return
     if kind == "utf8":
         if not isinstance(v, bool):
             raise CaseError("utf8: expected a boolean")
         if is_valid_utf8(subject) != v:
-            raise CaseError(f"expected {'valid' if v else 'invalid'} UTF-8{where}, got {show(subject, 600)}")
+            raise CaseError(
+                f"expected {'valid' if v else 'invalid'} UTF-8{where}, got {show(subject, 600)}"
+            )
         return
     want = decode_bytes(v, variables)
     s, w = (subject.lower(), want.lower()) if ci else (subject, want)
@@ -207,8 +269,10 @@ def check_simple(kind: str, v, m: dict, cap: Capture, variables: dict) -> None:
     else:
         ok = w not in s
     if not ok:
-        raise CaseError(f"expected {kind} {show(want, 300)}{where}{' (case-insensitive)' if ci else ''}, "
-                        f"got {show(subject, 800)}")
+        raise CaseError(
+            f"expected {kind} {show(want, 300)}{where}{' (case-insensitive)' if ci else ''}, "
+            f"got {show(subject, 800)}"
+        )
 
 
 def check_field(kind: str, m: dict, cap: Capture, variables: dict) -> None:
@@ -226,22 +290,30 @@ def check_field(kind: str, m: dict, cap: Capture, variables: dict) -> None:
         if not isinstance(x, bool):
             raise CaseError("present: expected a boolean")
         if x != (len(vals) > 0):
-            raise CaseError(f"expected {kind} {json_str(name)} to be {'present' if x else 'absent'}; "
-                            f"fields: {fields_show(fields)}")
+            raise CaseError(
+                f"expected {kind} {json_str(name)} to be {'present' if x else 'absent'}; "
+                f"fields: {fields_show(fields)}"
+            )
     if "count" in m:
         checked = True
         x = m["count"]
         if not is_u64(x):
             raise CaseError("count: expected an integer")
         if len(vals) != x:
-            raise CaseError(f"expected {x} {kind} field(s) {json_str(name)}, found {len(vals)}")
+            raise CaseError(
+                f"expected {x} {kind} field(s) {json_str(name)}, found {len(vals)}"
+            )
     if "value" in m:
         checked = True
         want = decode_bytes(m["value"], variables)
         if not vals:
-            raise CaseError(f"expected {kind} {json_str(name)} = {show(want, 200)}, field absent")
+            raise CaseError(
+                f"expected {kind} {json_str(name)} = {show(want, 200)}, field absent"
+            )
         if vals[0][1] != want:
-            raise CaseError(f"expected {kind} {json_str(name)} = {show(want, 200)}, got {show(vals[0][1], 200)}")
+            raise CaseError(
+                f"expected {kind} {json_str(name)} = {show(want, 200)}, got {show(vals[0][1], 200)}"
+            )
     if "values" in m:
         checked = True
         x = m["values"]
@@ -249,9 +321,11 @@ def check_field(kind: str, m: dict, cap: Capture, variables: dict) -> None:
             raise CaseError("values: expected an array")
         wants = [decode_bytes(item, variables) for item in x]
         if wants != [v for _, v in vals]:
-            raise CaseError(f"expected {kind} {json_str(name)} values "
-                            f"{_str_list(latin1(w) for w in wants)}, got "
-                            f"{_str_list(latin1(v) for _, v in vals)}")
+            raise CaseError(
+                f"expected {kind} {json_str(name)} values "
+                f"{_str_list(latin1(w) for w in wants)}, got "
+                f"{_str_list(latin1(v) for _, v in vals)}"
+            )
     if not checked:
         raise CaseError(f"{kind} assertion needs one of value, values, present, count")
 
@@ -261,7 +335,9 @@ def check(a, cap: Capture, variables: dict) -> None:
     if not isinstance(a, dict):
         raise CaseError(f"assertion must be an object: {json_text(a)}")
     if "regex" in a or "not_regex" in a:
-        raise CaseError("regex assertions are not supported (SPEC.md section 10: use the byte kinds or utf8)")
+        raise CaseError(
+            "regex assertions are not supported (SPEC.md section 10: use the byte kinds or utf8)"
+        )
     kinds = [k for k in a if k in BYTE_KINDS or k in OTHER_KINDS]
     if len(kinds) != 1:
         raise CaseError(f"assertion needs exactly one kind key, found {json_text(a)}")
@@ -285,9 +361,13 @@ def json_equal(a, b) -> bool:
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
         return type(a) is type(b) and a == b
     if isinstance(a, dict) and isinstance(b, dict):
-        return len(a) == len(b) and all(k in b and json_equal(v, b[k]) for k, v in a.items())
+        return len(a) == len(b) and all(
+            k in b and json_equal(v, b[k]) for k, v in a.items()
+        )
     if isinstance(a, list) and isinstance(b, list):
-        return len(a) == len(b) and all(json_equal(x, y) for x, y in zip(a, b, strict=True))
+        return len(a) == len(b) and all(
+            json_equal(x, y) for x, y in zip(a, b, strict=True)
+        )
     return type(a) is type(b) and a == b
 
 
@@ -318,7 +398,7 @@ def matches(pat, act, variables: dict) -> bool:
     pattern; raises CaseError on a bad pattern."""
     if isinstance(pat, dict):
         if len(pat) == 1:
-            (key, arg), = pat.items()
+            ((key, arg),) = pat.items()
             if key.startswith("$"):
                 return _match_op(key, arg, act, variables)
         if not isinstance(act, dict):
@@ -329,5 +409,7 @@ def matches(pat, act, variables: dict) -> bool:
     if isinstance(pat, str) and isinstance(act, str):
         return substitute(pat, variables, True) == act
     if isinstance(pat, list) and isinstance(act, list):
-        return len(pat) == len(act) and all(matches(p, a, variables) for p, a in zip(pat, act, strict=True))
+        return len(pat) == len(act) and all(
+            matches(p, a, variables) for p, a in zip(pat, act, strict=True)
+        )
     return json_equal(pat, act)

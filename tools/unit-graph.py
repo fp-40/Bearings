@@ -7,6 +7,7 @@ Exit status 1 on a cycle.
 
 Usage: python3 -I tools/unit-graph.py <dir> [<dir> ...]
 """
+
 import os
 import re
 import sys
