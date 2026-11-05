@@ -6,16 +6,16 @@ milestone M1 ports. Each test maps to exactly one case in `cases/h1/`. The case 
 
 This manifest records how the cases were ported and checked in M1, with the Rust runner of that
 time against hyper's reference server (`reference-server/`). Both were removed on 2026-11-04: the
-cases hold the expected values, the runner is the Pascal program in `runner/` (SPEC.md section 1),
-and `pascal-server/gate.sh` checks the cases against the Pascal server. Since then some cases were
+cases hold the expected values, the runner is the Python program in `runner/crun` (SPEC.md section 1),
+and `tests/test_conformance.py` checks the cases against the Pascal server. Since then some cases were
 changed (every HTTP/1.1 request carries a `Host` line, RFC 9112 3.2, see
 docs/design/deviations.md; the regex assertions were replaced, SPEC.md section 10; `upgrades`
 and `http_connect`, which needed hyper's `without_shutdown()` mode, were removed, and
 `upgrades_new` / `http_connect_new` cover the same upgrades with `with_upgrades`), so the
 `target/release/...` commands below no longer run. The mutation check now runs as
-`build/conformance/runner run --server build/conformance/dumb-server conformance/cases/h1` (and
-with `'build/conformance/dumb-server --events'`); it gives the same outcome for every case as the
-Rust runner and dumb server did.
+`python3 conformance/runner/crun run --server 'python3 conformance/dumb-server/dumbserver.py'
+conformance/cases/h1` (and with `--events` after `dumbserver.py`); it gives the same outcome for
+every case as the Rust runner and dumb server did.
 
 ## Summary
 
@@ -43,7 +43,7 @@ All commands run from `conformance/` after `cargo build --release`.
    target/release/reference-server cases/h1` gave `same=104 different=0 pending=1 invalid=0` in
    4 runs (3 before the `http1_allow_half_close` change below, 1 after it). As a check that diff
    mode detects differences, reference vs `dumb-server --events` gave `different=104`.
-3. **Mutation check (weak assertions).** `dumb-server/` is a workspace binary that implements
+3. **Mutation check (weak assertions).** `dumb-server/` is a program that implements
    the process protocol (SPEC section 3: `LISTENING`, control acks, `exit`) and ignores the
    server spec. For each `\r\n\r\n` it receives, it writes `HTTP/1.1 200 OK\r\ncontent-length:
    0\r\n\r\n`, and it closes on client EOF. By default it emits no events except control acks.

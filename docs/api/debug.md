@@ -42,5 +42,5 @@ the program that compiles it. They keep the `WD_` prefix.
   (`bearings.rt.sync`). The spin locks, parkers and atomic accessors get
   happens-before annotations through valgrind client requests and are not
   inlined, so `tools/drd.supp` can suppress the reports on the
-  synchronization words themselves. `tests/unit/run_all.sh` runs the
+  synchronization words themselves. `tests/test_full_tier.py` runs the
   worker tests this way.

@@ -1,6 +1,6 @@
 # 9. Verification
 
-**Unit suites** (`tests/unit/run_all.sh`, built with `-Sa -Cr -Co -Ct`):
+**Unit suites** (`tests/test_unit_suites.py`, built with `-Sa -Cr -Co -Ct`):
 `test_parser`, `test_codec`, `test_role`, `test_headers_validate`,
 `test_rt_sys`, `test_rt_timer`, `test_rt_loop`, `test_rt_net`,
 `test_rt_readbuf`, `test_h1_io`, `test_h1_conn`, `test_body_chan`,
@@ -8,8 +8,8 @@
 the wake-source check runs in every test), `test_workers`, `test_server`,
 `test_server_ops` (real sockets through `TServer`), `test_ws_frame`,
 `test_ws_handshake`, `test_ws_conn` and `test_ws_echo` (a WebSocket echo
-server on real sockets). The script prints the total (`unit tests run: N`;
-1089 at the time of writing). The suites that own memory across threads
+server on real sockets). Every test method is a pytest subtest (about
+1100 of them). The suites that own memory across threads
 (`test_h1_conn`, `test_body_chan`, `test_exchange`, `test_h1_dispatch`,
 `test_workers`, `test_server`, `test_server_ops`, `test_ws_conn`,
 `test_ws_echo`) run once more under heaptrc (`-gh`) and must report 0
@@ -55,7 +55,7 @@ head, and an HTTP/2 preface split before its 24th byte.
 **The hot-path check** (`tools/check-hot-asm.sh --s7`, section 7.4) runs
 last.
 
-**Expected-value tests** (`tests/unit/test_golden.sh`, in the fast tier):
+**Expected-value tests** (`tests/test_golden.py`, in the fast tier):
 the parser over 136 942 generated inputs (`test_parser_corpus.py`, 50 000
 of them random, seed 1; the script checks the corpus's SHA-256), request-head
 parsing and URIs over 41 000 cases, the body decoder over 10 000 cases and
@@ -77,24 +77,24 @@ differential tests that ran hyper and httparse next to the Pascal code;
 they were replaced because a difference from hyper had become a reason to
 investigate, not a defect (the bare-LF trailer bug was in hyper too, so the
 differential test could not see it). After an intended change of
-behaviour, `UPDATE=1 tests/unit/test_golden.sh` lists every line that
+behaviour, `UPDATE=1 pytest -m golden` lists every line that
 changes and rewrites the expected files.
 
 **The conformance harness** (`conformance/`): `SPEC.md` is the contract
 between the case files (hyper's 105 HTTP/1 server tests ported to data,
 `cases/h1/*.json`; the expected values in them are hyper's behaviour, with the
-deviations of section 10), the runner (the client, a Pascal program that uses no Bearings unit) and a conformance
+deviations of section 10), the runner (the client, a Python program of the standard library that shares no code with the server) and a conformance
 server. The Pascal conformance server
 (`conformance/pascal-server/beconf`) is a thin wrapper around
 `bearings.server`: everything on the wire comes from the library, the
 wrapper only configures the connection from the spec, installs the named
-handler and reports events. `conformance/pascal-server/gate.sh` runs the
+handler and reports events. `tests/test_conformance.py` runs the
 cases in assertion mode, four cases at a time (`JOBS`), once by default
 (`RUNS=5` before a commit catches intermittent failures), and requires
 `passed=101 failed=0 pending=1` every time (one case is pending by design in `MANIFEST.md`), then
 the 23 extra cases of `extra/extra-cases.json` (behaviours the 105 do not
 reach); `LOOPS=4` runs the same with four loops sharing one listener.
-`gate_worker.sh` runs it with every handler on a worker; one case,
+The same test runs them with every handler on a worker; one case,
 `chunk2::pipeline_enabled`, is allowed to fail there
 (`worker-exceptions.txt`): its wire assertion needs the second handler to
 answer in its first poll, which no worker handler does; the probe cases of

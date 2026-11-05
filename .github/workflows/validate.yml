@@ -47,6 +47,8 @@ jobs:
       # Free Pascal 3.2.2 (and uv, unused here)
       - uses: ./.github/actions/setup
 
+      # pytest runs in the python/ project environment; the pybearings
+      # tests have their own job above
       - name: "Unit tests"
         run: make test-pascal
 

@@ -226,10 +226,10 @@ FreeBSD too (the shared page); nothing else changes.
 
 ### 10. Tests
 
-- `tests/unit/run_all.sh` on FreeBSD: `timeout` is `gtimeout` from
-  `sysutils/coreutils`; the drd, stress, memcheck, split-fuzz and hot-asm
-  steps are host-only and skipped, as for `TARGET=aarch64`. A `TARGET=
-  freebsd` or a detection on `uname` picks this.
+- the pytest runner (`tests/`) on FreeBSD: the drd, stress, memcheck,
+  split-fuzz, golden, hot-asm and conformance tests are host-only and
+  skipped, as for `TARGET=aarch64`. A `TARGET=freebsd` or a detection on
+  `uname` picks this.
 - `test_rt_sys` uses `taskset` for the affinity cases; FreeBSD has
   `cpuset -l`. The FreeBSD variant of the suite compares the new
   routines with the RTL.

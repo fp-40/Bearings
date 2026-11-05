@@ -51,9 +51,9 @@ ARM64 `libgcc_s` package without installing it, and writes two wrappers:
 `build/tools/bin/fpc-aarch64` (fpc for the cross target) and
 `build/tools/bin/run-aarch64` (runs an ARM64 binary under qemu).
 
-`TARGET=aarch64 tests/unit/run_all.sh` then builds and runs the unit
+`TARGET=aarch64 uv run --project python pytest -m fast` then builds and runs the unit
 suites and their heaptrc runs in `build/unit-aarch64/`; the valgrind, drd,
-stress, echo, split-fuzz and hot-asm steps are x86_64-only and skipped.
+stress, echo, split-fuzz, golden, hot-asm and conformance tests are x86_64-only and skipped.
 `FPC=build/tools/bin/fpc-aarch64 tools/compile-each-unit.sh` compiles
 every unit on its own for ARM64. `tools/install-package.sh aarch64`
 installs the cross-built units as a package.

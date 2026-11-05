@@ -42,12 +42,13 @@ Contents:
 
 ## 1. Build and commands
 
-The runner is a Free Pascal program (`runner/`), like the server; it uses none of the Bearings
-units, so it shares no code with the server it checks. Requirements: Free Pascal 3.2.2.
+The runner is a Python program (`runner/crun`, standard library only, Python 3.14); it shares no
+code with the server it checks. Nothing is built for it; the conformance server is built by
+`pascal-server/build.sh` (`tests/test_conformance.py` builds it itself and runs the cases through the
+library API below).
 
 ```sh
-conformance/runner/build.sh            # builds build/conformance/{runner,dumb-server}, runs `runner selftest`
-R=build/conformance/runner
+R="python3 conformance/runner/crun"
 
 # run the cases against a server command (--server is required)
 $R run --server 'path/to/server' conformance/cases/h1
@@ -55,7 +56,7 @@ $R run --server 'path/to/server' --filter pipeline conformance/cases/h1/chunk2.j
 $R run --jobs 4 --server 'path/to/server' conformance/cases/h1    # 4 cases at a time
 
 # mutation check: a server that answers every request head with a fixed 200 (MANIFEST.md)
-$R run --server build/conformance/dumb-server conformance/cases/h1
+$R run --server 'python3 conformance/dumb-server/dumbserver.py' conformance/cases/h1
 
 # list cases (validates case syntax, does not start servers)
 $R list conformance/cases/h1
@@ -63,6 +64,9 @@ $R list conformance/cases/h1
 # the runner's own checks (JSON, byte strings, date normalization, UTF-8, assertion errors)
 $R selftest
 ```
+
+From Python (the pytest tier), `conformance/runner` on `sys.path` gives `crun.load_cases`,
+`crun.run_cases` and `crun.summary_line`, which the command line is a thin layer over.
 
 - `PATH` arguments are case files or directories. Directories are searched recursively for
   `*.json`, in sorted order.
@@ -81,11 +85,10 @@ indented failure details, server events and the server's stderr tail, or `PEND <
 `SUMMARY passed=<n> failed=<n> pending=<n> total=<n>`. Exit status: 0 if no case failed, 1 if any
 case failed or was invalid, 2 on usage errors or unreadable case files.
 
-Until 2026-11-04 the runner was a Rust program in a Cargo workspace (with hyper's reference server
-and a `diff` mode that compared two servers' transcripts). The Pascal runner was checked against it
-before it was removed: the same outcome, and for failing cases the same failing step or event
-pattern, for every case against `beconf` (inline, worker executor, four loops) and against the
-dumb server with and without `--events`.
+The runner was rewritten twice on 2026-11-04 (from Rust to Free Pascal, then to Python); each
+version was checked against the one before it: the same outcome, and for failing cases the same
+failing step or event pattern, for every case against `beconf` (inline, worker executor, four
+loops) and against the dumb server with and without `--events`.
 
 ---
 
@@ -99,9 +102,7 @@ above U+00FF never occur. Example: the bytes `61 0D 0A FF` are the JSON string `
 
 **In case files**, a byte string is either:
 
-- a JSON string, decoded with the same latin-1 mapping (a code point above U+00FF is an error;
-  the escape `\u0000` is not allowed anywhere in a case file, because the runner's JSON library
-  drops it: write a NUL byte as a `{"hex": "00"}` part);
+- a JSON string, decoded with the same latin-1 mapping (a code point above U+00FF is an error);
 - an array of parts, concatenated in order, where each part is
   - a JSON string (as above),
   - `{"repeat": <byte string>, "count": <n>}`: the byte string repeated `n` times,

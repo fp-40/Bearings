@@ -21,3 +21,4 @@ __pycache__/
 /python/src/bearings/bearings.h
 /python/.venv/
 /python/dist/
+.pytest_cache/

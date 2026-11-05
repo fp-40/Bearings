@@ -22,6 +22,7 @@ import random
 import struct
 import sys
 
+
 SEEDS = [
     b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
     b"POST /submit?x=1 HTTP/1.0\r\nContent-Length: 5\r\nX: y\r\n\r\nhello",
@@ -31,7 +32,7 @@ SEEDS = [
     b"GET / HTTP/1.1\r\nA: 1\r\nB: 2\r\nC: 3\r\nD: 4\r\nE: 5\r\nF: 6\r\n\r\n",
     b"Foo: bar\r\nBaz:qux \t\r\n\r\n",
     b"PATCH /a/b;c?d=e&f#g HTTP/1.1\r\nCookie: \r\nX-Empty:\r\nX-Tab:\tv\r\n\r\n",
-    b"M-SEARCH * HTTP/1.1\r\nST: ssdp:all\r\nMan: \"ssdp:discover\"\r\n\r\n",
+    b'M-SEARCH * HTTP/1.1\r\nST: ssdp:all\r\nMan: "ssdp:discover"\r\n\r\n',
     b"GET / HTTP/1.1\r\nBad\x00Name: v\r\nGood: v\r\n\r\n",
     b"GET / HTTP/1.1\r\nX: a\x01b\r\nGood: v\r\n\r\n",
     b"GET / HTTP/1.1\r\n: empty\r\nX\r\nY : z\r\n  fold\r\nOk: 1\r\n\r\n",

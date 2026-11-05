@@ -3,7 +3,6 @@ import socket
 import threading
 
 import pytest
-
 from conftest import WsClient
 
 from bearings import VERSION, FileWrapper, Listener, Server, WebSocketHandler

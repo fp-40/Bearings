@@ -35,20 +35,40 @@ Build output goes under `build/` (ignored by git).
 
 The `Makefile` runs the tests in tiers:
 
-- `make test`: the fast tier, about two minutes, run by CI on every push: the version check ([`tools/check-version.sh`](tools/check-version.sh)), the unit suites and their heaptrc runs, a split fuzz of 100 seeds, the expected-value tests ([`tests/unit/test_golden.sh`](tests/unit/test_golden.sh)), the hot-path assembler check, then the Python tests.
-- `make test-full`: the full tier (drd, the worker stress, the echo under memcheck, the split fuzz of 2000 seeds) and conformance ([`tests/conformance.sh`](tests/conformance.sh): the wire gate). It needs `tools/get-tools.sh`.
+- `make test`: the fast tier, about two minutes, run by CI on every push: the version check ([`tools/check-version.sh`](tools/check-version.sh)), the unit suites and their heaptrc runs, a split fuzz of 100 seeds, the expected-value tests, the hot-path assembler check and the Python tests.
+- `make test-full`: the full tier: drd, the worker stress, the echo under memcheck, the split fuzz of 2000 seeds, and the wire conformance gate. It needs `tools/get-tools.sh`.
 - `make test-autobahn` and `make benchmark`: the Autobahn suite and `bench/run_gate.sh`, by hand.
 - `make release BUMP=patch|minor|major|X.Y.Z`: [`tools/release.sh`](tools/release.sh) gives Bearings and pybearings the new version, runs every tier, and after a confirmation commits, tags, pushes and creates the GitHub release, which publishes pybearings to PyPI. `DRY_RUN=1` stops before the commit.
 
-The scripts the tiers run:
+Both tiers are one pytest run ([`pytest.ini`](pytest.ini)); the tiers are the marks `fast` and `full`. pytest runs in the `python/` project environment, which builds `libbearings.so` for the Python tests: `uv run --project python pytest ...`. The test files in [`tests/`](tests) build and run the Pascal programs and report every fpcunit test method as a subtest, so the usual pytest selection applies to everything:
+
+```sh
+P="uv run --project python pytest"
+$P -k h1_conn                               # one unit suite
+$P -k h1_conn --fpc-suite=TTestConnState    # one suite class (or Class.Method)
+$P -m golden                                # the expected-value tests
+$P -m "full and not drd"                    # the full tier without the drd runs
+$P -m conformance                           # the wire conformance gate
+$P --lf                                     # what failed last time
+$P -m "unit and not heaptrc" -n 4           # suites in parallel (pytest-xdist)
+```
+
+What the test files run:
+
+- [`tests/test_unit_suites.py`](tests/test_unit_suites.py): every fpcunit suite with the unit-test flags, then the suites that own memory across threads again under heaptrc (0 unfreed blocks). `TARGET=aarch64` cross-compiles them for ARM64 and runs them under qemu (`docs/design/arm64.md`); the other tests are host-only then.
+- [`tests/test_golden.py`](tests/test_golden.py): the parser, the request head rules and the body decoder against the expected values in `tests/golden` (`UPDATE=1` rewrites them after an intended change).
+- [`tests/test_split_fuzz.py`](tests/test_split_fuzz.py): the split fuzz, 100 seeds in the fast tier and 2000 in the full tier.
+- [`tests/test_checks.py`](tests/test_checks.py): the version check and the hot-path assembler check ([`tools/check-hot-asm.sh`](tools/check-hot-asm.sh), which fails when a routine of the request path got an implicit exception frame).
+- [`tests/test_full_tier.py`](tests/test_full_tier.py): the worker, WebSocket and C-interface suites under valgrind drd, the worker stress ([`tools/s7-stress.sh`](tools/s7-stress.sh)) and the echo test under valgrind memcheck ([`tests/unit/test_rt_echo.sh`](tests/unit/test_rt_echo.sh)).
+- [`tests/test_conformance.py`](tests/test_conformance.py): the wire conformance cases (`conformance/cases`) against the Pascal conformance server `beconf`, with the inline and the worker executor; the case runner is a Python program in `conformance/runner/crun` (standard library only, no Bearings code).
+- `python/tests`: the pybearings tests (`cd python && make test` runs them on their own, with the doctests).
+
+Other scripts:
 
 - [`examples/README.md`](examples/README.md): the command that builds the four example programs into `build/examples/`.
 - [`tools/get-tools.sh`](tools/get-tools.sh): fetches valgrind, wrk and wrk2 into `build/tools/`.
-- [`tests/unit/run_all.sh`](tests/unit/run_all.sh): every unit suite (also under heaptrc and valgrind drd), the worker stress test, the echo test under valgrind, the split fuzz and the hot-path assembler check ([`tools/check-hot-asm.sh`](tools/check-hot-asm.sh), which fails when a routine of the request path got an implicit exception frame); `TIER=fast` or `TIER=full` runs one tier. `TARGET=aarch64 tests/unit/run_all.sh` cross-compiles the unit suites for ARM64 and runs them under qemu (`docs/design/arm64.md`).
 - [`tools/get-cross-aarch64.sh`](tools/get-cross-aarch64.sh): builds the ARM64 cross compiler into `build/tools/` (`docs/design/arm64.md`).
 - [`tools/install-package.sh`](tools/install-package.sh): installs the units as an FPC package, so that programs compile without `-Fu` (section "Installing as a package").
-- [`conformance/pascal-server/gate.sh`](conformance/pascal-server/gate.sh): the wire conformance cases (`conformance/cases`) against the Pascal conformance server; the case runner is a Pascal program in `conformance/runner/` (it uses no Bearings unit).
-- [`tests/unit/test_golden.sh`](tests/unit/test_golden.sh): the parser, the request head rules and the body decoder against the expected values in `tests/golden` (part of `make test`; `UPDATE=1` rewrites them after an intended change).
 - [`conformance/autobahn/run.sh`](conformance/autobahn/run.sh): the Autobahn WebSocket test suite (Docker) against `examples/ws_echo.pas`; run by hand.
 - `bench/`:
   - the throughput benchmarks against hyper ([`bench/run_gate.sh`](bench/run_gate.sh) and [`bench/plaintext.pas`](bench/plaintext.pas))

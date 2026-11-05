@@ -1,40 +1,41 @@
-# The test tiers, the benchmark and the release.
+# The test tiers, the benchmark and the release. Every test runs through
+# pytest (pytest.ini, tests/*.py, python/tests); the tiers are marks.
 #
-#   make test           the fast tier: the version check, the Pascal unit
-#                       suites with heaptrc, a short split fuzz, the
-#                       expected-value tests (tests/unit/test_golden.sh),
-#                       the hot-path asm check, then the Python tests (CI
-#                       runs this on every push)
-#   make test-full      the full tier (drd, stress, echo under memcheck,
-#                       the long split fuzz) and conformance (the wire
-#                       gate); needs tools/get-tools.sh
+#   make test           the fast tier (pytest -m fast): the version check,
+#                       the Pascal unit suites with heaptrc, a short split
+#                       fuzz, the expected-value tests, the hot-path asm
+#                       check and the pybearings tests (CI runs this on
+#                       every push)
+#   make test-full      the full tier (pytest -m full): drd, the worker
+#                       stress, the echo under memcheck, the long split fuzz
+#                       and the wire conformance gate; needs tools/get-tools.sh
 #   make test-autobahn  the Autobahn WebSocket suite (Docker)
 #   make benchmark      the throughput gate against hyper (bench/run_gate.sh)
 #   make release BUMP=patch|minor|major|X.Y.Z
 #                       full and conformance, then one version for Bearings
 #                       and pybearings, tag and GitHub release (PyPI);
 #                       tools/release.sh
+#
+# pytest runs in the python/ project environment (uv), which also builds
+# libbearings.so for the pybearings tests. Any pytest selection works the
+# same way, e.g. `$(PYTEST) -k h1_conn`, `$(PYTEST) -m golden`,
+# `$(PYTEST) -m "full and not drd"` (README.md, "Building and testing").
+
+PYTEST = uv run --project python --quiet pytest
 
 .PHONY: test test-pascal test-python test-full test-autobahn benchmark release
 
-# Each step runs even when one before it failed (a version mismatch does
-# not hide the test results); the target fails at the end if any did.
 test:
-	@status=0; $(MAKE) test-pascal || status=1; $(MAKE) test-python || status=1; exit $$status
+	$(PYTEST) -m fast
 
 test-pascal:
-	@status=0; tools/check-version.sh || status=1; \
-	TIER=fast tests/unit/run_all.sh || status=1; exit $$status
+	$(PYTEST) -m "fast and not python"
 
-# uv compiles libbearings.so again when the Pascal sources changed
-# (cache-keys in python/pyproject.toml)
 test-python:
-	cd python && uv sync --quiet --group dev
-	$(MAKE) -C python test
+	$(PYTEST) -m python
 
 test-full:
-	TIER=full tests/unit/run_all.sh
-	tests/conformance.sh
+	$(PYTEST) -m full
 
 test-autobahn:
 	conformance/autobahn/run.sh
