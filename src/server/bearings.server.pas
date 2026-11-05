@@ -1334,6 +1334,7 @@ var
     begin
       L.Limit := @FConnCount;
       L.MaxConns := FCfg.MaxConnections;
+      L.OnSlotBack := @ConnReleased;
     end;
   end;
 

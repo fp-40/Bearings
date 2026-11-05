@@ -1271,6 +1271,11 @@ begin
   AssertEquals('every waiting connection was served', 12, Served);
   AssertEquals(16, Calls);
   AssertTrue('all slots back', WaitCounted(Srv, 0));
+  { every listener resumed by the releases themselves, not by the fallback
+    timer: a slot a listener took and gave back goes through the same
+    release path (before 2026-11-04 it did not, and a listener that paused
+    while another loop's release saw the count still raised by that slot
+    stayed paused for ACCEPT_PAUSE_MS) }
   for I := 0 to 3 do
     AssertFalse('loop ' + IntToStr(I) + ' listener resumed', Srv.Loops[I].Listener.LimitPaused);
 end;

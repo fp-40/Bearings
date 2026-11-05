@@ -55,8 +55,13 @@
   wait in the kernel's accept queue, bounded by the listen backlog, and
   are not refused. The slot is released by whoever closes the connection
   (bearings.server, when the connection task has released everything),
-  which also calls ResumeFromLimit on every loop's listeners; a timer of
-  ACCEPT_PAUSE_MS is the fallback should that call not come. With the
+  which also calls ResumeFromLimit on every loop's listeners. A slot the
+  listener took and did not use (the count was over the cap, or there was
+  nothing to accept) goes back through OnSlotBack, the same release path:
+  a plain decrement would not resume the listeners, and a release on
+  another loop that saw the count still raised by this slot did not either
+  (the listener then stayed paused until the timer). A timer of
+  ACCEPT_PAUSE_MS is the fallback should the release call not come. With the
   limit off (MaxConns = 0) the accept path tests one integer and nothing
   else. The process's own limit on open descriptors (RLIMIT_NOFILE) bounds
   the connections too: RaiseFdLimit, called by the server at Start when
@@ -150,6 +155,12 @@ type
     handler must release whatever else it created. }
   TAcceptEvent = procedure(Loop: TLoop; var Fd: cint; const Peer: TSockAddrStorage) of object;
 
+  { Called when the listener gives back a slot of the connection limit it
+    did not use (see the unit header); the handler decrements the count as
+    a closing connection does. Without a handler the listener decrements
+    Limit^ itself. }
+  TSlotBackEvent = procedure of object;
+
   TListener = class(TIoTask)
   private
     FOnAccept: TAcceptEvent;
@@ -163,6 +174,7 @@ type
     procedure SetupFailed(E: Exception);
     procedure Pause;
     procedure PauseForLimit;
+    procedure GiveSlotBack;
     procedure StopResumeTimer;
     procedure CloseFd;
   public
@@ -176,6 +188,7 @@ type
       before the loop runs. }
     Limit: PLongInt;
     MaxConns: Integer;
+    OnSlotBack: TSlotBackEvent;
     { Registers Fd with the loop's epoll set with Events: EPOLLIN
       (level-triggered: reported on every epoll_wait while the accept queue
       is not empty), or EPOLLIN or EPOLLEXCLUSIVE for amSharedExclusive.
@@ -378,6 +391,14 @@ begin
   Loop.Timers.Arm(@FResume, Loop.NowMs + ACCEPT_PAUSE_MS);
 end;
 
+procedure TListener.GiveSlotBack;
+begin
+  if Assigned(OnSlotBack) then
+    OnSlotBack
+  else
+    AtomicDec(Limit^);
+end;
+
 procedure TListener.ResumeFromLimit;
 begin
   if not FLimitPaused then
@@ -445,7 +466,7 @@ begin
     if MaxConns > 0 then
       if (AtomicInc(Limit^) > MaxConns) and (Max >= 0) then
       begin
-        AtomicDec(Limit^);
+        GiveSlotBack;
         PauseForLimit;
         Exit;
       end;
@@ -463,7 +484,7 @@ begin
         Exit;
     end
     else if MaxConns > 0 then
-      AtomicDec(Limit^);           { nothing was accepted: the slot goes back }
+      GiveSlotBack;                { nothing was accepted: the slot goes back }
     if R >= 0 then
       Continue
     else if R = -ESysEAGAIN then

@@ -32,7 +32,7 @@ program test_rt_net;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   Classes, SysUtils, BaseUnix, Sockets, fpcunit, testregistry, consoletestrunner,
-  ctypes, bearings.rt.sys, bearings.rt.clock, bearings.rt.timer, bearings.rt.loop, bearings.rt.net, bearings.rt.proxyproto,
+  ctypes, bearings.rt.sys, bearings.rt.sync, bearings.rt.clock, bearings.rt.timer, bearings.rt.loop, bearings.rt.net, bearings.rt.proxyproto,
   bearings.http1.encode;
 
 type
@@ -59,6 +59,7 @@ type
     procedure OpenListener_ports_and_errors;
     procedure Listener_accepts_at_most_64_per_event;
     procedure Listener_drain_and_close;
+    procedure Limit_slot_given_back_through_OnSlotBack;
     { decision 11 (step H) }
     procedure Accept_emfile_pauses_listener_and_resumes;
     procedure Accept_setup_exception_closes_fd_and_continues;
@@ -616,6 +617,75 @@ begin
     L.RunIteration;
   until Flag;
   L.Timers.Remove(@T);
+end;
+
+type
+  { the server's release path: decrements the count (and would resume the
+    paused listeners); counts the calls }
+  TSlotCounter = class
+    Count: PLongInt;
+    Backs: Integer;
+    procedure Back;
+  end;
+
+procedure TSlotCounter.Back;
+begin
+  Inc(Backs);
+  AtomicDec(Count^);
+end;
+
+{ A slot of the connection limit the listener took and did not use goes
+  back through OnSlotBack (the server's release path, which resumes the
+  paused listeners), not by a plain decrement: once when accept4 found
+  nothing (EAGAIN), once when the count was over the cap. }
+procedure TTestNet.Limit_slot_given_back_through_OnSlotBack;
+var
+  Sink: TAcceptSink;
+  Ctr: TSlotCounter;
+  Li: TListener;
+  Count: LongInt;
+  C1, C2: cint;
+begin
+  OpenLoopback(True);
+  fpfcntl(LFd, F_SETFL, fpfcntl(LFd, F_GETFL) or O_NONBLOCK);
+  Sink := TAcceptSink.Create;
+  Ctr := TSlotCounter.Create;
+  Li := TListener.Create(L, LFd, @Sink.OnAccept);
+  LFd := -1;
+  C1 := -1;
+  C2 := -1;
+  try
+    Count := 0;
+    Li.Limit := @Count;
+    Li.MaxConns := 10;
+    Ctr.Count := @Count;
+    Li.OnSlotBack := @Ctr.Back;
+    C1 := Connect;
+    SettleKernel;
+    Tick(L);
+    AssertEquals('accepted', 1, Length(Sink.Fds));
+    AssertEquals('the accepted connection holds its slot', 1, Count);
+    AssertEquals('the slot taken before the EAGAIN went back through OnSlotBack', 1, Ctr.Backs);
+    AssertFalse('not paused', Li.LimitPaused);
+    { at the cap: the slot taken over it goes back the same way }
+    Count := 10;
+    C2 := Connect;
+    SettleKernel;
+    Tick(L);
+    AssertEquals('nothing accepted at the cap', 1, Length(Sink.Fds));
+    AssertTrue('paused by the limit', Li.LimitPaused);
+    AssertEquals('the count is back at the cap', 10, Count);
+    AssertEquals('the over-cap slot went back through OnSlotBack', 2, Ctr.Backs);
+  finally
+    Sink.CloseAll;
+    if C1 >= 0 then
+      fpClose(C1);
+    if C2 >= 0 then
+      fpClose(C2);
+    Li.Close;
+    Sink.Free;
+    Ctr.Free;
+  end;
 end;
 
 procedure TTestNet.Accept_emfile_pauses_listener_and_resumes;
