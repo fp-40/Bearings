@@ -1,5 +1,5 @@
 { bearings.test.scriptio - a scripted, recording TTransport for dispatcher-level
-  tests (docs/design.md section 9).
+  tests (docs/design/verification.md).
 
   Unlike bearings.test.mocktransport (a port of tokio_test::io, which asserts the
   exact bytes of every write), this transport records what is written and

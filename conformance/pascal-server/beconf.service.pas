@@ -1,5 +1,5 @@
 { beconf.service - SPEC 5 handlers, replies and bodies, the connection
-  observer and the byte-counting transport (docs/design.md section 9).
+  observer and the byte-counting transport (docs/design/verification.md).
   Test tooling: a thin wrapper, everything on the wire comes from bearings.http1.*.
 
   TConfService.Call does what the reference server's Svc::call does (in
@@ -20,7 +20,7 @@
   with OutcomeOf / ErrorDescription, and graceful_shutdown_on_accept
   (OnStart: after the dispatcher is set up, before its first Run).
 
-  --executor worker (docs/design.md section 9): TConfService.Call returns a
+  --executor worker (docs/design/verification.md): TConfService.Call returns a
   TConfWorkerCall (a TOffloadCall per call). Its first Poll, on the loop,
   does SPEC 5.5 step 3 (upgrade::on is a loop-thread call) and offloads;
   TConfBlockingHandler.Run does the rest on a worker: the body with the

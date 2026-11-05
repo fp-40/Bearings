@@ -1,5 +1,5 @@
-{ beconf - the bearings Pascal conformance server (conformance/SPEC.md; docs/design.md
-  section 9). Test tooling: a thin wrapper around bearings.server
+{ beconf - the bearings Pascal conformance server (conformance/SPEC.md;
+  docs/design/verification.md). Test tooling: a thin wrapper around bearings.server
   and bearings.http1.*; everything on the wire comes from the HTTP layer.
 
   Usage: beconf [--executor inline|worker] [--loops N] (--config <path> | --config-json <json>)
@@ -8,7 +8,7 @@
   One loop on the main thread (the reference server's current-thread
   runtime), one listener with mio's TcpListener::bind options (127.0.0.1:0,
   SO_REUSEADDR, backlog 128, no TCP_NODELAY), "LISTENING <port>" with one
-  write(2) before the loop runs. --executor worker (docs/design.md section 9): the
+  write(2) before the loop runs. --executor worker (docs/design/verification.md): the
   handlers run on the server's worker pool (TServerConfig.Workers = 0:
   Min(32, DefaultLoopCount + 4) threads) through TOffloadCall
   (beconf.service). --loops N (S8, N >= 1): N loops; loop 0 stays on the

@@ -456,7 +456,7 @@ begin
 end;
 
 { Maps a syntax error of bearings.http1.parser to a TH1ParseError. }
-function HttparseErrorToParse(E: THttpParseError): TH1ParseError; inline;
+function SyntaxErrorToParse(E: THttpParseError): TH1ParseError; inline;
 begin
   case E of
     peHeaderName, peHeaderValue, peNewLine, peToken: Result := h1peHeaderToken;
@@ -513,7 +513,7 @@ begin
           else
             Exit(Fail(h1peUri));
         end;
-        Exit(Fail(HttparseErrorToParse(R.Error)));
+        Exit(Fail(SyntaxErrorToParse(R.Error)));
       end;
   end;
 

@@ -1,5 +1,5 @@
-{ bench_role - micro-benchmark of the M2 codec hot paths (docs/design.md
-  section 9; the budget: parse 152 ns, encode 121 ns, +-10 %).
+{ bench_role - micro-benchmark of the M2 codec hot paths
+  (docs/design/verification.md; the budget: parse 152 ns, encode 121 ns, +-10 %).
 
   Same request and response as the design-phase bench_role: ServerParse of a TFB-like request;
   ServerEncode of a 200 with content-type + server, content-length 13 and

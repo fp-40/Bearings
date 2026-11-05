@@ -2,7 +2,7 @@
 
 Bearings is an HTTP/1.1 server library for Object Pascal (Free Pascal compiler): an event loop per CPU, a pool of worker threads for code that blocks, an HTTP/1.1 parser and encoder, and a `TServer` that ties them together. An application gives the server a service object; the server calls it once per request with a `TExchange` (the request and its response) and writes the response the service produces.
 
-It runs natively only on Linux (x86_64 and ARM64). On Windows it runs under WSL, and on macOS inside a container.
+It runs natively only on Linux: x86_64, and ARM64 as an experimental target (it builds and passes the unit suites under qemu, and has not run on ARM64 hardware yet; [`docs/design/arm64.md`](docs/design/arm64.md)). On Windows it runs under WSL, and on macOS inside a container.
 
 ## Features
 
@@ -14,7 +14,7 @@ It has no TLS and no HTTP/2. For TLS, put a reverse proxy such as NGINX in front
 
 ## Requirements
 
-Free Pascal 3.2.2 and Linux. Nothing else to run a program that uses the library.
+Free Pascal 3.2.2 and Linux 4.5 or later. Nothing else to run a program that uses the library.
 
 The tests and benchmarks also use Python 3, Rust/cargo (only for the benchmark against hyper), and valgrind, wrk and wrk2, fetched by `tools/get-tools.sh` into `build/tools/`.
 
@@ -51,7 +51,10 @@ $P -m "full and not drd"                    # the full tier without the drd runs
 $P -m conformance                           # the wire conformance gate
 $P --lf                                     # what failed last time
 $P -m "unit and not heaptrc" -n 4           # suites in parallel (pytest-xdist)
+$P -m full -v                               # every test method as it starts and ends
 ```
+
+A drd run takes minutes and prints nothing by itself. With `-v` (and without `-n`), each fpcunit test method is shown when it starts and when it ends, with its time, and the lines of the stress and echo scripts as they come. In any mode the same progress is in a file next to the run's output, which `tail -f` follows: `build/unit/drd/run-1.out.progress` for the first drd run of `test_workers`, `build/unit/<suite>.out.progress` for a unit suite.
 
 What the test files run:
 

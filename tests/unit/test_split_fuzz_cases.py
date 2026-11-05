@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Inputs of the split fuzz (tests/unit/test_split_fuzz.pas; docs/design.md
-section 9) from the conformance case files.
+"""Inputs of the split fuzz (tests/unit/test_split_fuzz.pas;
+docs/design/verification.md) from the conformance case files.
 
 Usage: python3 -I test_split_fuzz_cases.py <out file> <case file or dir>...
 

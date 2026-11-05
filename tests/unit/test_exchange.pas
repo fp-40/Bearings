@@ -1,4 +1,4 @@
-{ Tests for the inline parts of bearings.http.exchange (docs/design.md
+{ Tests for the inline parts of bearings.http.exchange (docs/design/,
   sections 5.3, 6 and 7; inline only):
   the call model driven the way the dispatcher drives it (Call in recv_msg,
   Poll in poll_msg, Drop exactly once, CompleteCall), an answer in the

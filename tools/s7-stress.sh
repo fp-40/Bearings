@@ -1,5 +1,5 @@
 #!/bin/sh
-# Step S7 evidence (docs/design.md section 9): the
+# Step S7 evidence (docs/design/verification.md): the
 # end-to-end worker stress (tests/unit/stress_workers.pas: TServer +
 # dispatcher + 16 workers, 24 client threads, 13 handler modes, a second
 # Share holder, random disconnects and RSTs, pipelining). It must print

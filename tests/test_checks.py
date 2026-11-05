@@ -1,6 +1,6 @@
 """The static checks of the fast tier: every place that names the version
 names the same one (tools/check-version.sh), and no hot-path routine has an
-implicit exception frame (tools/check-hot-asm.sh, docs/design.md 7.4;
+implicit exception frame (tools/check-hot-asm.sh, docs/design/memory.md 7.4;
 HOT_ASM_ARGS overrides its arguments, default --s7)."""
 
 import os

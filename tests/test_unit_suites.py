@@ -21,7 +21,7 @@ from harness import (
 )
 
 # suite -> extra compiler defines. test_h1_dispatch is built with -dWD_DEBUG
-# (the wake-source check of docs/design.md 5.10 runs in every test) and
+# (the wake-source check of docs/design/state-machine.md 5.10 runs in every test) and
 # -dWD_STALL (TTestDispatchStall); the define changes bearings.http1.dispatch's
 # fields, so it gets a unit directory of its own.
 SUITES = {

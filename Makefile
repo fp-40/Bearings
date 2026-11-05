@@ -26,16 +26,16 @@ PYTEST = uv run --project python --quiet pytest
 .PHONY: test test-pascal test-python test-full test-autobahn benchmark release
 
 test:
-	$(PYTEST) -m fast
+	$(PYTEST) -m fast -x -v
 
 test-pascal:
-	$(PYTEST) -m "fast and not python"
+	$(PYTEST) -m "fast and not python" -x -v
 
 test-python:
-	$(PYTEST) -m python
+	$(PYTEST) -m python -x -v
 
 test-full:
-	$(PYTEST) -m full
+	$(PYTEST) -m full -x -v
 
 test-autobahn:
 	conformance/autobahn/run.sh

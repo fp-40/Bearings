@@ -46,8 +46,8 @@
   wrapper is at least as strong as the x86-64 instruction the code was
   reasoned about) and costs nothing on x86-64. A cheaper ARM64 mapping
   (acquire/release per site) needs the reasoning redone per site and a
-  machine to test it on; docs/design.md section 11. The ARM64 build has
-  not run on hardware yet (README.md, "ARM64").
+  machine to test it on; docs/design/limits.md. The ARM64 build has
+  not run on hardware yet (docs/design/arm64.md).
 
   TMpscStack (multi-producer, single-consumer): producers push with a
   compare-and-swap (CAS) on Head (a Treiber stack). Because there is only

@@ -1,4 +1,4 @@
-{ Tests for bearings.rt.buf TReadBuf, TBytesView and TByteVec (docs/design.md
+{ Tests for bearings.rt.buf TReadBuf, TBytesView and TByteVec (docs/design/,
   sections 5.4 and 7).
 
   - Unit tests: pool-class growth, compaction of an unpinned block, pinned

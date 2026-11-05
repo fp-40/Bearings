@@ -1,4 +1,4 @@
-{ M3 S5: dispatcher micro-benchmark (docs/design.md section 9): the dispatcher
+{ M3 S5: dispatcher micro-benchmark (docs/design/verification.md): the dispatcher
   over TMockTransport, ns per request for depth 1 and depth 16 pipelines;
   budget: prototype cost + 420 ns.
 

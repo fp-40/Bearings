@@ -1,5 +1,5 @@
 { M3 step S4 tests for bearings.http1.conn, bearings.http1.config
-  and bearings.http.error (docs/design.md sections 5 and 9).
+  and bearings.http.error (docs/design/, sections 5 and 9).
 
   TTestConnReadWrite: reading a request head (whole and split), EOF when
   idle, during a partial head and while busy, reading a body to its end,
@@ -19,7 +19,7 @@
   test_body_chan), the upgrade slot's reference count, and an error head or
   a 100 Continue written while body bytes are queued (it goes behind them).
   TTestH1Config: bearings.http1.config. TTestH1Error: bearings.http.error.
-  TTestConnBodyRate (step UB): the body rate rule (docs/design.md 5.7): off by
+  TTestConnBodyRate (step UB): the body rate rule (docs/design/state-machine.md 5.7): off by
   default, one wait of BodyTimeoutMs fails the body (ETIMEDOUT, Reading
   closed, the owner woken by the timer, the error kept for TakeError), a
   frame restarts the wait, time the server does not read is not counted,

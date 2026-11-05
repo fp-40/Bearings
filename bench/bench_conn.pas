@@ -1,4 +1,4 @@
-{ M3 S4: connection-level micro-benchmark (docs/design.md section 9).
+{ M3 S4: connection-level micro-benchmark (docs/design/verification.md).
 
   Measures the CPU cost per request of the TH1Conn calls the dispatcher
   (S5) makes for a TFB plaintext request, over an in-memory transport:

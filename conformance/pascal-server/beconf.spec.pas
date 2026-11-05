@@ -1,5 +1,5 @@
 { beconf.spec - the server spec of conformance/SPEC.md sections 2, 4, 5 and
-  6.3: JSON parsing and validation (docs/design.md section 9).
+  6.3: JSON parsing and validation (docs/design/verification.md).
   Test tooling.
 
   Validation follows the former reference server (hyper's

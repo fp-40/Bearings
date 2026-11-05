@@ -19,7 +19,7 @@
   when the mask is null), which is what glibc does on ARM64 too.
 
   Not run on hardware yet: tests/unit/test_rt_sys checks every routine
-  against the FPC RTL under qemu-aarch64 (README.md, "ARM64"). }
+  against the FPC RTL under qemu-aarch64 (docs/design/arm64.md). }
 
 function SysRead(Fd: cint; Buf: Pointer; Count: SizeUInt): SizeInt; assembler; nostackframe;
 asm

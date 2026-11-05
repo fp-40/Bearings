@@ -1,4 +1,4 @@
-{ M3 step S8 tests (docs/design.md sections 3, 5.4, 5.8, 5.9 and 6.7),
+{ M3 step S8 tests (docs/design/, sections 3, 5.4, 5.8, 5.9 and 6.7),
   over real sockets through TServer. They check outcomes (bytes a client
   receives, fds, exit times), not write sizes or event order.
 
@@ -1246,7 +1246,7 @@ var
 begin
   P := TProcess.Create(nil);
   try
-    { under an emulator (TARGET=aarch64 in tests/unit/run_all.sh) the child
+    { under an emulator (TARGET=aarch64, tests/harness.py) the child
       is started through the runner named by BEARINGS_RUNNER }
     if GetEnvironmentVariable('BEARINGS_RUNNER') <> '' then
     begin

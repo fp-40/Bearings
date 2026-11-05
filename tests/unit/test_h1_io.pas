@@ -1,4 +1,4 @@
-{ Tests for bearings.http1.io, docs/design.md sections 5.1, 5.4 and 9.
+{ Tests for bearings.http1.io, docs/design/, sections 5.1, 5.4 and 9.
 
   TTestIoBuffers: the read buffer, the read strategy and the write buffer
   (first written as ports of the tests of hyper v1.12.0 src/proto/h1/io.rs),
@@ -1364,7 +1364,7 @@ begin
   end;
   { pooled, max not a block size: the 16 KiB block has more spare room than
     max - len, the read is still clamped, so a head that does not fit is
-    always 431 (docs/design.md section 10, parsing) }
+    always 431 (docs/design/deviations.md, parsing) }
   M := TMockTransport.Create;
   H := THttpHeaders.Create;
   try

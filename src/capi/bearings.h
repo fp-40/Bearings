@@ -11,8 +11,18 @@
 typedef struct bearings_server bearings_server;
 typedef struct bearings_exchange bearings_exchange;
 
-/* Zeroed fields take the defaults. */
+/* Zeroed fields take the defaults, except size:
+
+       bearings_config cfg = { .size = sizeof cfg };
+
+   size makes the struct extensible without breaking programs already
+   built: new fields are added at the end, and none is removed, reordered
+   or given another meaning. A program built against an older header gives
+   a smaller size, and the fields it does not have take their defaults. A
+   program built against a newer header than the library is accepted when
+   the fields the library does not have are zero, and refused otherwise. */
 typedef struct {
+    size_t size;                /* sizeof(bearings_config); required */
     const char *host;           /* NULL or "" = "0.0.0.0" */
     int port;                   /* 0 = a free port (bearings_server_port) */
     const char *unix_path;      /* NULL or "" = TCP */

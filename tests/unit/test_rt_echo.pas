@@ -1,11 +1,11 @@
-{ The echo test (docs/design.md section 9): 1 GB with random split sizes
+{ The echo test (docs/design/verification.md): 1 GB with random split sizes
   under valgrind without errors.
 
   test_rt_echo --server
       One TLoop on the main thread, a TListener on 127.0.0.1 (kernel port,
       printed as "port N" on stdout), and one TEchoTask per connection:
       edge-triggered, TTcpTransport with the readiness rules of
-      docs/design.md section 3, reads of
+      docs/design/io.md, reads of
       random size into a 64 KiB block from the loop's TBlockPool, writes of
       random size with Write or a 2-3 slice WriteV, the block given back to
       the pool whenever the task waits with nothing buffered. On EOF it

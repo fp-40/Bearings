@@ -28,7 +28,9 @@ It has no TLS and no HTTP/2. TLS belongs to a reverse proxy such as nginx in fro
 
 ## Platforms
 
-It runs natively only on Linux, x86_64 and ARM64. But can run on Windows through its WSL layer, or on MacOS in a Docker container.
+It runs natively only on Linux: x86_64, and ARM64 as an experimental target until it has run on ARM64 hardware (section 12). But can run on Windows through its WSL layer, or on MacOS in a Docker container.
+
+The oldest kernel the code can run on is Linux 4.5. What sets it, from the newest requirement to the oldest: `EPOLLEXCLUSIVE` (4.5), which `amSharedExclusive` uses and which a Unix socket or a socket inherited from systemd always gets (section 3); `SO_REUSEPORT` (3.9), for `amReusePort`, the production default on TCP; `accept4` (2.6.28); `epoll_create1` and `eventfd2` (2.6.27); `F_DUPFD_CLOEXEC` (2.6.24); the private futex operations (2.6.22); `EPOLLRDHUP` (2.6.17). `amSingle` on TCP needs nothing newer than `accept4`. These numbers come from the kernel's documentation of each call; the tests run on current kernels only.
 
 The runtime calls the kernel through its own system call stubs (`bearings.rt.sys`, one include file of assembler routines per architecture: `epoll_wait`, `epoll_ctl`, `eventfd2`, `accept4`, `read`, `write`, `writev`, `sendfile`, `futex`, `sched_getaffinity`, and the socket calls), not through the FPC RTL units. A few cold setup calls use the RTL's `BaseUnix` (`fcntl` when an upgraded socket is detached and for systemd's descriptors, `unlink`, `chmod`, `chown` and `lstat` of a Unix socket file).
 

@@ -9,7 +9,7 @@
 #        example '1.*,2.*' runs groups 1 and 2)
 # Env: WS_ECHO_MODE=worker runs the echo on the worker pool (ws_echo's
 #      third argument: the TWsWorkerHandler path). Seven cases are then
-#      NON-STRICT instead of OK (docs/design.md 6.10); none fails.
+#      NON-STRICT instead of OK (docs/design/exchange.md 6.10); none fails.
 # Exit status 0 when no case has the result FAILED.
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)

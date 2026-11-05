@@ -1,4 +1,4 @@
-{ M3 step S1 tests for bearings.rt.timer (docs/design.md section 4):
+{ M3 step S1 tests for bearings.rt.timer (docs/design/timers.md):
   - the tick rounding (a deadline rounds up to the next millisecond, the
     current time rounds down) and the wheel's level and slot tables
     (first ported from tokio's unit tests);

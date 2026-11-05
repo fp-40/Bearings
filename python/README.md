@@ -1,6 +1,6 @@
 # pyBearings
 
-[Bearings](https://github.com/fp-40/Bearings), the Free Pascal HTTP/1.1 server, as a WSGI server for Python. Linux only (x86_64 and ARM64); free-threaded Python works.
+[Bearings](https://github.com/fp-40/Bearings), the Free Pascal HTTP/1.1 server, as a WSGI server for Python. Linux only: x86_64, and ARM64 as an experimental target (the ARM64 wheel has run under qemu, not on ARM64 hardware yet); free-threaded Python works.
 
 ```python
 from bearings import serve

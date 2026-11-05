@@ -1,9 +1,9 @@
-"""The wire conformance gate (conformance/SPEC.md; docs/design.md section 9):
+"""The wire conformance gate (conformance/SPEC.md; docs/design/verification.md):
 the cases of conformance/cases and the extra cases against the Pascal
 conformance server beconf, in assertion mode, each case a subtest.
 
 - inline executor: the 102 cases must give passed=101 failed=0 pending=1
-  (one case is pending by design, MANIFEST.md), RUNS times in a row (default
+  (one case is pending; its "pending" field says why), RUNS times in a row (default
   1; RUNS=5 before a commit catches intermittent failures), JOBS cases at a
   time (default 4: the 9.2 s header-read timeout case then sets the run
   time); then the 23 extra cases (behaviours the 102 do not reach);

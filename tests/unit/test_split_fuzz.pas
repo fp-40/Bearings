@@ -1,5 +1,5 @@
-{ test_split_fuzz - the in-process split fuzz of M3 step S9 (docs/design.md
-  section 9).
+{ test_split_fuzz - the in-process split fuzz of M3 step S9
+  (docs/design/verification.md).
 
   Each input is the byte stream a client writes on one connection: the
   conformance cases (tests/unit/test_split_fuzz_cases.py: every case of
@@ -32,7 +32,7 @@
   failure (built with -dWD_DEBUG), the loop's block pool holds every block
   it allocated once the connection is gone (no block pinned or lost), no
   exchange left alive; heaptrc (-gh) reports no leak at exit
-  (tests/unit/run_all.sh checks the log).
+  (tests/test_split_fuzz.py checks the log).
 
   Each input runs in two profiles: the case's own spec config, and
   ProductionH1Config (timer, 30 s header read timeout, pipeline_flush,
@@ -280,8 +280,8 @@ var
   end;
 
   { one poll (Iter: a loop iteration, else the readiness edge's direct
-    Run). An exception is what TLoop.Run would catch (docs/design.md section 2: the task is
-    aborted); only EH1Panic (docs/design.md 5.6) is documented }
+    Run). An exception is what TLoop.Run would catch (docs/design/threading.md: the task is
+    aborted); only EH1Panic (docs/design/state-machine.md 5.6) is documented }
   procedure Poll(Iter: Boolean);
   begin
     try

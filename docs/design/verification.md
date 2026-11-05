@@ -91,7 +91,7 @@ wrapper only configures the connection from the spec, installs the named
 handler and reports events. `tests/test_conformance.py` runs the
 cases in assertion mode, four cases at a time (`JOBS`), once by default
 (`RUNS=5` before a commit catches intermittent failures), and requires
-`passed=101 failed=0 pending=1` every time (one case is pending by design in `MANIFEST.md`), then
+`passed=101 failed=0 pending=1` every time (one case is pending; its `pending` field says why), then
 the 23 extra cases of `extra/extra-cases.json` (behaviours the 105 do not
 reach); `LOOPS=4` runs the same with four loops sharing one listener.
 The same test runs them with every handler on a worker; one case,

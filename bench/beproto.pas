@@ -1,5 +1,6 @@
-{ beproto - M3 performance prototype: the reactor/connection loop design of
-  docs/design/m3-candidates/perf.md, reduced to the TFB plaintext path.
+{ beproto - M3 performance prototype: the reactor/connection loop design of a
+  candidate document that is not in this repository, reduced to the TFB
+  plaintext path.
 
   - one loop thread per allowed CPU (sched_getaffinity), optional pinning
   - LISTEN=reuseport (default): one SO_REUSEPORT listener per loop

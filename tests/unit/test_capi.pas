@@ -6,13 +6,15 @@
   body, a stream, an aborted stream (the client sees what came before the
   error), a file (sendfile), an invalid response header (refused, and the
   caller answers instead), a callback that answers nothing (500), the
-  metrics, the version, and the failures of bearings_server_new.
+  metrics, the version, the failures of bearings_server_new, and the rules
+  of the config's size field (a missing size, the first layout, a longer
+  config with and without an option this version does not have).
   TTestCapiWs: a WebSocket's events in order (open with the handshake, text,
   binary, close with the code and reason), sends by id, topics, the close
   from the server, the Origin rules, the ignored text, the WebSockets open,
   and the calls with an id that no connection has; threads that send,
   subscribe, publish and close by id while connections end under them
-  (also run under drd by run_all.sh, with WD_ITER=20).
+  (also run under drd by tests/test_full_tier.py, with WD_ITER=20).
   Run: test_capi --all --format=plain }
 program test_capi;
 
@@ -337,6 +339,10 @@ type
     procedure The_version;
     procedure A_taken_port_fails_with_the_reason;
     procedure Bad_configs_fail;
+    procedure A_config_without_its_size_fails;
+    procedure A_config_of_the_first_layout_starts;
+    procedure A_longer_config_starts_when_the_rest_is_zero;
+    procedure A_longer_config_with_an_unknown_option_fails;
   end;
 
   TTestCapiWs = class(TCapiCase)
@@ -368,6 +374,7 @@ var
   WsCb: TBearingsWsCb;
 begin
   Cfg := Default(TBearingsConfig);
+  Cfg.Size := SizeOf(Cfg);
   Cfg.Host := '127.0.0.1';
   Cfg.Loops := 1;
   Cfg.Workers := 2;
@@ -552,6 +559,7 @@ begin
   fpGetSockName(Fd, @A, @L);
   try
     Cfg := Default(TBearingsConfig);
+    Cfg.Size := SizeOf(Cfg);
     Cfg.Host := '127.0.0.1';
     Cfg.Port := ntohs(A.sin_port);
     Cfg.Loops := 1;
@@ -571,6 +579,7 @@ var
   Err: array[0..255] of AnsiChar;
 begin
   Cfg := Default(TBearingsConfig);
+  Cfg.Size := SizeOf(Cfg);
   AssertTrue('no callback', bearings_server_new(@Cfg, nil, nil, nil, @Err[0], SizeOf(Err)) = nil);
   AssertTrue(StrPas(@Err[0]), Pos('no callback', StrPas(@Err[0])) > 0);
   Cfg.Workers := -1;
@@ -584,6 +593,100 @@ begin
   Cfg.WsPath := '/ws';
   AssertTrue(bearings_server_new(@Cfg, @OnRequest, nil, nil, @Err[0], SizeOf(Err)) = nil);
   AssertTrue(StrPas(@Err[0]), Pos('WebSocket callback', StrPas(@Err[0])) > 0);
+end;
+
+{ ---- the config's size (TBearingsConfig.Size) ---- }
+
+type
+  { what a program built against a later header passes: the fields of this
+    version, then one this version does not have }
+  TLaterConfig = record
+    Cfg: TBearingsConfig;
+    Later: cint64;
+  end;
+
+const
+  SIZE_ERROR = 'bearings_server_new: config.size must be sizeof(bearings_config)';
+
+function LoopbackConfig: TBearingsConfig;
+begin
+  Result := Default(TBearingsConfig);
+  Result.Size := SizeOf(Result);
+  Result.Host := '127.0.0.1';
+  Result.Loops := 1;
+end;
+
+{ starts a server with Cfg and gets an answer from it }
+procedure AssertServes(T: TTestCase; Cfg: PBearingsConfig);
+var
+  Err: array[0..255] of AnsiChar;
+  Other: Pointer;
+  A: RawByteString;
+begin
+  Err[0] := #0;
+  Other := bearings_server_new(Cfg, @OnRequest, nil, nil, @Err[0], SizeOf(Err));
+  T.AssertTrue('started: ' + StrPas(@Err[0]), Other <> nil);
+  try
+    A := Ask(bearings_server_port(Other), Get('/hello'));
+    T.AssertTrue(A, Copy(A, Length(A) - 4, 5) = 'hello');
+  finally
+    bearings_server_stop(Other, 1000);
+    bearings_server_wait(Other);
+    bearings_server_free(Other);
+  end;
+end;
+
+procedure TTestCapiHttp.A_config_without_its_size_fails;
+var
+  Cfg: TBearingsConfig;
+  Err: array[0..255] of AnsiChar;
+begin
+  Cfg := LoopbackConfig;
+  Cfg.Size := 0;
+  AssertTrue('size 0', bearings_server_new(@Cfg, @OnRequest, nil, nil, @Err[0], SizeOf(Err)) = nil);
+  AssertEquals(SIZE_ERROR, StrPas(@Err[0]));
+  Cfg.Size := BEARINGS_CONFIG_MIN_SIZE - 1;
+  Err[0] := #0;
+  AssertTrue('below the first layout',
+    bearings_server_new(@Cfg, @OnRequest, nil, nil, @Err[0], SizeOf(Err)) = nil);
+  AssertEquals(SIZE_ERROR, StrPas(@Err[0]));
+end;
+
+procedure TTestCapiHttp.A_config_of_the_first_layout_starts;
+var
+  Cfg: TBearingsConfig;
+begin
+  { what a program built against the 0.5.0 header passes, whatever fields
+    a later version added after WsIgnoreText }
+  AssertEquals('the first layout', 152, BEARINGS_CONFIG_MIN_SIZE);
+  AssertTrue('fields are only added', SizeOf(TBearingsConfig) >= BEARINGS_CONFIG_MIN_SIZE);
+  Cfg := LoopbackConfig;
+  Cfg.Size := BEARINGS_CONFIG_MIN_SIZE;
+  AssertServes(Self, @Cfg);
+end;
+
+procedure TTestCapiHttp.A_longer_config_starts_when_the_rest_is_zero;
+var
+  L: TLaterConfig;
+begin
+  L := Default(TLaterConfig);
+  L.Cfg := LoopbackConfig;
+  L.Cfg.Size := SizeOf(L);
+  AssertServes(Self, @L.Cfg);
+end;
+
+procedure TTestCapiHttp.A_longer_config_with_an_unknown_option_fails;
+var
+  L: TLaterConfig;
+  Err: array[0..255] of AnsiChar;
+begin
+  L := Default(TLaterConfig);
+  L.Cfg := LoopbackConfig;
+  L.Cfg.Size := SizeOf(L);
+  L.Later := 1;
+  AssertTrue('refused', bearings_server_new(@L.Cfg, @OnRequest, nil, nil, @Err[0], SizeOf(Err)) = nil);
+  AssertEquals('bearings_server_new: the config sets an option that this version of the library ('
+    + BEARINGS_VERSION + ') does not have', StrPas(@Err[0]));
 end;
 
 { ---- WebSockets ---- }

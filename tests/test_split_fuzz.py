@@ -1,4 +1,4 @@
-"""The S9 split fuzz (docs/design.md section 9; tests/unit/test_split_fuzz.pas):
+"""The S9 split fuzz (docs/design/verification.md; tests/unit/test_split_fuzz.pas):
 the conformance case inputs and the M2 parser corpus (20 000 random entries,
 seed 1) in random reads with random EAGAIN and partial writes, compared with
 one-read runs; built with -Ci -Cr -Co -Ct -Sa -gh -gl -dWD_DEBUG, heaptrc

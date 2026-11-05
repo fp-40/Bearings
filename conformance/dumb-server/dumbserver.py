@@ -20,7 +20,20 @@ from the first line; fields split at the first colon, names lowercased, in
 received order), and conn_close with outcome ok when the socket closes.
 
 A case that PASSES against this server checks less than a fixed 200
-response can satisfy. See MANIFEST.md for how each such case was judged.
+response can satisfy. Four do (crun run, 2026-11-05), because what each one
+checks is what this server does; every other case fails at least one step:
+
+- chunk2::pipeline_disabled (with and without --events): it checks that the
+  first read returns bytes and that a second read is not the end of the
+  connection, not the bytes of the responses.
+- chunk3::upgrades_ignored (--events): an upgrade request that the handler
+  ignores is answered 200, twice.
+- chunk5::conn_reads_partial_request_head (--events): nothing is written
+  until the head is complete, and then the request is answered.
+- chunk5::conn_accepts_eof_when_idle (--events): the client's EOF on an idle
+  connection closes it without a write, with outcome ok.
+
+A new case that passes here needs a reason of the same kind.
 
 Usage: dumbserver.py [--events] --config <file>
 """

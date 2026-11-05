@@ -28,7 +28,7 @@
 #
 # A binary built this way runs on real ARM64 Linux hardware with glibc 2.34
 # or later; qemu-aarch64 runs it here. qemu executes on the x86_64 host and
-# does not reproduce ARM64's weak memory ordering (README.md, "ARM64").
+# does not reproduce ARM64's weak memory ordering (docs/design/arm64.md).
 #
 # Idempotent: build/tools/fpc-aarch64.stamp holds the pin. Re-run after a
 # pin change.

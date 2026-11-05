@@ -55,7 +55,7 @@ $R run --server 'path/to/server' conformance/cases/h1
 $R run --server 'path/to/server' --filter pipeline conformance/cases/h1/chunk2.json -v
 $R run --jobs 4 --server 'path/to/server' conformance/cases/h1    # 4 cases at a time
 
-# mutation check: a server that answers every request head with a fixed 200 (MANIFEST.md)
+# mutation check: a server that answers every request head with a fixed 200 (dumb-server/dumbserver.py)
 $R run --server 'python3 conformance/dumb-server/dumbserver.py' conformance/cases/h1
 
 # list cases (validates case syntax, does not start servers)
@@ -426,7 +426,7 @@ Exactly one class, checked in this order:
 | `incomplete` | EOF in the middle of a request head, or EOF while a request was in progress |
 | `user` | the handler failed (including test_service body errors), the handler returned a 1xx final status (500 written), or the response's framing headers were invalid |
 | `body_write_aborted`, `shutdown` | the response body ended before its declared length; the final shutdown of the socket failed |
-| `io` | socket error, or a request body error (malformed framing, a socket error, the body rate rule) after the handler answered (docs/design.md section 10) |
+| `io` | socket error, or a request body error (malformed framing, a socket error, the body rate rule) after the handler answered (docs/design/deviations.md) |
 | `other` | none of the above | |
 
 ---

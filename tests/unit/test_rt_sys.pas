@@ -1,4 +1,4 @@
-{ M3 step S1 tests for bearings.rt.sys, bearings.rt.clock and bearings.rt.cpu (docs/design.md
+{ M3 step S1 tests for bearings.rt.sys, bearings.rt.clock and bearings.rt.cpu (docs/design/,
   sections 1, 2 and 4):
   - every syscall stub is checked against its FPC RTL equivalent (BaseUnix,
     Sockets, Linux units, or Syscall.do_syscall where the RTL has no
@@ -514,7 +514,7 @@ begin
   AssertEquals(StrToInt(RunOut('nproc', [])), DefaultLoopCount);
 end;
 
-{ Under an emulator (TARGET=aarch64 in tests/unit/run_all.sh) the host's
+{ Under an emulator (TARGET=aarch64, tests/harness.py) the host's
   taskset cannot start this binary directly: BEARINGS_RUNNER names the
   command to put before it (build/tools/bin/run-aarch64). The CPUs are
   taken from those this process may use (a CI runner has 4): up to 4 of

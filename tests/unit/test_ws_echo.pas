@@ -19,7 +19,7 @@
   exclusion of the sender, unsubscribe and the removal at close, subscribe
   and publish from a worker handler, a subscriber that does not read
   (DroppedMessages, CloseOnBackpressure), one on the worker pool that
-  catches up, and a publish from a plain thread. tests/unit/run_all.sh
+  catches up, and a publish from a plain thread. tests/test_full_tier.py
   also runs TTestWsWorker and TTestWsTopics under valgrind drd.
   Run: test_ws_echo --all --format=plain
        test_ws_echo --suite=TTestWsWorker --format=plain }

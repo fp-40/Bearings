@@ -1,4 +1,4 @@
-"""The full tier (make test-full; docs/design.md section 9): the worker tests
+"""The full tier (make test-full; docs/design/verification.md): the worker tests
 under valgrind --tool=drd, the end-to-end worker stress and the echo under
 valgrind memcheck. valgrind comes from tools/get-tools.sh (VALGRIND names
 another one); a missing valgrind fails these tests, it does not skip them

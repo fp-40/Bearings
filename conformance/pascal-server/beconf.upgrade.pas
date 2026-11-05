@@ -1,5 +1,5 @@
-{ beconf.upgrade - SPEC 6.3 upgrade tasks and the signal latches (docs/design.md
-  section 9). Test tooling.
+{ beconf.upgrade - SPEC 6.3 upgrade tasks and the signal latches
+  (docs/design/verification.md). Test tooling.
 
   The reference server's run_upgrade, on the loop that served the
   connection (tokio::spawn on the current-thread runtime): emit `upgraded`

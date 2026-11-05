@@ -1,5 +1,5 @@
 #!/bin/sh
-# The S7 offload-cost gate (docs/design.md section 2): CPU per
+# The S7 offload-cost gate (docs/design/threading.md): CPU per
 # request of bench/plaintext answering every request on the loop (inline)
 # against the same server answering every request from its worker pool
 # (OFFLOAD=1: TOffloadCall + TBlockingHandler, the pool's default size,

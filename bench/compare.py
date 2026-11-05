@@ -1,4 +1,4 @@
-"""Two-server wrk comparison with the method of docs/design.md section 9 (the performance gate).
+"""Two-server wrk comparison with the method of docs/design/verification.md (the performance gate).
 
 Both servers must already run, pinned to the server CPUs (configuration B:
 CPUs 0-3), e.g.

@@ -1,5 +1,5 @@
 { M3 step S7 tests: bearings.rt.workers and the worker parts of bearings.http.exchange
-  (docs/design.md sections 2, 6 and 9).
+  (docs/design/, sections 2, 6 and 9).
 
   TTestPool: FIFO order, hooks, shutdown finishes the queue, an item that
   raises does not end its worker, the default thread count, QueueLength /
@@ -39,7 +39,7 @@
   recycled exchange). Off-loop actions of these tests run on the test
   pool's workers (RunOnPool), not on raw threads (drd, deviation S7-21).
 
-  The worker stress tests run under valgrind --tool=drd in run_all.sh
+  The worker stress tests run under valgrind --tool=drd in tests/test_full_tier.py
   (built with -dWD_DRD; WD_ITER scales the loop counts down there).
   Run: test_workers --all --format=plain }
 program test_workers;
@@ -2368,7 +2368,7 @@ var
   It, Frames, I, J: Integer;
   Deadline: Int64;
 begin
-  { docs/design.md 6.4: after Share any thread may write the stream. Two threads
+  { docs/design/exchange.md 6.4: after Share any thread may write the stream. Two threads
     blocked in Write on the same full channel (HighWater = one frame) are
     both woken as the consumer frees room (the S7 verifier's TParker
     finding: one waiter only, the second could make the first miss its
@@ -4929,7 +4929,7 @@ var
   Live0: LongInt;
 begin
   { a call that answers on the loop and gives a reference to a thread of
-    another pool (an SSE-style producer, docs/design.md 6.4), which releases it
+    another pool (an SSE-style producer, docs/design/exchange.md 6.4), which releases it
     300 ms later, after TServer.Free began. The hook runs in that release's
     TLoop.Post right after the push, on the holder's thread only, and
     sleeps HookSleepMs there }

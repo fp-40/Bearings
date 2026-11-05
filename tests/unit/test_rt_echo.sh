@@ -1,6 +1,6 @@
 #!/bin/sh
 # The echo test: 1 GB with random split sizes under valgrind without errors
-# (docs/design.md section 9).
+# (docs/design/verification.md).
 # Builds tests/unit/test_rt_echo.pas with the unit-test flags, runs the echo
 # server under valgrind memcheck and the client natively, and checks: client
 # verified every byte, server exited 0, valgrind reported 0 errors.

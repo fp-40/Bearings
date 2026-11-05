@@ -806,7 +806,7 @@ begin
     SetEnv('LISTEN_FDS', '1');
     SetEnv('LISTEN_FDNAMES', 'http');
     SetEnv('HEAPTRC', 'log=/dev/null');   { a -gh build: the child's heap report must not land in the parent's log or output }
-    { under an emulator (TARGET=aarch64 in tests/unit/run_all.sh) the child
+    { under an emulator (TARGET=aarch64, tests/harness.py) the child
       is started through the runner named by BEARINGS_RUNNER; it keeps the
       pid (LISTEN_PID) and descriptor 3 }
     Runner := GetEnvironmentVariable('BEARINGS_RUNNER');

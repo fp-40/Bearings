@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Step S7 evidence (docs/design.md section 9): the worker tests of
+"""Step S7 evidence (docs/design/verification.md): the worker tests of
 tests/unit/test_workers.pas fail on mutants of the code they cover.
 
 For each mutant: copy src/ and tests/ into <out>/<id>/, replace one exact
-snippet (it must occur exactly once), build test_workers with the run_all.sh
-flags, run the named test (fpcunit --suite=<test>, 120 s timeout) and record
+snippet (it must occur exactly once), build test_workers with the unit-test
+flags (TEST_FLAGS of tests/harness.py), run the named test (fpcunit --suite=<test>, 120 s timeout) and record
 whether it failed (a failure, an error, a crash or the timeout count as
 detected). A test named "DRD:<test>" checks the drd run instead: the copy is
 built with -dWD_DRD and the test runs under build/tools/bin/valgrind
 --tool=drd with tools/drd.supp (WD_ITER=20); detected = drd reports an error
-or the test fails (these show that the drd run of run_all.sh can find a
+or the test fails (these show that the drd run of tests/test_full_tier.py can find a
 missing lock). The unmutated copy must pass every named test, and its drd
 runs must report 0 errors. Exit status 0 only when every mutant was detected
 and every snippet was found.
@@ -100,7 +100,7 @@ M = [
         "Cancel_while_running",
     ),
     # S7 fix round 4: the unpark moved from CancelShared into CloseReceiverFromLoop (every
-    # loop-side close of the receiver unparks a parked reader, docs/design.md 6.2)
+    # loop-side close of the receiver unparks a parked reader, docs/design/exchange.md 6.2)
     (
         "cancel-no-unpark-reader",
         EX,
@@ -229,7 +229,7 @@ M = [
         "  InterlockedExchange(State, 2);",
         "Unpark_at_park_entry",
     ),
-    # drd: a side that skips the lock is reported (docs/design.md section 9, "drd clean")
+    # drd: a side that skips the lock is reported (docs/design/verification.md, "drd clean")
     # (an IN: snippet removes every FLock.Acquire / FLock.Release inside that routine: removing
     # only the Acquire would keep the happens-before edges of the Release annotation)
     (
@@ -870,7 +870,7 @@ SUPP = os.path.join(ROOT, "tools", "drd.supp")
 
 
 def build(tree, work, drd=False, disp=False):
-    # disp (S7 fix round 7): test_h1_dispatch, built as run_all.sh builds it (-dWD_DEBUG, its own
+    # disp (S7 fix round 7): test_h1_dispatch, built as tests/test_unit_suites.py builds it (-dWD_DEBUG, its own
     # unit directory)
     u = os.path.join(work, "ud" if disp else "u")
     os.makedirs(u, exist_ok=True)

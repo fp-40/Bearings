@@ -1,5 +1,5 @@
 #!/bin/bash
-# Idle keep-alive memory (docs/design.md section 9, the performance gate): VmRSS of a
+# Idle keep-alive memory (docs/design/verification.md, the performance gate): VmRSS of a
 # server before and with N idle keep-alive connections (bench/idle.py: one
 # request each, then idle), per connection = (with - before) / N. Both
 # servers as in bench/run_gate.sh (4 threads on CPUs 0-3); the client runs

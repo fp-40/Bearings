@@ -37,10 +37,33 @@ thread keeps doing so.
 ## The configuration
 
 `bearings_config` (`TBearingsConfig`) is a C struct; zeroed fields take the
-defaults of `ProductionServerConfig`.
+defaults of `ProductionServerConfig`, except `size`, which the program sets
+to the struct's size:
+
+```c
+bearings_config cfg = { .size = sizeof cfg };
+cfg.port = 8000;
+```
+
+`size` is what lets a later version add options without breaking a program
+that is already built. New fields are added at the end; none is removed,
+reordered or given another meaning. `bearings_server_new` reads `size`
+bytes:
+
+- A program built against an older header gives a smaller `size`. The
+  fields it does not have take their defaults.
+- A program built against a newer header than the library it runs with
+  gives a larger `size`. It is accepted when the fields the library does
+  not have are zero, and refused otherwise (`the config sets an option that
+  this version of the library (X.Y.Z) does not have`): an option the program
+  set would be ignored.
+- A `size` of 0, or one below the size of the first layout that had the
+  field (152 bytes, version 0.5.0), is refused: `config.size must be
+  sizeof(bearings_config)`.
 
 Field | Meaning
 ----- | -------
+`size` | `sizeof(bearings_config)`; required
 `host`, `port` | where to listen; `NULL`/`""` is `0.0.0.0`, port 0 a free port (`bearings_server_port`); an address, not a host name
 `unix_path`, `unix_mode` | a Unix socket instead of a port, and its file's permission bits (0 = `0660`)
 `inherited_fd` | an open listening socket to serve from (for example one systemd passed)

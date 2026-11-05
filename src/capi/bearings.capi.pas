@@ -74,9 +74,24 @@ const
   BEARINGS_ACCESS_LOG_JSON = 1;
   BEARINGS_ACCESS_LOG_CONSOLE = 2;
 
+  { SizeOf(TBearingsConfig) in 0.5.0, the first version with the Size field
+    (through WsIgnoreText). It stays at this value when fields are added:
+    a smaller Size is not a bearings_config. }
+  BEARINGS_CONFIG_MIN_SIZE = 152;
+
 type
-  { Zeroed fields take the defaults of ProductionServerConfig. }
+  { Zeroed fields take the defaults of ProductionServerConfig, except Size.
+
+    Size makes the record extensible without breaking programs already
+    built: new fields are added at the end, and never removed, reordered
+    or given another meaning. bearings_server_new reads Size bytes. A
+    program built against an older header gives a smaller Size, and the
+    fields it does not have take their defaults. A program built against
+    a newer header gives a larger one: it is accepted when the bytes past
+    this version's fields are zero, and refused otherwise (an option the
+    program set would be ignored). }
   TBearingsConfig = record
+    Size: csize_t;                 { SizeOf(TBearingsConfig), set by the caller; required }
     Host: PAnsiChar;               { nil or '' = '0.0.0.0' }
     Port: cint;                    { 0 = a free port (bearings_server_port) }
     UnixPath: PAnsiChar;           { nil or '' = TCP }
@@ -699,10 +714,33 @@ begin
   C.Topics.CloseOnBackpressure := Cfg^.WsCloseOnBackpressure <> 0;
 end;
 
+{ The caller's config as this version of the library knows it (the rules
+  of TBearingsConfig.Size). }
+procedure ReadConfig(Cfg: PBearingsConfig; out Known: TBearingsConfig);
+var
+  Size, I: csize_t;
+begin
+  Size := Cfg^.Size;
+  if Size < BEARINGS_CONFIG_MIN_SIZE then
+    raise Exception.Create('bearings_server_new: config.size must be sizeof(bearings_config)');
+  Known := Default(TBearingsConfig);
+  if Size <= SizeOf(Known) then
+  begin
+    Move(Cfg^, Known, Size);
+    Exit;
+  end;
+  Move(Cfg^, Known, SizeOf(Known));
+  for I := SizeOf(Known) to Size - 1 do
+    if PByte(Cfg)[I] <> 0 then
+      raise Exception.Create('bearings_server_new: the config sets an option that this version of '
+        + 'the library (' + BEARINGS_VERSION + ') does not have');
+end;
+
 function bearings_server_new(Cfg: PBearingsConfig; Cb: TBearingsRequestCb;
   WsCb: TBearingsWsCb; Ctx: Pointer; Err: PAnsiChar; ErrLen: csize_t): Pointer; cdecl;
 var
   SC: TServerConfig;
+  Known: TBearingsConfig;
   C: TCServer;
   All, Old: TSigSet;
 begin
@@ -711,6 +749,8 @@ begin
   try
     if (Cfg = nil) or (Cb = nil) then
       raise Exception.Create('bearings_server_new: no config or no callback');
+    ReadConfig(Cfg, Known);
+    Cfg := @Known;                 { from here on, only the fields this version has }
     SC := ProductionServerConfig;
     SC.Watchdog := False;          { the host program talks to systemd, if it wants to }
     if (Cfg^.Host <> nil) and (Cfg^.Host^ <> #0) then

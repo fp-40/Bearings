@@ -194,6 +194,7 @@ class Server:
         # kept alive with the config: the struct only points to them
         self._strings: list = []
         config = ffi.new("bearings_config *")
+        config.size = ffi.sizeof("bearings_config")
         config.port = port
         if unix_path:
             self._strings.append(ffi.new("char[]", unix_path.encode()))

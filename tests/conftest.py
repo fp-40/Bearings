@@ -3,6 +3,7 @@ for the environment variables and the helpers)."""
 
 from pathlib import Path
 
+import harness
 import pytest
 from harness import ROOT, TARGET
 
@@ -13,6 +14,11 @@ def pytest_addoption(parser):
         default=None,
         help="run only this fpcunit suite class or Class.Method",
     )
+
+
+def pytest_configure(config):
+    # the live progress lines of harness.py are written through this
+    harness.PYTEST_CONFIG = config
 
 
 def pytest_collection_modifyitems(config, items):
